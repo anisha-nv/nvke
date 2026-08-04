@@ -1,0 +1,111 @@
+# Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+
+# Reusable Go qualification workflow for the CI POC. Called by ci.yaml's `tests`
+# job (see .github/workflows/ci.yaml). Runs lint, unit test, and build against
+# the placeholder Go module using the toolchain/tool versions resolved by the
+# load-versions composite action (the single source of truth in .settings.yaml
+# and .go-version). Mirrors NVIDIA/aicr's qualification.yaml shape so it can
+# grow into the production qualification lane in place.
+
+name: Qualification
+
+on:
+  workflow_call:
+    inputs:
+      # Currently unused. Reserved to gate future elevated-token jobs (e.g. a
+      # security scan or SARIF upload) exactly as NVIDIA/aicr's qualification.yaml
+      # uses it: fork PRs will pass privileged_ci=false so jobs needing write
+      # scopes (id-token/security-events) skip, while trusted runs pass true.
+      privileged_ci:
+        description: 'Whether jobs that require elevated permissions should run'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load versions
+        id: versions
+        uses: ./.github/actions/load-versions
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: ${{ steps.versions.outputs.go-version }}
+          # Cache Go modules the way aicr does; the placeholder module has no
+          # external deps (no go.sum/vendor yet), so key the cache on go.mod.
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Run golangci-lint
+        # Invoke golangci-lint via `go run` at the pinned version, exactly as
+        # cloud-workflow-engine's Makefile does — no third-party lint action.
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ steps.versions.outputs.golangci-lint-version }} run --timeout ${{ steps.versions.outputs.lint-timeout }}
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load versions
+        id: versions
+        uses: ./.github/actions/load-versions
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: ${{ steps.versions.outputs.go-version }}
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Run unit tests
+        # Deliberately NO -race here: this mirrors cloud-workflow-engine's
+        # current default (`make test` runs `go test ./...` without the race
+        # detector). Enabling -race will be a separate, explicitly-reviewed
+        # change, not a silent default flip.
+        run: go test ./...
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load versions
+        id: versions
+        uses: ./.github/actions/load-versions
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: ${{ steps.versions.outputs.go-version }}
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Build
+        run: go build ./...

@@ -1,0 +1,16 @@
+# Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+
+# Minimal golangci-lint configuration for the Phase 2 CI POC placeholder
+# module. Uses the v2 schema (golangci-lint is pinned to v2.7.2 in
+# .settings.yaml and invoked via `go run` by the qualification workflow). The
+# v2 default linters (errcheck, govet, ineffassign, staticcheck, unused) stay
+# on; a small, low-noise set is added on top. The enable-list will grow as the
+# real cloud-workflow-engine code lands.
+version: "2"
+
+linters:
+  enable:
+    - misspell # Commonly misspelled English words in comments/strings
+    - revive # Golint replacement: doc comments, naming, error strings
+    - unconvert # Unnecessary type conversions
+    - whitespace # Leading/trailing whitespace issues

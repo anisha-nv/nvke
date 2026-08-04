@@ -1,17 +1,21 @@
 # Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
 
-# Phase 1 of the CI POC (branch: ci-poc-phase0-1).
+# Phase 2 of the CI POC (branch: ci-poc-phase2-go).
 #
-# A hello-world gate that proves the runner, checkout, and repo contents are
-# reachable before the real qualification jobs (test, lint) are
-# wired in. It intentionally mirrors NVIDIA/aicr's merge-gate.yaml idioms —
-# permissions, concurrency, and the aggregate gate job — so it can grow into
-# the production merge gate in place rather than being rewritten later.
+# Builds on the Phase 1 hello-world gate by wiring in the real Go qualification
+# lane. A `check-paths` job (dorny/paths-filter) classifies the PR diff as code
+# vs docs-only, then a real `tests` job (the reusable qualification.yaml running
+# lint/test/build) and a `tests-skip` twin run under inverse conditions — so
+# exactly one of them executes and both feed the aggregate gate. This mirrors
+# NVIDIA/aicr's merge-gate.yaml idioms (permissions, concurrency, the
+# check-paths real/skip-twin pattern, and the aggregate gate job) so it can grow
+# into the production merge gate in place rather than being rewritten later.
 #
 # The final "gate" job aggregates every upstream job's result into a single
 # pass/fail and is intended to become the SOLE required status check in the
-# main branch ruleset. To add a gating check later: add the job, then add its
-# name to the gate job's needs: list — no ruleset change required.
+# main branch ruleset. To add a gating check later: add a real job plus a
+# companion -skip twin with inverse if: conditions, then add both names to the
+# gate job's needs: list — no ruleset change required.
 
 name: CI
 
@@ -51,17 +55,72 @@ jobs:
           cat .go-version
 
   # ---------------------------------------------------------------------------
+  # Path classification — determines whether the qualification tests run or skip
+  # ---------------------------------------------------------------------------
+
+  check-paths:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      code: ${{ steps.code.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # code = true iff at least one changed file is NOT docs/markdown/LICENSE.
+      #
+      # Exclusion idiom (copied from aicr's merge-gate.yaml): dorny's
+      # `predicate-quantifier: 'every'` requires a file to match EVERY pattern in
+      # the filter, so a file matches `code` only when it matches '**' AND none of
+      # the docs patterns. The filter output is true when ANY changed file is
+      # code — so a docs-only PR yields code=false. '**' matches dotfiles too
+      # (dorny sets picomatch dot:true), so '.golangci.yaml', '.settings.yaml',
+      # etc. still count as code.
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706  # v4.0.2
+        id: code
+        with:
+          predicate-quantifier: 'every'
+          filters: |
+            code:
+              - '**'
+              - '!**.md'
+              - '!docs/**'
+              - '!LICENSE'
+
+  # ---------------------------------------------------------------------------
+  # Qualification (lint, test, build) — real job + skip twin. Exactly one runs.
+  # ---------------------------------------------------------------------------
+
+  tests:
+    needs: [check-paths]
+    if: needs.check-paths.outputs.code == 'true'
+    uses: ./.github/workflows/qualification.yaml
+    permissions:
+      contents: read
+    with:
+      privileged_ci: true
+
+  tests-skip:
+    needs: [check-paths]
+    if: needs.check-paths.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: echo "Docs/non-code change — qualification tests not required"
+
+  # ---------------------------------------------------------------------------
   # Aggregate gate — the single required status check
   #
   # Intended to become the SOLE required status check in the main branch
   # ruleset once this POC graduates. Every gating check is added to its needs:
-  # list and this job aggregates all results into one pass/fail. Phase 1 gates
-  # only on the hello job.
+  # list and this job aggregates all results into one pass/fail. Phase 2 gates
+  # on the hello job, path classification, and the qualification real/skip twin.
   # ---------------------------------------------------------------------------
 
   gate:
     if: always()
-    needs: [hello]
+    needs: [hello, check-paths, tests, tests-skip]
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
@@ -69,6 +128,14 @@ jobs:
         run: |
           echo "Gate results:"
           echo '${{ toJSON(needs) }}' | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+
+          # check-paths must succeed — if it fails, the downstream tests /
+          # tests-skip jobs are skipped (not failed), which would silently pass
+          # the gate. Fail closed on a check-paths that did not succeed.
+          if [ "${{ needs.check-paths.result }}" != "success" ]; then
+            echo "::error::check-paths did not succeed (result: ${{ needs.check-paths.result }})"
+            exit 1
+          fi
 
           # Fail if ANY dependency failed or was cancelled.
           # Skipped is OK — it means an inverse/conditional job ran instead.
