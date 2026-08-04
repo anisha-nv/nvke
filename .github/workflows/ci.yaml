@@ -1,6 +1,6 @@
 # Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
 
-# Phase 2 of the CI POC (branch: ci-poc-phase2-go).
+# Phase 3 of the CI POC (branch: ci-poc-phase3-svc).
 #
 # Builds on the Phase 1 hello-world gate by wiring in the real Go qualification
 # lane. A `check-paths` job (dorny/paths-filter) classifies the PR diff as code
@@ -10,6 +10,14 @@
 # NVIDIA/aicr's merge-gate.yaml idioms (permissions, concurrency, the
 # check-paths real/skip-twin pattern, and the aggregate gate job) so it can grow
 # into the production merge gate in place rather than being rewritten later.
+#
+# Phase 3 extends the reusable qualification.yaml with a `service-smoke` job (a
+# `postgres:17` service container reached at 127.0.0.1:<mapped-port>, de-risking
+# cloud-workflow-engine's `make e2e-gofail` lane) and an advisory, non-blocking
+# `temporal-smoke` job. Both live inside qualification.yaml, so they ride the
+# existing `tests` real/skip-twin wiring automatically — the aggregate gate
+# still gates on the single `tests` reusable-workflow result and needs no new
+# entries in its needs: list.
 #
 # The final "gate" job aggregates every upstream job's result into a single
 # pass/fail and is intended to become the SOLE required status check in the
@@ -120,8 +128,11 @@ jobs:
   #
   # Intended to become the SOLE required status check in the main branch
   # ruleset once this POC graduates. Every gating check is added to its needs:
-  # list and this job aggregates all results into one pass/fail. Phase 2 gates
-  # on the hello job, path classification, and the qualification real/skip twin.
+  # list and this job aggregates all results into one pass/fail. Phase 3 gates
+  # on the hello job, path classification, and the qualification real/skip twin
+  # — where the real `tests` call now also carries the postgres service-smoke
+  # job (blocking) and the advisory temporal-smoke job (non-blocking, via
+  # continue-on-error in qualification.yaml), with no change to this needs: list.
   # ---------------------------------------------------------------------------
 
   gate:

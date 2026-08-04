@@ -45,10 +45,12 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version: ${{ steps.versions.outputs.go-version }}
-          # Cache Go modules the way aicr does; the placeholder module has no
-          # external deps (no go.sum/vendor yet), so key the cache on go.mod.
+          # Cache Go modules the way aicr does. Phase 3 added the first real
+          # external dependency (github.com/jackc/pgx/v5, for the dbsmoke test),
+          # so there is now a go.sum — key the cache on it, exactly as
+          # NVIDIA/aicr's setup-go steps do.
           cache: true
-          cache-dependency-path: go.mod
+          cache-dependency-path: go.sum
 
       - name: Run golangci-lint
         # Invoke golangci-lint via `go run` at the pinned version, exactly as
@@ -74,7 +76,7 @@ jobs:
         with:
           go-version: ${{ steps.versions.outputs.go-version }}
           cache: true
-          cache-dependency-path: go.mod
+          cache-dependency-path: go.sum
 
       - name: Run unit tests
         # Deliberately NO -race here: this mirrors cloud-workflow-engine's
@@ -102,7 +104,155 @@ jobs:
         with:
           go-version: ${{ steps.versions.outputs.go-version }}
           cache: true
-          cache-dependency-path: go.mod
+          cache-dependency-path: go.sum
 
       - name: Build
         run: go build ./...
+
+  # ---------------------------------------------------------------------------
+  # Postgres service-container smoke — the single biggest de-risk for
+  # cloud-workflow-engine's `make e2e-gofail` lane.
+  #
+  # Purpose: CWE's gofail-e2e lane needs a postgres service (and a temporal dev
+  # server — see temporal-smoke below). This job proves a `postgres:17` service
+  # container is reachable from a GitHub-hosted job and pins down the exact
+  # host/port shape CWE must adopt.
+  #
+  # GitLab -> GitHub delta (the concrete migration consideration for CWE's
+  # CWE_GOFAIL_E2E_DB_CONNECTION_STRING): under GitLab CI a service is reached
+  # by hostname (e.g. `postgres:5432`) because the job runs in its own container
+  # on a shared network with the service. A GitHub-hosted job instead runs
+  # directly on the runner VM (NOT inside a job container), so the service is
+  # reached via `127.0.0.1:<mapped-port>` — here 127.0.0.1:5432, per the
+  # `ports:` mapping below. The DSN CWE uses on GitLab will NOT work unchanged
+  # on GitHub-hosted runners: it must switch the host to 127.0.0.1 and use the
+  # mapped port. (Note the inverse under `act`, where the job itself runs in a
+  # container: there 127.0.0.1 may not reach the service and the `postgres`
+  # service-name hostname may — a local-runner fidelity gap, not the hosted
+  # behavior this DSN targets.)
+  #
+  # The image tag is a literal (`postgres:17`) rather than a load-versions
+  # output because a service container starts *before* any step runs and so
+  # cannot reference a step output — the same constraint NVIDIA/aicr documents
+  # for its service containers.
+  service-smoke:
+    name: Postgres Service Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        # Standard GitHub health check: the runner holds this job's steps until
+        # pg_isready reports the server is accepting connections, so the smoke
+        # test never races the service's startup.
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load versions
+        id: versions
+        uses: ./.github/actions/load-versions
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: ${{ steps.versions.outputs.go-version }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Run postgres service-container smoke test
+        env:
+          # GitHub-hosted runners reach the service via 127.0.0.1 on the mapped
+          # host port. This is exactly the CWE_GOFAIL_E2E_DB_CONNECTION_STRING
+          # shape CWE must adopt when migrating off GitLab (where it would be
+          # postgres://postgres:postgres@postgres:5432/postgres). Do NOT rewrite
+          # this to the service-name hostname to satisfy a local runner — the
+          # 127.0.0.1 form is the correct hosted-runner target.
+          DBSMOKE_DSN: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+        run: go test ./internal/dbsmoke/ -run TestDBSmoke -v
+
+  # ---------------------------------------------------------------------------
+  # Temporal dev-server smoke (ADVISORY / non-blocking).
+  #
+  # `continue-on-error: true` makes this job advisory: a failure does NOT fail
+  # the reusable workflow, and therefore does NOT fail ci.yaml's aggregate gate
+  # (which gates on the `tests` reusable-workflow call as a whole). It
+  # pre-validates the *other* half of CWE's `make e2e-gofail` dependency set — a
+  # temporal dev server — without gating the POC on Temporal CLI availability.
+  #
+  # The Temporal CLI version and its linux_amd64 archive checksum are pinned in
+  # .settings.yaml (testing_tools.temporal / temporal_sha256_linux_amd64) and
+  # surfaced by load-versions. The install step verifies the downloaded archive
+  # against that pinned SHA256 (temporalio/cli publishes a checksums.txt per
+  # release) before extracting — the same checksum idiom aicr uses for its
+  # mkcert/actionlint downloads.
+  temporal-smoke:
+    name: Temporal Dev-Server Smoke (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load versions
+        id: versions
+        uses: ./.github/actions/load-versions
+
+      - name: Install pinned Temporal CLI
+        env:
+          TEMPORAL_VERSION: ${{ steps.versions.outputs.temporal-version }}
+          TEMPORAL_SHA256: ${{ steps.versions.outputs.temporal-sha256-linux-amd64 }}
+        run: |
+          set -euo pipefail
+          # Release archives are named with the bare version (no leading 'v').
+          ver="${TEMPORAL_VERSION#v}"
+          base="https://github.com/temporalio/cli/releases/download/v${ver}"
+          tar="temporal_cli_${ver}_linux_amd64.tar.gz"
+          tmp="$(mktemp -d)"
+          curl -fsSL -o "${tmp}/${tar}" "${base}/${tar}"
+          # Verify against the pinned checksum before trusting the binary.
+          echo "${TEMPORAL_SHA256}  ${tmp}/${tar}" | sha256sum -c -
+          tar -xzf "${tmp}/${tar}" -C "${tmp}" temporal
+          sudo install -m 0755 "${tmp}/temporal" /usr/local/bin/temporal
+          rm -rf "${tmp}"
+          temporal --version
+
+      - name: Start temporal dev server and list namespaces
+        run: |
+          set -euo pipefail
+          # Headless: no Web UI, just the frontend gRPC service (default
+          # 127.0.0.1:7233) that `temporal operator` talks to.
+          temporal server start-dev --headless --log-level error &
+          server_pid=$!
+          ready=0
+          for i in $(seq 1 30); do
+            if temporal operator namespace list >/dev/null 2>&1; then
+              echo "temporal dev server ready after ${i}s"
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "${ready}" -eq 1 ]; then
+            temporal operator namespace list
+          else
+            echo "::warning::temporal dev server did not become ready within 30s"
+          fi
+          kill "${server_pid}" 2>/dev/null || true
+          [ "${ready}" -eq 1 ]

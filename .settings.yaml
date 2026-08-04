@@ -14,6 +14,24 @@ linting:
   # renovate: datasource=github-releases depName=golangci/golangci-lint depType=linting
   golangci_lint: 'v2.7.2'
 
+# E2E Testing Tools
+#
+# Pins for tools the qualification lane's e2e-shaped smoke jobs download. These
+# de-risk cloud-workflow-engine's `make e2e-gofail` dependency set (a postgres
+# service container + a temporal dev server). The postgres image tag is a
+# literal in the workflow (a service container starts before any step and so
+# cannot read a load-versions output — see qualification.yaml), so only the
+# Temporal CLI is pinned here.
+testing_tools:
+  # Temporal CLI — used by the advisory temporal-smoke job to run
+  # `temporal server start-dev`. The upstream release archive is named with the
+  # bare version (no leading 'v'); temporal_amd64_sha256 is the linux_amd64
+  # entry from the release's checksums.txt, verified with `sha256sum -c` before
+  # extraction (the same checksum idiom aicr uses for mkcert/actionlint).
+  # renovate: datasource=github-releases depName=temporalio/cli depType=testing_tools
+  temporal: 'v1.8.2'
+  temporal_sha256_linux_amd64: 'd8421bda989e6514b4bdb4d63a9012a8a05a806892e881a5aad8510496349a94'
+
 # Quality Thresholds
 quality:
   lint_timeout: '10m'
