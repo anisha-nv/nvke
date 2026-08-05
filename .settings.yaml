@@ -1,0 +1,20 @@
+# Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+
+# Single source of truth for pinned tool versions and quality thresholds used
+# by CI and local development. Mirrors the schema of NVIDIA/aicr's
+# .settings.yaml so these keys stay compatible as the CI POC grows into the
+# real cloud-workflow-engine pipeline.
+#
+# The Go toolchain version is owned by .go-version (its own single source of
+# truth, read directly by CI and the Makefile); this file owns everything else
+# CI pins.
+
+# Linting
+linting:
+  # renovate: datasource=github-releases depName=golangci/golangci-lint depType=linting
+  golangci_lint: 'v2.7.2'
+
+# Quality Thresholds
+quality:
+  lint_timeout: '10m'
+  test_timeout: '10m'

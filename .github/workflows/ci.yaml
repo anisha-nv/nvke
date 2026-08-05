@@ -1,0 +1,78 @@
+# Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+
+# Phase 1 of the CI POC (branch: ci-poc-phase0-1).
+#
+# A hello-world gate that proves the runner, checkout, and repo contents are
+# reachable before the real qualification jobs (test, lint) are
+# wired in. It intentionally mirrors NVIDIA/aicr's merge-gate.yaml idioms —
+# permissions, concurrency, and the aggregate gate job — so it can grow into
+# the production merge gate in place rather than being rewritten later.
+#
+# The final "gate" job aggregates every upstream job's result into a single
+# pass/fail and is intended to become the SOLE required status check in the
+# main branch ruleset. To add a gating check later: add the job, then add its
+# name to the gate job's needs: list — no ruleset change required.
+
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Hello world — proves the runner + checkout work and the repo is reachable
+  # ---------------------------------------------------------------------------
+
+  hello:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prove CI is alive and the checkout worked
+        run: |
+          echo "nke CI is alive on ${RUNNER_OS} / $(uname -m)"
+          echo "Go toolchain pinned by .go-version:"
+          cat .go-version
+
+  # ---------------------------------------------------------------------------
+  # Aggregate gate — the single required status check
+  #
+  # Intended to become the SOLE required status check in the main branch
+  # ruleset once this POC graduates. Every gating check is added to its needs:
+  # list and this job aggregates all results into one pass/fail. Phase 1 gates
+  # only on the hello job.
+  # ---------------------------------------------------------------------------
+
+  gate:
+    if: always()
+    needs: [hello]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Check gate
+        run: |
+          echo "Gate results:"
+          echo '${{ toJSON(needs) }}' | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+
+          # Fail if ANY dependency failed or was cancelled.
+          # Skipped is OK — it means an inverse/conditional job ran instead.
+          if echo '${{ toJSON(needs.*.result) }}' | jq -e 'map(select(. == "failure" or . == "cancelled")) | length > 0' > /dev/null; then
+            echo "::error::One or more gating checks failed or were cancelled"
+            exit 1
+          fi

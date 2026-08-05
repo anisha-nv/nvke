@@ -1,0 +1,50 @@
+# Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+
+name: 'Load Versions'
+description: 'Loads pinned tool versions from .settings.yaml and the Go version from .go-version'
+
+outputs:
+  go-version:
+    description: 'Go version (from .go-version)'
+    value: ${{ steps.versions.outputs.go }}
+  golangci-lint-version:
+    description: 'golangci-lint version'
+    value: ${{ steps.versions.outputs.golangci_lint }}
+  lint-timeout:
+    description: 'Lint timeout duration'
+    value: ${{ steps.versions.outputs.lint_timeout }}
+  test-timeout:
+    description: 'Test timeout duration'
+    value: ${{ steps.versions.outputs.test_timeout }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Load versions from .settings.yaml
+      id: versions
+      shell: bash
+      # yq (mikefarah) ships preinstalled on GitHub-hosted ubuntu runners, so it
+      # is invoked directly with no download/checksum step — the same mechanism
+      # NVIDIA/aicr's load-versions composite action relies on.
+      run: |
+        set -euo pipefail
+
+        # Languages — Go version is owned by .go-version (single source of truth)
+        echo "go=$(cat .go-version)" >> $GITHUB_OUTPUT
+
+        # Linting
+        echo "golangci_lint=$(yq eval '.linting.golangci_lint' .settings.yaml)" >> $GITHUB_OUTPUT
+
+        # Quality thresholds
+        echo "lint_timeout=$(yq eval '.quality.lint_timeout' .settings.yaml)" >> $GITHUB_OUTPUT
+        echo "test_timeout=$(yq eval '.quality.test_timeout' .settings.yaml)" >> $GITHUB_OUTPUT
+
+    - name: Display loaded versions
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Loaded versions from .settings.yaml:"
+        echo "  go: ${{ steps.versions.outputs.go }}"
+        echo "  golangci_lint: ${{ steps.versions.outputs.golangci_lint }}"
+        echo "  lint_timeout: ${{ steps.versions.outputs.lint_timeout }}"
+        echo "  test_timeout: ${{ steps.versions.outputs.test_timeout }}"
