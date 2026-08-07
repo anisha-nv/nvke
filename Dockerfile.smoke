@@ -1,0 +1,8 @@
+# Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+
+# POC-only (CI POC, PR #6): minimal image for the GHCR visibility smoke test.
+# Built FROM scratch so no external base image is pulled. Delete before any
+# graduation to main.
+FROM scratch
+COPY hello /hello
+ENTRYPOINT ["/hello"]

@@ -124,6 +124,126 @@ jobs:
       - run: echo "Docs/non-code change — qualification tests not required"
 
   # ---------------------------------------------------------------------------
+  # GHCR publish + visibility smoke (POC-only, CI POC / PR #6)
+  #
+  # Temporary probe jobs: publish a minimal image to ghcr.io and check the
+  # package-visibility semantics of this internal-visibility repo — PR-token
+  # packages:write, package auto-link on first push, and visibility inheritance.
+  # Deliberately advisory: NOT wired into the gate job's needs: list, so the gate
+  # signal stays clean if org policy denies the PR token's push. Delete this
+  # entire section (and Dockerfile.smoke) before any graduation to main.
+  # ---------------------------------------------------------------------------
+
+  ghcr-publish:
+    # head_ref only exists on pull_request events; the push-to-main trigger must
+    # not run this POC job.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # This grant is itself a probe. Same-repo PRs may REQUEST write scopes (fork
+    # PRs never can); whether the token is actually granted packages:write is what
+    # we are measuring. A 403 on push means org policy caps PR tokens to read —
+    # that is a finding, not a bug.
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load versions
+        id: versions
+        uses: ./.github/actions/load-versions
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: ${{ steps.versions.outputs.go-version }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Build the static hello binary
+        run: CGO_ENABLED=0 go build -o hello ./cmd/hello
+
+      - name: Login to GHCR
+        # aicr's ghcr-login pattern (see NVIDIA/aicr
+        # .github/actions/ghcr-login/action.yml).
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push the smoke image
+        env:
+          # Pass the untrusted head_ref through the environment (actionlint
+          # script-injection mitigation) instead of interpolating it inline.
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          TAG="$(echo "${HEAD_REF}" | tr '/' '-')"
+          # Lowercase org namespace (aicr convention: ghcr.io/nvidia/... even
+          # though the org is NVIDIA).
+          IMAGE="ghcr.io/nvidia/nke/ci-smoke:${TAG}"
+          # The org.opencontainers.image.source label is what auto-links the
+          # package to this repo on first push — that link is what drives the
+          # package's visibility/permission inheritance from the repo.
+          docker build -f Dockerfile.smoke \
+            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}" \
+            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t "${IMAGE}" .
+          docker push "${IMAGE}"
+          docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}" || true
+          echo "pushed=${IMAGE}"
+
+  ghcr-verify-pull:
+    needs: [ghcr-publish]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Pull the smoke image with a read-only grant
+        # Proves an authenticated Actions-side pull works with packages:read on a
+        # fresh runner.
+        env:
+          # Same actionlint script-injection mitigation as ghcr-publish.
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          TAG="$(echo "${HEAD_REF}" | tr '/' '-')"
+          docker pull "ghcr.io/nvidia/nke/ci-smoke:${TAG}"
+
+  ghcr-inspect:
+    needs: [ghcr-publish]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Whether GITHUB_TOKEN may read the org packages API is itself a probe — a
+    # 403 here is a finding, not a bug — so this job never fails the run.
+    continue-on-error: true
+    permissions:
+      packages: read
+    steps:
+      - name: Inspect the package via the org packages API
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "orgs/NVIDIA/packages/container/nke%2Fci-smoke" \
+            --jq '{name, visibility, repo: .repository.full_name, url: .html_url}' || echo "::warning::org packages API not readable with GITHUB_TOKEN (probe result)"
+          gh api "orgs/NVIDIA/packages/container/nke%2Fci-smoke/versions?per_page=10" \
+            --jq '.[] | {id, tags: .metadata.container.tags}' || true
+
+  # ---------------------------------------------------------------------------
   # Aggregate gate — the single required status check
   #
   # Intended to become the SOLE required status check in the main branch
