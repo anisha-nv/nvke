@@ -1,0 +1,136 @@
+# Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+
+# Continuous integration entrypoint for nke.
+#
+# A `check-paths` job (dorny/paths-filter) classifies the PR diff as code vs
+# docs-only, then a real `tests` job (the reusable qualification.yaml running
+# lint/test/build) and a `tests-skip` twin run under inverse conditions — so
+# exactly one of them executes and both feed the aggregate gate. The final
+# `gate` job aggregates every upstream job's result into a single pass/fail and
+# is intended to be the SOLE required status check in the main branch ruleset.
+#
+# To add a gating check later (e.g. the full `controller` module's lanes once
+# its private gitlab-master.nvidia.com deps are fetchable from hosted runners):
+# add a real job plus a companion -skip twin with inverse `if:` conditions, then
+# add both names to the gate job's `needs:` list — no ruleset change required.
+#
+# This structure (permissions, concurrency, the check-paths real/skip-twin
+# pattern, and the aggregate gate job) is transplanted from the nke CI POC
+# (PR #6), which went green on real runs.
+
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Path classification — determines whether the qualification tests run or skip
+  # ---------------------------------------------------------------------------
+
+  check-paths:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    # pull-requests:read lets dorny/paths-filter list the PR's changed files
+    # via the API. Unlike public repos, that read is not implicitly available on
+    # an internal/private repo with a contents:read-only token — without it
+    # paths-filter 403s.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.code.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # code = true iff at least one changed file is NOT docs/markdown/LICENSE.
+      #
+      # Exclusion idiom: dorny's `predicate-quantifier: 'every'` requires a file
+      # to match EVERY pattern in the filter, so a file matches `code` only when
+      # it matches '**' AND none of the docs patterns. The filter output is true
+      # when ANY changed file is code — so a docs-only PR yields code=false.
+      # '**' matches dotfiles too (dorny sets picomatch dot:true), so
+      # '.golangci.yml', '.github/**', etc. still count as code.
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706  # v4.0.2
+        id: code
+        with:
+          predicate-quantifier: 'every'
+          filters: |
+            code:
+              - '**'
+              - '!**.md'
+              - '!docs/**'
+              - '!LICENSE'
+
+  # ---------------------------------------------------------------------------
+  # Qualification (lint, test, build) — real job + skip twin. Exactly one runs.
+  # ---------------------------------------------------------------------------
+
+  tests:
+    needs: [check-paths]
+    if: needs.check-paths.outputs.code == 'true'
+    uses: ./.github/workflows/qualification.yaml
+    permissions:
+      contents: read
+    with:
+      privileged_ci: true
+
+  tests-skip:
+    needs: [check-paths]
+    if: needs.check-paths.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: |
+          echo "Docs/non-code change — qualification tests not required"
+          exit 0
+
+  # ---------------------------------------------------------------------------
+  # Aggregate gate — the single required status check
+  #
+  # Intended to be the SOLE required status check in the main branch ruleset.
+  # Every gating check is added to its `needs:` list and this job aggregates all
+  # results into one pass/fail.
+  # ---------------------------------------------------------------------------
+
+  gate:
+    if: always()
+    needs: [check-paths, tests, tests-skip]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Check gate
+        run: |
+          echo "Gate results:"
+          echo '${{ toJSON(needs) }}' | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+
+          # check-paths must succeed — if it fails, the downstream tests /
+          # tests-skip jobs are skipped (not failed), which would silently pass
+          # the gate. Fail closed on a check-paths that did not succeed.
+          if [ "${{ needs.check-paths.result }}" != "success" ]; then
+            echo "::error::check-paths did not succeed (result: ${{ needs.check-paths.result }})"
+            exit 1
+          fi
+
+          # Fail if ANY dependency failed or was cancelled.
+          # Skipped is OK — it means an inverse/conditional job ran instead.
+          if echo '${{ toJSON(needs.*.result) }}' | jq -e 'map(select(. == "failure" or . == "cancelled")) | length > 0' > /dev/null; then
+            echo "::error::One or more gating checks failed or were cancelled"
+            exit 1
+          fi

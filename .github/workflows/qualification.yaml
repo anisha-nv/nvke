@@ -1,0 +1,104 @@
+# Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+
+# Reusable Go qualification workflow. Called by ci.yaml's `tests` job
+# (see .github/workflows/ci.yaml). Runs lint, unit test, and build.
+#
+# SCOPE: today this qualifies ONLY the controller/api Go module
+# (github.com/NVIDIA/nke/controller/api), which has zero private dependencies.
+# The main `controller` module is NOT qualified here yet: it requires private
+# gitlab-master.nvidia.com modules (4 of them) that GitHub-hosted runners
+# cannot fetch (proxy.golang.org 404s them and the host does not resolve on
+# public DNS). Its lint/test/build lanes will be added to this workflow once
+# those private-module deps are resolvable from hosted runners.
+#
+# Every build/lint/test step is a single `make` call into controller/api so any
+# CI failure reproduces locally with the exact same command (make -C controller/api <target>).
+
+name: Qualification
+
+on:
+  workflow_call:
+    inputs:
+      # Currently unused. Reserved to gate future elevated-token jobs (e.g. a
+      # security scan or SARIF upload): fork PRs will pass privileged_ci=false
+      # so jobs needing write scopes (id-token/security-events) skip, while
+      # trusted runs pass true.
+      privileged_ci:
+        description: 'Whether jobs that require elevated permissions should run'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+# NOTE: none of the jobs below declare job-level permissions. GitHub validates
+# the union of a reusable workflow's requested permissions against the caller's
+# grant at startup, so a nested job that requested more than the caller's
+# `contents: read` would fail the whole run. Keep these jobs at the default.
+
+jobs:
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: controller/api/go.mod
+          cache: true
+          cache-dependency-path: controller/api/go.sum
+
+      - name: Lint
+        # CI=true exercises the Makefile's CI path (installs the pinned
+        # golangci-lint to /usr/local/bin instead of `go run`).
+        env:
+          CI: 'true'
+        run: make -C controller/api lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: controller/api/go.mod
+          cache: true
+          cache-dependency-path: controller/api/go.sum
+
+      - name: Test
+        run: make -C controller/api test
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: controller/api/go.mod
+          cache: true
+          cache-dependency-path: controller/api/go.sum
+
+      - name: Build
+        run: make -C controller/api build
