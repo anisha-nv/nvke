@@ -17,6 +17,7 @@ GOFAIL				?= $(shell go env GOPATH)/bin/gofail
 IMG_NAME ?= nvcr.io/j7sbcjl3qgta/cloud-workflow-engine
 IMG_TAG ?= latest
 IMG ?= ${IMG_NAME}:${IMG_TAG}
+DOCKER_PLATFORM ?= linux/amd64
 export NAME := cloud-workflow-engine
 BUILD_VERSION ?= "$(shell git describe --tags --dirty --match 'v[0-9]*' || echo "v0.0.0")"
 
@@ -169,7 +170,7 @@ endif
 
 .PHONY: docker-build-local
 docker-build-local: ## Build the docker image for Cloud Workflow Engine
-	DOCKER_BUILDKIT=1 docker build -f Dockerfile --platform linux/amd64 \
+	DOCKER_BUILDKIT=1 docker build -f Dockerfile --platform $(DOCKER_PLATFORM) \
 	  --progress=plain \
 	  $(DOCKER_BUILD_SECRET) \
 	  --tag $(IMG_NAME):$(GIT_VERSION) \

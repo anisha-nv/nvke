@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+#
+# Install the pinned AICR binary into .bin and verify its release archive.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+bin_dir="${repo_root}/.bin"
+aicr_version="0.18.0"
+
+case "$(uname -s)" in
+  Darwin) os=darwin ;;
+  Linux) os=linux ;;
+  *) echo "unsupported operating system: $(uname -s)" >&2; exit 1 ;;
+esac
+case "$(uname -m)" in
+  arm64|aarch64) arch=arm64 ;;
+  x86_64|amd64) arch=amd64 ;;
+  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+
+case "${os}/${arch}" in
+  linux/amd64) expected="6a498b8ce0dcb0e28095de35cdae583391ad567f3922aae6657c851cc76275ee" ;;
+  linux/arm64) expected="d939b206c5f6a89703ef46eb99381bb79fe80d3106af244474e88628bdbd4b91" ;;
+  darwin/amd64) expected="9e746e9dca7a47b7e2e2d0c636711f1d84e9829aa6652bd7a7daefeb59f2c580" ;;
+  darwin/arm64) expected="ac29d8b853641dab3ffd8700afe1e9f8a5a901b201920335e10930e8be5c8b5d" ;;
+esac
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "${tmpdir}"' EXIT
+mkdir -p "${bin_dir}"
+
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+aicr_asset="aicr_${aicr_version}_${os}_${arch}.tar.gz"
+if [[ ! -x "${bin_dir}/aicr" ]] ||
+  [[ "$("${bin_dir}/aicr" --version 2>/dev/null)" != *"${aicr_version}"* ]]; then
+  curl -fsSL \
+    "https://github.com/NVIDIA/aicr/releases/download/v${aicr_version}/${aicr_asset}" \
+    -o "${tmpdir}/${aicr_asset}"
+  actual="$(sha256 "${tmpdir}/${aicr_asset}")"
+  [[ "${actual}" == "${expected}" ]] || {
+    echo "checksum mismatch for ${aicr_asset}" >&2
+    echo "expected: ${expected}" >&2
+    echo "actual:   ${actual}" >&2
+    exit 1
+  }
+  tar -xzf "${tmpdir}/${aicr_asset}" -C "${tmpdir}" aicr
+  install -m 0755 "${tmpdir}/aicr" "${bin_dir}/aicr"
+fi
+
+"${bin_dir}/aicr" --version

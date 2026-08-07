@@ -16,3 +16,6 @@ node-agent/agent
 # Go workspace overrides
 go.work
 go.work.sum
+# Local development
+.bin/
+generated/aicr/
