@@ -13,26 +13,13 @@
 # Runs on ubuntu-latest. shellcheck is preinstalled on GitHub runners, so this
 # needs no download, no NVIDIA runner and no credentials.
 #
-# Deliberately NOT path-filtered, for the reason recorded in actionlint.yml: a
-# filtered check does not report on a pull request that misses the filter, and
-# a required check that never reports leaves that pull request waiting forever.
-# See docs/branch-protection-settings.md.
+# The required check is the aggregate `gate`; shellcheck runs only when the diff
+# contains shell or cross-cutting changes.
 
 name: Shellcheck
 
-# workflow_call is declared so merge-gate.yml can call this as a reusable
-# workflow. Adding the trigger changes nothing on its own: this workflow still
-# runs exactly as it did, on the same events.
-#
-# It lands ahead of the gate on purpose. A local `uses: ./.github/workflows/...`
-# reference resolves against the BASE branch, so a workflow whose workflow_call
-# trigger exists only on a pull-request head cannot be called from that same
-# pull request -- the call fails with no jobs and no error message.
+# Pull requests and main pushes reach this through the change-aware merge gate.
 on:
-  push:
-    branches:
-      - main
-      - "pull-request/[0-9]+"
   workflow_call:
   workflow_dispatch: {}
 

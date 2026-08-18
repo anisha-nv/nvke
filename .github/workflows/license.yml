@@ -1,23 +1,23 @@
 ---
-# License enforcement for all Go modules in the monorepo.
+# License enforcement for selected Go modules in the monorepo.
 #
-# A discover-modules setup job finds every go.mod (excluding vendor/ and
-# testdata/), then two matrix jobs fan out over its outputs so new components
-# are covered automatically without workflow edits.
+# The merge gate supplies modules related to the changed paths. Release and
+# manual calls default to every workspace module. A setup job validates that
+# selection, then two matrix jobs fan out over its outputs.
 #
 #   license-check — go-licenses (github.com/google/go-licenses) verifies all
 #     transitive dependency licenses are permissive (no restricted/reciprocal/
 #     forbidden/unknown types).  This is the same underlying tool used in the
 #     existing GitLab CI pipeline; no proprietary wrapper is required here.
-#     It covers every module.  controller used to be excluded because the check
+#     It can cover every module.  controller used to be excluded because the check
 #     resolved dependencies over the network and could not reach the INTERNAL
 #     github.com/NVIDIA/cluster-api-provider-nico; it now reads the committed
 #     vendor tree, which carries that module, so nothing is excluded and no
 #     credential is needed.
 #
 #   header-check — `make file-license-check` verifies every source file carries
-#     the required copyright header via addlicense.  This runs over the *full*
-#     module list, including the modules excluded above: the target invokes
+#     the required copyright header via addlicense. This runs over the selected
+#     module list: the target invokes
 #     addlicense as `go run <pkg>@<version>`, which ignores the current module's
 #     dependencies, so it needs no access to private imports.
 #
@@ -26,26 +26,30 @@
 name: License Checks
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '**/*.go'
-      - '**/go.mod'
-      - '**/go.sum'
-      # The shipped LICENSE/NOTICE copies derive from the root files and from
-      # the Makefile that copies them, so all three trigger the check that
-      # compares them.
-      - 'LICENSE'
-      - 'NOTICE'
-      - 'Makefile'
-      - 'controller/licenses/**'
-      - 'controller/deploy/charts/cloud-workflow-engine/LICENSE'
-      - 'controller/deploy/charts/cloud-workflow-engine/NOTICE'
-      - '.github/workflows/license.yml'
-  # No `pull_request:` trigger. Pull requests reach this through merge-gate.yml,
-  # which calls it as a reusable workflow, so it runs once rather than twice.
-  # release.yml also calls it, which is why workflow_call was already here.
   workflow_call:
+    inputs:
+      modules:
+        description: JSON array of Go module directories to check
+        required: false
+        type: string
+        default: '["agent","cli","controller","controller/api","controller/forge-vms","controller/hack/capd-reboot-controller","controller/hack/nico-mock","controller/test/e2e"]'
+      shipped:
+        description: Verify shipped LICENSE and NOTICE copies
+        required: false
+        type: boolean
+        default: true
+  workflow_dispatch:
+    inputs:
+      modules:
+        description: JSON array of Go module directories to check
+        required: false
+        type: string
+        default: '["agent","cli","controller","controller/api","controller/forge-vms","controller/hack/capd-reboot-controller","controller/hack/nico-mock","controller/test/e2e"]'
+      shipped:
+        description: Verify shipped LICENSE and NOTICE copies
+        required: false
+        type: boolean
+        default: true
 
 # Every job here only reads the checkout. Declared rather than inherited: a
 # called workflow with no permissions block takes the caller's, and release.yml
@@ -83,7 +87,7 @@ env:
 
 jobs:
   discover-modules:
-    name: Discover Go modules
+    name: Select Go modules
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -91,6 +95,8 @@ jobs:
     outputs:
       modules: ${{ steps.find.outputs.modules }}
       header_modules: ${{ steps.find.outputs.header_modules }}
+      has_modules: ${{ steps.find.outputs.has_modules }}
+      has_header_modules: ${{ steps.find.outputs.has_header_modules }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -98,31 +104,57 @@ jobs:
 
       - name: Find Go modules
         id: find
+        env:
+          REQUESTED_MODULES: ${{ inputs.modules }}
         run: |
-          all=$(find . -name go.mod \
-            -not -path '*/vendor/*' \
-            -not -path '*/testdata/*' \
-            -exec dirname {} \; \
-            | sort)
+          set -euo pipefail
+          if [ "${REQUESTED_MODULES}" = '[]' ]; then
+            all=''
+          else
+            all=$(jq -er '.[]' <<<"${REQUESTED_MODULES}")
+          fi
+
+          while IFS= read -r module; do
+            [ -z "${module}" ] && continue
+            if [ ! -f "${module}/go.mod" ]; then
+              echo "::error::selected module has no go.mod: ${module}"
+              exit 1
+            fi
+          done <<<"${all}"
 
           # Every module, with no exclusion. controller used to be dropped here
           # because go-licenses resolved dependencies over the network and could
           # not reach the INTERNAL cluster-api-provider-nico. The check now runs
           # from the vendor tree instead, which carries that module, so it needs
           # no credential and no exclusion. See the check job below.
-          modules=$(printf '%s\n' "$all" | jq -R . | jq -sc .)
+          if [ -n "${all}" ]; then
+            modules=$(printf '%s\n' "${all}" | jq -R . | jq -sc .)
+            echo "has_modules=true" >> "$GITHUB_OUTPUT"
+          else
+            modules='[]'
+            echo "has_modules=false" >> "$GITHUB_OUTPUT"
+          fi
           echo "modules=$modules" >> "$GITHUB_OUTPUT"
 
           # Header checks: every module that exposes the Makefile target, with
           # no private-dependency exclusions (see the note at the top of this
           # file). A module without the target is silently absent from the
           # matrix, so list what was found to keep the gap visible in the log.
-          header_modules=$(printf '%s\n' "$all" | while read -r m; do
-            if [ -f "$m/Makefile" ] && grep -qE '^file-license-check:' "$m/Makefile"; then
-              echo "$m"
-            fi
-          done | jq -R . | jq -sc .)
+          if [ -n "${all}" ]; then
+            header_modules=$(printf '%s\n' "$all" | while read -r m; do
+              if [ -f "$m/Makefile" ] && grep -qE '^file-license-check:' "$m/Makefile"; then
+                echo "$m"
+              fi
+            done | jq -R . | jq -sc .)
+          else
+            header_modules='[]'
+          fi
           echo "header_modules=$header_modules" >> "$GITHUB_OUTPUT"
+          if [ "$header_modules" = '[]' ]; then
+            echo "has_header_modules=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_header_modules=true" >> "$GITHUB_OUTPUT"
+          fi
 
           echo "dependency-license modules: $modules"
           echo "license-header modules:     $header_modules"
@@ -130,6 +162,7 @@ jobs:
   license-check:
     name: License check (${{ matrix.module }})
     needs: [discover-modules]
+    if: needs.discover-modules.outputs.has_modules == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -202,6 +235,7 @@ jobs:
   header-check:
     name: License headers (${{ matrix.module }})
     needs: [discover-modules]
+    if: needs.discover-modules.outputs.has_header_modules == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -228,6 +262,7 @@ jobs:
 
   shipped-licenses:
     name: Shipped LICENSE and NOTICE copies
+    if: inputs.shipped
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

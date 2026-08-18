@@ -7,28 +7,28 @@
 #
 # Two ways a required check blocks a pull request forever, and both apply here:
 #
-#   1. A check that never runs. Nine of this repository's workflows trigger on
-#      `push` to main or to pull-request/N, so they only appear when copy-pr-bot
-#      mirrors the head -- which happens for vetted authors. Requiring one of
-#      those would block every unvetted contributor permanently.
+#   1. A check that never runs. Previously, nine workflows triggered on `push`
+#      to main or to pull-request/N, so they appeared only when copy-pr-bot
+#      mirrored the head. Requiring one of those would block every unvetted
+#      contributor permanently.
 #
-#   2. A check that is skipped. Most workflows here carry `paths:` filters, so a
-#      pull request that does not touch their paths never reports them. GitHub
+#   2. A check that is skipped. Most workflows carried `paths:` filters, so a
+#      pull request that did not touch their paths never reported them. GitHub
 #      treats a required-but-absent check as pending, not as passed.
 #
 # So the required context is this one job. It runs on `pull_request`, which every
 # author gets, and it reports a single result no matter which underlying checks
 # ran. Adding a module, growing a matrix or renaming a job then needs no change
-# to branch protection -- which matters, because the licence and govulncheck
-# matrices are generated from go.work.
+# to branch protection -- which matters because several checks use dynamic
+# module matrices.
 #
 # WHAT IS IN IT
 #
-# Everything that runs on a GitHub-hosted runner and is fast enough not to hurt
-# pull-request latency. Deliberately NOT in it: codeql, image, notices-check,
-# secrets, security-scan and lint, which need NVIDIA runners, and deb, whose
-# two-architecture package build is slow and only matters to an agent release.
-# Those keep reporting on `push` as they do today; they are advisory.
+# The `changes` job classifies the diff once and calls only the relevant
+# GitHub-hosted workflows. Module dependency edges are explicit: agent protobuf
+# changes also check the controller, while controller API changes check its
+# controller, CLI and E2E consumers. Cross-cutting, CI and unknown paths expand
+# to the full suite rather than risk silently losing coverage.
 #
 # `DCO` is not here either. It is a GitHub App rather than a workflow, it already
 # reports on every pull request regardless of author, and it should be required
@@ -36,16 +36,11 @@
 #
 # HOW IT SEES THE OTHER CHECKS
 #
-# A job cannot `needs:` across workflows, so each one is called as a reusable
-# workflow. Each called workflow gained `workflow_call:` and lost its own
-# `pull_request:` trigger in the same change, so it runs once -- through here --
-# rather than twice on every pull request.
-#
-# A called workflow does NOT apply its own `paths:` filter, so everything below
-# runs on every pull request. That is deliberate: preserving the filters would
-# mean copying every path list into a `changes` job here, and two copies of a
-# path list is a thing that goes stale silently. Running the full set costs a few
-# minutes and cannot be wrong.
+# A job cannot `needs:` across workflows, so each check is called as a reusable
+# workflow. The only path map lives in classify-ci-changes.sh; the selected
+# module and suite lists are passed into those workflows as inputs. The final
+# `gate` always reports and accepts intentional skips, so branch protection never
+# waits forever for an irrelevant check that did not run.
 
 name: Merge gate
 
@@ -76,54 +71,150 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  changes:
+    name: Select related checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      full: ${{ steps.select.outputs.full }}
+      full_build: ${{ steps.select.outputs.full_build }}
+      modules: ${{ steps.select.outputs.modules }}
+      lint_modules: ${{ steps.select.outputs.lint_modules }}
+      unit_modules: ${{ steps.select.outputs.unit_modules }}
+      compile_suites: ${{ steps.select.outputs.compile_suites }}
+      go: ${{ steps.select.outputs.go }}
+      agent_test: ${{ steps.select.outputs.agent_test }}
+      controller_test: ${{ steps.select.outputs.controller_test }}
+      workspace: ${{ steps.select.outputs.workspace }}
+      chart: ${{ steps.select.outputs.chart }}
+      licenses: ${{ steps.select.outputs.licenses }}
+      shipped_licenses: ${{ steps.select.outputs.shipped_licenses }}
+      generated: ${{ steps.select.outputs.generated }}
+      actionlint: ${{ steps.select.outputs.actionlint }}
+      shellcheck: ${{ steps.select.outputs.shellcheck }}
+      lint: ${{ steps.select.outputs.lint }}
+      govulncheck: ${{ steps.select.outputs.govulncheck }}
+      docs_only: ${{ steps.select.outputs.docs_only }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify changed paths
+        id: select
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+            || [ -z "${BASE_SHA}" ] \
+            || [[ "${BASE_SHA}" =~ ^0+$ ]] \
+            || ! git cat-file -e "${BASE_SHA}^{commit}"; then
+            .github/scripts/classify-ci-changes.sh --all >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          mapfile -d '' -t files < <(git diff --name-only -z "${BASE_SHA}" "${HEAD_SHA}")
+          .github/scripts/classify-ci-changes.sh "${files[@]}" >> "${GITHUB_OUTPUT}"
+
+      - name: Summarize selection
+        shell: bash
+        run: |
+          {
+            echo "### Related CI selection"
+            echo
+            echo "- Full suite: \`${{ steps.select.outputs.full }}\`"
+            echo "- Go modules: \`${{ steps.select.outputs.modules }}\`"
+            echo "- Controller compile suites: \`${{ steps.select.outputs.compile_suites }}\`"
+            echo "- Documentation only: \`${{ steps.select.outputs.docs_only }}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   build:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     uses: ./.github/workflows/go-build.yml
+    with:
+      modules: ${{ needs.changes.outputs.modules }}
+      full: ${{ needs.changes.outputs.full_build == 'true' }}
     permissions:
       contents: read
 
   controller-test:
+    needs: changes
+    if: needs.changes.outputs.controller_test == 'true'
     uses: ./.github/workflows/controller-test.yml
+    with:
+      unit_modules: ${{ needs.changes.outputs.unit_modules }}
+      compile_suites: ${{ needs.changes.outputs.compile_suites }}
     permissions:
       contents: read
 
   agent-test:
+    needs: changes
+    if: needs.changes.outputs.agent_test == 'true'
     uses: ./.github/workflows/agent-test.yml
     permissions:
       contents: read
 
   workspace:
+    needs: changes
+    if: needs.changes.outputs.workspace == 'true'
     uses: ./.github/workflows/go-work-check.yml
     permissions:
       contents: read
     secrets: inherit
 
   chart:
+    needs: changes
+    if: needs.changes.outputs.chart == 'true'
     uses: ./.github/workflows/chart.yml
     permissions:
       contents: read
 
   licenses:
+    needs: changes
+    if: needs.changes.outputs.licenses == 'true'
     uses: ./.github/workflows/license.yml
+    with:
+      modules: ${{ needs.changes.outputs.modules }}
+      shipped: ${{ needs.changes.outputs.shipped_licenses == 'true' }}
     permissions:
       contents: read
 
   generated:
+    needs: changes
+    if: needs.changes.outputs.generated == 'true'
     uses: ./.github/workflows/generate-check.yml
     permissions:
       contents: read
 
   actionlint:
+    needs: changes
+    if: needs.changes.outputs.actionlint == 'true'
     uses: ./.github/workflows/actionlint.yml
     permissions:
       contents: read
 
   shellcheck:
+    needs: changes
+    if: needs.changes.outputs.shellcheck == 'true'
     uses: ./.github/workflows/shellcheck.yml
     permissions:
       contents: read
 
   lint:
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
     uses: ./.github/workflows/lint.yml
+    with:
+      modules: ${{ needs.changes.outputs.lint_modules }}
     permissions:
       contents: read
 
@@ -131,7 +222,11 @@ jobs:
   # workflow cannot be granted less than its jobs request, or the whole file
   # fails to start with no jobs and no error message.
   govulncheck:
+    needs: changes
+    if: needs.changes.outputs.govulncheck == 'true'
     uses: ./.github/workflows/govulncheck.yml
+    with:
+      modules: ${{ needs.changes.outputs.modules }}
     permissions:
       contents: read
       actions: read
@@ -144,6 +239,7 @@ jobs:
     # "never ran" -- the exact failure this workflow exists to avoid.
     if: always()
     needs:
+      - changes
       - build
       - controller-test
       - agent-test

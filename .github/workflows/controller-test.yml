@@ -32,27 +32,34 @@
 
 name: Controller Unit Tests
 
-# The two path lists are duplicated by hand. github.com has supported YAML
-# anchors since August 2025, but GitHub Enterprise Server does not, and merge
-# keys are still unsupported everywhere. Keep the two lists identical.
-# workflow_call is what merge-gate.yml uses to call this as a reusable workflow.
-# Its own `pull_request:` trigger is gone: pull requests reach it through the
-# gate, so it runs once per pull request rather than twice.
-#
-# A called workflow does not apply its own `paths:` filter, so on a pull request
-# this runs whatever changed. That is deliberate -- see the note in
-# merge-gate.yml. The filter below still applies to `push`.
+# Pull requests and main pushes reach this workflow through merge-gate.yml.
+# The caller supplies only the unit-test modules and compile-only suites related
+# to the changed paths.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'controller/**'
-      - 'go.work'
-      - 'go.work.sum'
-      - 'vendor/**'
-      - '.github/workflows/controller-test.yml'
   workflow_call:
-  workflow_dispatch: {}
+    inputs:
+      unit_modules:
+        description: JSON array of module directories with unit tests
+        required: false
+        type: string
+        default: '["cli","controller","controller/forge-vms","controller/hack/nico-mock"]'
+      compile_suites:
+        description: JSON array of compile-only suite identifiers
+        required: false
+        type: string
+        default: '["e2e-gofail","teleport-integration","integration-test","forge-vms-integration","test-e2e"]'
+  workflow_dispatch:
+    inputs:
+      unit_modules:
+        description: JSON array of module directories with unit tests
+        required: false
+        type: string
+        default: '["cli","controller","controller/forge-vms","controller/hack/nico-mock"]'
+      compile_suites:
+        description: JSON array of compile-only suite identifiers
+        required: false
+        type: string
+        default: '["e2e-gofail","teleport-integration","integration-test","forge-vms-integration","test-e2e"]'
 
 permissions: {}
 
@@ -79,28 +86,14 @@ jobs:
   test:
     name: Unit tests (${{ matrix.module }})
     runs-on: ubuntu-latest
-    if: github.repository == 'NVIDIA/nke'
+    if: github.repository == 'NVIDIA/nke' && inputs.unit_modules != '[]'
     timeout-minutes: 30
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # `make test` here already drops ./integration-test, which needs a
-          # running CWE on port 8080.
-          - module: controller
-            run: make test
-          - module: controller/forge-vms
-            run: make test
-          # Every module here now has a Makefile with a `test` target, so all
-          # four go through `make test` and pick up -race from GO_TEST_FLAGS
-          # below. Previously these two ran a bare `go test -race ./...`,
-          # because neither had a Makefile.
-          - module: controller/hack/nico-mock
-            run: make test
-          - module: cli
-            run: make test
+        module: ${{ fromJSON(inputs.unit_modules) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -131,7 +124,7 @@ jobs:
         env:
           CGO_ENABLED: "1"
           GO_TEST_FLAGS: -race
-        run: ${{ matrix.run }}
+        run: make test
 
   # Type-checks the test code that nothing in CI compiles. These suites need a
   # cluster, a live API, real VMs or a fault-injection build, so a pull request
@@ -157,31 +150,16 @@ jobs:
   # go vet rather than `go build`: it type-checks test files, which is the
   # point, and it is the cheapest thing that does. All five are green today.
   compile:
-    name: Compile (${{ matrix.name }})
+    name: Compile (${{ matrix.suite }})
     runs-on: ubuntu-latest
-    if: github.repository == 'NVIDIA/nke'
+    if: github.repository == 'NVIDIA/nke' && inputs.compile_suites != '[]'
     timeout-minutes: 20
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: test/e2e
-            dir: controller/test/e2e
-            run: go vet ./...
-          - name: e2e gofail
-            dir: controller
-            run: go vet -tags gofail ./e2e/...
-          - name: teleport integration
-            dir: controller
-            run: go vet -tags integration ./internal/teleport/...
-          - name: forge-vms integration
-            dir: controller/forge-vms
-            run: go vet -tags integration ./test/integration/...
-          - name: integration-test
-            dir: controller
-            run: go vet ./integration-test/...
+        suite: ${{ fromJSON(inputs.compile_suites) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -200,7 +178,28 @@ jobs:
       # Same reason as the test job: these packages reach mattn/go-sqlite3,
       # which needs cgo.
       - name: Type-check
-        working-directory: ${{ matrix.dir }}
         env:
           CGO_ENABLED: "1"
-        run: ${{ matrix.run }}
+          SUITE: ${{ matrix.suite }}
+        run: |
+          case "${SUITE}" in
+            test-e2e)
+              go -C controller/test/e2e vet ./...
+              ;;
+            e2e-gofail)
+              go -C controller vet -tags gofail ./e2e/...
+              ;;
+            teleport-integration)
+              go -C controller vet -tags integration ./internal/teleport/...
+              ;;
+            forge-vms-integration)
+              go -C controller/forge-vms vet -tags integration ./test/integration/...
+              ;;
+            integration-test)
+              go -C controller vet ./integration-test/...
+              ;;
+            *)
+              echo "::error::unknown compile suite: ${SUITE}"
+              exit 1
+              ;;
+          esac

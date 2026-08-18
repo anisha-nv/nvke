@@ -3,31 +3,23 @@
 
 name: Lint
 
-# Self-hosted runners do not pick up jobs from pull_request events, so pull
-# requests are tested through the pull-request/<number> branch instead.
-# workflow_call so merge-gate.yml can call this, and ubuntu-latest so the call
-# works on a real pull_request event -- self-hosted runners do not receive fork
-# pull_request events, so a gate member left on one would queue forever.
-#
-# Nothing here needs an NVIDIA runner: the whole workspace resolves from the
-# committed vendor/ tree, so this is ordinary Go work with no credentials.
-#
-# Lands ahead of the gate change on purpose. A local `uses: ./.github/...`
-# reference resolves against the BASE branch, so a workflow whose workflow_call
-# trigger exists only on a pull-request head cannot be called from it -- the call
-# fails with no jobs and no error message.
+# Pull requests and main pushes reach this through merge-gate.yml. The caller
+# supplies only modules whose source or downstream contract changed.
 on:
-  push:
-    branches:
-      - main
-      - "pull-request/[0-9]+"
-      # Dependabot branches are mirrored to neither main nor
-      # pull-request/N, so without this line a dependency bump gets none
-      # of this check -- and a check that cannot report on a pull request
-      # cannot be required. Same list as notices-check.yml.
-      - "dependabot/**"
   workflow_call:
+    inputs:
+      modules:
+        description: JSON array of lintable module directories
+        required: false
+        type: string
+        default: '["agent","cli","controller","controller/forge-vms","controller/hack/nico-mock"]'
   workflow_dispatch:
+    inputs:
+      modules:
+        description: JSON array of lintable module directories
+        required: false
+        type: string
+        default: '["agent","cli","controller","controller/forge-vms","controller/hack/nico-mock"]'
 
 permissions: {}
 
@@ -68,7 +60,7 @@ jobs:
     # under the required name and leaves every PR waiting forever.
     name: golangci-lint
     runs-on: ubuntu-latest
-    if: github.repository == 'NVIDIA/nke'
+    if: github.repository == 'NVIDIA/nke' && contains(fromJSON(inputs.modules), 'agent')
     timeout-minutes: 15
     permissions:
       contents: read
@@ -92,7 +84,7 @@ jobs:
   lint-controller:
     name: golangci-lint (controller)
     runs-on: ubuntu-latest
-    if: github.repository == 'NVIDIA/nke'
+    if: github.repository == 'NVIDIA/nke' && contains(fromJSON(inputs.modules), 'controller')
     # make lint gives golangci-lint a 20m budget on this module; leave headroom
     # for an uncached run.
     timeout-minutes: 25
@@ -133,7 +125,7 @@ jobs:
   lint-cli:
     name: golangci-lint (cli)
     runs-on: ubuntu-latest
-    if: github.repository == 'NVIDIA/nke'
+    if: github.repository == 'NVIDIA/nke' && contains(fromJSON(inputs.modules), 'cli')
     timeout-minutes: 15
     permissions:
       contents: read
@@ -162,7 +154,7 @@ jobs:
   lint-nico-mock:
     name: golangci-lint (nico-mock)
     runs-on: ubuntu-latest
-    if: github.repository == 'NVIDIA/nke'
+    if: github.repository == 'NVIDIA/nke' && contains(fromJSON(inputs.modules), 'controller/hack/nico-mock')
     timeout-minutes: 15
     permissions:
       contents: read
@@ -192,7 +184,7 @@ jobs:
   lint-forge-vms:
     name: golangci-lint (forge-vms)
     runs-on: ubuntu-latest
-    if: github.repository == 'NVIDIA/nke'
+    if: github.repository == 'NVIDIA/nke' && contains(fromJSON(inputs.modules), 'controller/forge-vms')
     timeout-minutes: 15
     permissions:
       contents: read

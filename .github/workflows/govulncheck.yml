@@ -4,7 +4,8 @@
 # Reports Go dependency vulnerabilities that this code actually calls. Results
 # go to Security -> Code scanning under a "govulncheck-<module>" category.
 #
-# Every module in the workspace is scanned. It used to be agent/ alone, because
+# Every related module is scanned for pull requests. Scheduled and manual runs
+# scan the full workspace. It used to be agent/ alone, because
 # controller/ required the carbide SDK and could not build on a public runner.
 # #76 replaced that SDK with the public ncx-infra-controller-rest, so the whole
 # workspace builds from public dependencies and the exclusion no longer has a
@@ -12,9 +13,8 @@
 # which meant the majority of the repository was compiled, linted and never
 # scanned.
 #
-# The matrix comes from go.work rather than a list kept here. A module added to
-# the workspace is scanned without anyone remembering to edit this file -- the
-# failure mode of a hand-kept list is silence, not an error.
+# The merge gate passes a centrally classified module list. Scheduled runs read
+# go.work, so newly added modules remain covered by the recurring full scan.
 #
 # This job gates, but only on the narrow question.
 #
@@ -58,32 +58,26 @@
 
 name: govulncheck
 
-# workflow_call so merge-gate.yml can call this, and ubuntu-latest so the call
-# works on a real pull_request event -- self-hosted runners do not receive fork
-# pull_request events, so a gate member left on one would queue forever.
-#
-# Nothing here needs an NVIDIA runner: the whole workspace resolves from the
-# committed vendor/ tree, so this is ordinary Go work with no credentials.
-#
-# Lands ahead of the gate change on purpose. A local `uses: ./.github/...`
-# reference resolves against the BASE branch, so a workflow whose workflow_call
-# trigger exists only on a pull-request head cannot be called from it -- the call
-# fails with no jobs and no error message.
+# Pull requests and main pushes reach this through merge-gate.yml, which passes
+# only the related modules. Scheduled and manual scans still cover all modules.
 on:
-  push:
-    branches:
-      - main
-      - "pull-request/[0-9]+"
-      # Dependabot branches are mirrored to neither main nor
-      # pull-request/N, so without this line a dependency bump gets none
-      # of this check -- and a check that cannot report on a pull request
-      # cannot be required. Same list as notices-check.yml.
-      - "dependabot/**"
   schedule:
     # Monday 06:30 UTC. New advisories land without the code changing.
     - cron: '30 6 * * 1'
   workflow_call:
+    inputs:
+      modules:
+        description: JSON array of Go module directories to scan
+        required: false
+        type: string
+        default: '["agent","cli","controller","controller/api","controller/forge-vms","controller/hack/capd-reboot-controller","controller/hack/nico-mock","controller/test/e2e"]'
   workflow_dispatch:
+    inputs:
+      modules:
+        description: JSON array of Go module directories to scan
+        required: false
+        type: string
+        default: '["agent","cli","controller","controller/api","controller/forge-vms","controller/hack/capd-reboot-controller","controller/hack/nico-mock","controller/test/e2e"]'
 
 permissions:
   contents: read
@@ -121,21 +115,32 @@ jobs:
       - name: Read the module list from go.work
         id: find
         shell: bash
+        env:
+          REQUESTED_MODULES: ${{ inputs.modules || '[]' }}
         run: |
           set -euo pipefail
-          # The use(...) block, one ./path per line. Reading go.work keeps this
-          # in step with the workspace by construction. `go list -m` would need
-          # a toolchain on a job that otherwise needs none.
-          mods=$(sed -n '/^use (/,/^)/p' go.work \
-            | sed -n 's#^[[:space:]]*\./##p' \
-            | sed 's/[[:space:]]*$//' \
-            | grep -v '^$' \
-            | sort)
+          if [ "${REQUESTED_MODULES}" = '[]' ]; then
+            # Scheduled scans discover every workspace member.
+            mods=$(sed -n '/^use (/,/^)/p' go.work \
+              | sed -n 's#^[[:space:]]*\./##p' \
+              | sed 's/[[:space:]]*$//' \
+              | grep -v '^$' \
+              | sort)
+          else
+            mods=$(jq -er '.[]' <<<"${REQUESTED_MODULES}")
+          fi
 
           if [ -z "$mods" ]; then
             echo "::error::no modules found in go.work; the use() block did not parse"
             exit 1
           fi
+
+          while IFS= read -r module; do
+            if [ ! -f "${module}/go.mod" ]; then
+              echo "::error::selected module has no go.mod: ${module}"
+              exit 1
+            fi
+          done <<<"${mods}"
 
           # id is the category suffix and the job name: SARIF categories must be
           # distinct or each upload overwrites the last, which would silently

@@ -17,19 +17,8 @@
 
 name: Chart
 
-# workflow_call is what merge-gate.yml uses to call this as a reusable workflow.
-# Its own `pull_request:` trigger is gone: pull requests reach it through the
-# gate, so it runs once per pull request rather than twice.
-#
-# A called workflow does not apply its own `paths:` filter, so on a pull request
-# this runs whatever changed. That is deliberate -- see the note in
-# merge-gate.yml. The filter below still applies to `push`.
+# Pull requests and main pushes reach this through the change-aware merge gate.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'controller/deploy/charts/**'
-      - '.github/workflows/chart.yml'
   workflow_call:
   workflow_dispatch:
 

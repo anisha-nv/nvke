@@ -13,38 +13,14 @@
 # no Docker, no private dependency and no NVIDIA runner, so it should not consume
 # self-hosted capacity, and a contributor working from a fork can see it.
 #
-# Deliberately NOT path-filtered, unlike most workflows here. A filtered check
-# does not report on a pull request that misses the filter, and a required check
-# that never reports leaves that pull request waiting forever -- so filtering
-# would make this unrequirable. See docs/branch-protection-settings.md. That is
-# not theoretical: a red run merged to main once and, because every branch
-# inherits the workflow file, the failure then reported on every open pull
-# request as though that pull request had caused it.
-#
-# The filter was saving nothing worth having. This is an eight-second static
-# binary on a GitHub-hosted runner, so running it on pushes that touch no
-# workflow file costs no self-hosted capacity and no meaningful time.
+# The required check is the aggregate `gate`, not this job. merge-gate.yml calls
+# actionlint for CI or cross-cutting changes and still reports `gate` when this
+# workflow is intentionally skipped.
 
 name: Actionlint
 
-# workflow_call is declared so merge-gate.yml can call this as a reusable
-# workflow. Adding the trigger changes nothing on its own: this workflow still
-# runs exactly as it did, on the same events.
-#
-# It lands ahead of the gate on purpose. A local `uses: ./.github/workflows/...`
-# reference resolves against the BASE branch, so a workflow whose workflow_call
-# trigger exists only on a pull-request head cannot be called from that same
-# pull request -- the call fails with no jobs and no error message.
+# Pull requests and main pushes reach this through the change-aware merge gate.
 on:
-  push:
-    branches:
-      - main
-      - "pull-request/[0-9]+"
-      # Dependabot branches are mirrored to neither main nor
-      # pull-request/N, so without this line a dependency bump gets none
-      # of this check -- and a check that cannot report on a pull request
-      # cannot be required. Same list as notices-check.yml.
-      - "dependabot/**"
   workflow_call:
   workflow_dispatch: {}
 

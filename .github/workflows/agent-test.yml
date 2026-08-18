@@ -16,25 +16,8 @@
 
 name: Agent Unit Tests
 
-# The two path lists are duplicated by hand. github.com has supported YAML
-# anchors since August 2025, but GitHub Enterprise Server does not, and merge
-# keys are still unsupported everywhere. Keep the two lists identical.
-# workflow_call is what merge-gate.yml uses to call this as a reusable workflow.
-# Its own `pull_request:` trigger is gone: pull requests reach it through the
-# gate, so it runs once per pull request rather than twice.
-#
-# A called workflow does not apply its own `paths:` filter, so on a pull request
-# this runs whatever changed. That is deliberate -- see the note in
-# merge-gate.yml. The filter below still applies to `push`.
+# Pull requests and main pushes reach this through the change-aware merge gate.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'agent/**'
-      - 'go.work'
-      - 'go.work.sum'
-      - 'vendor/**'
-      - '.github/workflows/agent-test.yml'
   workflow_call:
   workflow_dispatch: {}
 

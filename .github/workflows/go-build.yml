@@ -15,26 +15,34 @@
 # See docs/go-workspace.md.
 name: Go Build
 
-# workflow_call is what merge-gate.yml uses to call this as a reusable workflow.
-# Its own `pull_request:` trigger is gone: pull requests reach it through the
-# gate, so it runs once per pull request rather than twice.
-#
-# A called workflow does not apply its own `paths:` filter, so on a pull request
-# this runs whatever changed. That is deliberate -- see the note in
-# merge-gate.yml. The filter below still applies to `push`.
+# Pull requests and main pushes reach this workflow through merge-gate.yml,
+# which supplies either the related module list or requests the complete
+# version-check for cross-cutting and shipped-command changes.
 on:
-  push:
-    branches: [main]
-    paths:
-      - '**/*.go'
-      - '**/go.mod'
-      - '**/go.sum'
-      - 'go.work'
-      - 'go.work.sum'
-      - 'Makefile'
-      - '.github/workflows/go-build.yml'
   workflow_call:
+    inputs:
+      modules:
+        description: JSON array of Go module directories to compile
+        required: false
+        type: string
+        default: '["agent","cli","controller","controller/api","controller/forge-vms","controller/hack/capd-reboot-controller","controller/hack/nico-mock","controller/test/e2e"]'
+      full:
+        description: Run the repository-wide build and binary version checks
+        required: false
+        type: boolean
+        default: true
   workflow_dispatch:
+    inputs:
+      modules:
+        description: JSON array of Go module directories to compile
+        required: false
+        type: string
+        default: '["agent","cli","controller","controller/api","controller/forge-vms","controller/hack/capd-reboot-controller","controller/hack/nico-mock","controller/test/e2e"]'
+      full:
+        description: Run the repository-wide build and binary version checks
+        required: false
+        type: boolean
+        default: true
 
 permissions: {}
 
@@ -61,7 +69,7 @@ jobs:
   build:
     name: Build binaries
     runs-on: ubuntu-latest
-    if: github.repository == 'NVIDIA/nke'
+    if: github.repository == 'NVIDIA/nke' && inputs.full
     timeout-minutes: 15
     permissions:
       contents: read
@@ -95,3 +103,34 @@ jobs:
       # finds nothing and the version falls back to the commit. That passes.
       - name: Build
         run: make version-check
+
+  build-related:
+    name: Build (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    if: github.repository == 'NVIDIA/nke' && !inputs.full
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(inputs.modules) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.work
+          cache: true
+          cache-dependency-path: |
+            go.work.sum
+            **/go.sum
+
+      - name: Compile related module
+        env:
+          MODULE: ${{ matrix.module }}
+        run: go -C "${MODULE}" build ./...
