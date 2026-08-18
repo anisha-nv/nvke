@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/NVIDIA/nke/controller/internal/capi"
+	"github.com/NVIDIA/nke/controller/internal/constants"
 	"github.com/NVIDIA/nke/controller/internal/db"
 	"github.com/NVIDIA/nke/controller/internal/testutil"
 )
@@ -103,7 +104,7 @@ func TestDBClusterTenantClientProviderReturnsNotReadyForEmptyPublishedSecret(t *
 	require.ErrorIs(t, err, ErrTenantClientNotReady)
 }
 
-func TestDBClusterTenantClientProviderReturnsNotReadyForEmptyCAPISecret(t *testing.T) {
+func TestDBClusterTenantClientProviderReturnsNotReadyForEmptyCAPIPublishedSecret(t *testing.T) {
 	cluster := db.Cluster{
 		ID:               uuid.New(),
 		Name:             "test-cluster",
@@ -111,11 +112,15 @@ func TestDBClusterTenantClientProviderReturnsNotReadyForEmptyCAPISecret(t *testi
 	}
 	cluster.SetCAPIProvider(db.CAPIClusterProvider{InfraCluster: cluster.CapiInfraCluster})
 	capiCluster := newCAPIClusterForTenantClientProviderTest()
-	capiCluster.Namespace = capi.ClusterNamespace(cluster.Name)
-	kubeconfigSecret := capikubeconfig.GenerateSecret(capiCluster, nil)
+	capiSecret := capikubeconfig.GenerateSecret(capiCluster, newTenantClientProviderTestKubeconfig(t))
 	managementClient := fake.NewClientBuilder().
 		WithScheme(newTenantClientProviderTestScheme(t)).
-		WithObjects(capiCluster, kubeconfigSecret).
+		WithObjects(capiCluster, capiSecret, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: tenantAccessKubeconfigNamespace,
+				Name:      cluster.Name + "-kubeconfig",
+			},
+		}).
 		Build()
 	provider := NewDBClusterTenantClientProvider(nil, managementClient, nil, false)
 
@@ -220,6 +225,127 @@ func TestDBClusterTenantClientProviderKeepsNodeAgentFallbackWhenTenantAccessDisa
 	database.AssertExpectations(t)
 }
 
+func TestConsumePublishedKubeconfig_OIDCFailClosed(t *testing.T) {
+	oidcCluster := db.Cluster{ID: uuid.New(), Name: "oidc", OIDCAuthEnabled: true}
+	spireMode := constants.LabelValueKubeconfigModeSPIRE
+
+	t.Run("missing secret is not ready", func(t *testing.T) {
+		cluster := db.Cluster{
+			ID:   uuid.New(),
+			Name: "oidc",
+		}
+		cluster.OIDCAuthEnabled = true
+		cluster.SetCAPIProvider(db.CAPIClusterProvider{InfraCluster: []byte(`{"kind":"DockerCluster"}`)})
+		managementClient := fake.NewClientBuilder().
+			WithScheme(newTenantClientProviderTestScheme(t)).
+			Build()
+		provider := NewDBClusterTenantClientProvider(nil, managementClient, nil, false)
+		_, err := provider.ClientForDBCluster(context.Background(), cluster)
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrTenantClientNotReady)
+	})
+
+	t.Run("admin kubeconfig is not ready", func(t *testing.T) {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "nke-system", Name: "oidc-kubeconfig"},
+			Data:       map[string][]byte{"value": newTenantClientProviderTestKubeconfig(t)},
+		}
+		err := consumePublishedKubeconfig(oidcCluster, secret, secret.Data["value"], spireMode)
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrTenantClientNotReady)
+		require.Contains(t, err.Error(), "not SPIRE exec-auth")
+	})
+
+	t.Run("wrong owner is refused", func(t *testing.T) {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "nke-system",
+				Name:      "oidc-kubeconfig",
+				Labels:    map[string]string{"nke.nvidia.com/cluster-id": uuid.New().String()},
+			},
+			Data: map[string][]byte{"value": newTenantClientProviderExecKubeconfig()},
+		}
+		err := consumePublishedKubeconfig(oidcCluster, secret, secret.Data["value"], spireMode)
+		require.Error(t, err)
+		require.ErrorIs(t, err, capi.ErrWrongSecretOwner)
+	})
+
+	t.Run("SPIRE exec kubeconfig is accepted", func(t *testing.T) {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "nke-system",
+				Name:      "oidc-kubeconfig",
+				Labels: map[string]string{
+					"nke.nvidia.com/cluster-id":      oidcCluster.ID.String(),
+					"nke.nvidia.com/kubeconfig-mode": "spire",
+				},
+			},
+			Data: map[string][]byte{"value": newTenantClientProviderExecKubeconfig()},
+		}
+		require.NoError(t, consumePublishedKubeconfig(oidcCluster, secret, secret.Data["value"], spireMode))
+	})
+
+	t.Run("OIDC still requires SPIRE after EnableOIDC", func(t *testing.T) {
+		enabled := db.Cluster{ID: uuid.New(), Name: "oidc", OIDCAuthEnabled: true}
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "nke-system", Name: "oidc-kubeconfig"},
+			Data:       map[string][]byte{"value": newTenantClientProviderTestKubeconfig(t)},
+		}
+		require.Equal(t, spireMode, publishedKubeconfigMode(enabled))
+		err := consumePublishedKubeconfig(enabled, secret, secret.Data["value"], publishedKubeconfigMode(enabled))
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrTenantClientNotReady)
+		require.Contains(t, err.Error(), "not SPIRE exec-auth")
+	})
+}
+
+func TestDBClusterTenantClientProviderCAPIUsesPublishedSecret(t *testing.T) {
+	cluster := db.Cluster{
+		ID:               uuid.New(),
+		Name:             "test-cluster",
+		OIDCAuthEnabled:  true,
+		CapiInfraCluster: []byte(`{"kind":"DockerCluster"}`),
+	}
+	cluster.SetCAPIProvider(db.CAPIClusterProvider{InfraCluster: cluster.CapiInfraCluster})
+	capiCluster := newCAPIClusterForTenantClientProviderTest()
+	capiAdminSecret := capikubeconfig.GenerateSecret(capiCluster, newTenantClientProviderTestKubeconfig(t))
+	published := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: tenantAccessKubeconfigNamespace,
+			Name:      cluster.Name + "-kubeconfig",
+			Labels: map[string]string{
+				"nke.nvidia.com/cluster-id":      cluster.ID.String(),
+				"nke.nvidia.com/kubeconfig-mode": "spire",
+			},
+			ResourceVersion: "1",
+		},
+		Data: map[string][]byte{tenantAccessKubeconfigKey: newTenantClientProviderExecKubeconfig()},
+	}
+
+	t.Run("SPIRE published secret is used even when CAPI secret is admin", func(t *testing.T) {
+		managementClient := fake.NewClientBuilder().
+			WithScheme(newTenantClientProviderTestScheme(t)).
+			WithObjects(capiCluster, capiAdminSecret, published).
+			Build()
+		provider := NewDBClusterTenantClientProvider(nil, managementClient, nil, false)
+		tenantClient, err := provider.ClientForDBCluster(context.Background(), cluster)
+		require.NoError(t, err)
+		require.NotNil(t, tenantClient)
+	})
+
+	t.Run("CAPI admin secret alone is not ready after OIDC", func(t *testing.T) {
+		managementClient := fake.NewClientBuilder().
+			WithScheme(newTenantClientProviderTestScheme(t)).
+			WithObjects(capiCluster, capiAdminSecret).
+			Build()
+		provider := NewDBClusterTenantClientProvider(nil, managementClient, nil, false)
+		_, err := provider.ClientForDBCluster(context.Background(), cluster)
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrTenantClientNotReady)
+		require.Contains(t, err.Error(), "published tenant kubeconfig")
+	})
+}
+
 func newTenantClientProviderTestScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 
@@ -309,7 +435,7 @@ func newCAPIClusterForTenantClientProviderTest() *clusterv1.Cluster {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
-			Namespace: "cluster-test",
+			Namespace: capi.ClusterNamespace("test-cluster"),
 			UID:       types.UID("test-cluster-uid"),
 		},
 	}

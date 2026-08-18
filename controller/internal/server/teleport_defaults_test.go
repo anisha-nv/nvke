@@ -48,6 +48,18 @@ func TestApplyClusterDefaults(t *testing.T) {
 		require.NoError(t, svcOff.applyClusterDefaults(req, cluster))
 		assert.True(t, cluster.TeleportEnabled)
 	})
+
+	t.Run("stamps OIDCAuthEnabled from create-time OIDC flag", func(t *testing.T) {
+		svcOn := &clusterService{oidcAuthEnabled: true}
+		clusterOn := &db.Cluster{}
+		require.NoError(t, svcOn.applyClusterDefaults(&api.CreateClusterRequest{}, clusterOn))
+		assert.True(t, clusterOn.OIDCAuthEnabled)
+
+		svcOff := &clusterService{oidcAuthEnabled: false}
+		clusterOff := &db.Cluster{}
+		require.NoError(t, svcOff.applyClusterDefaults(&api.CreateClusterRequest{}, clusterOff))
+		assert.False(t, clusterOff.OIDCAuthEnabled)
+	})
 }
 
 func TestApplyNodePoolDefaults(t *testing.T) {

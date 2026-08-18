@@ -71,12 +71,6 @@ func provisionCluster(ctx workflow.Context, input ProvisionClusterInput) error {
 		return fmt.Errorf("failed to initialize Kubernetes control plane: %w", err)
 	}
 
-	if clusterCtx.InfraMode == activities.InfraModeCAPI {
-		if err := applyCAPIClusterKubeconfigSecret(ctx, input.ClusterID, initialNodeID); err != nil {
-			return fmt.Errorf("failed to publish CAPI kubeconfig secret: %w", err)
-		}
-	}
-
 	if err := markInitialNodeAsJoined(ctx, initialNodeID); err != nil {
 		return fmt.Errorf("failed to mark initial control plane node as joined: %w", err)
 	}
@@ -212,28 +206,6 @@ func kubeadmInit(ctx workflow.Context, clusterID, initialNodeID uuid.UUID) error
 	}
 
 	return nil
-}
-
-func applyCAPIClusterKubeconfigSecret(ctx workflow.Context, clusterID, initialNodeID uuid.UUID) error {
-	var a *activities.Activities
-
-	activityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 2 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval: 10 * time.Second,
-			MaximumInterval: 1 * time.Minute,
-			MaximumAttempts: 0,
-		},
-	}
-
-	return workflow.ExecuteActivity(
-		workflow.WithActivityOptions(ctx, activityOptions),
-		a.ApplyCAPIClusterKubeconfigSecret,
-		activities.ApplyCAPIClusterKubeconfigSecretInput{
-			ClusterID:                 clusterID,
-			InitialControlPlaneNodeID: initialNodeID,
-		},
-	).Get(ctx, nil)
 }
 
 func markInitialNodeAsJoined(ctx workflow.Context, nodeID uuid.UUID) error {

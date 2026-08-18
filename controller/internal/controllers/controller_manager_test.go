@@ -54,3 +54,40 @@ func TestNewControllerManagerGatesCAPIClusterScaffold(t *testing.T) {
 		})
 	}
 }
+
+func TestNewControllerManagerConstructsTenantAccess(t *testing.T) {
+	t.Run("k8s client present even when TenantAccessEnabled is false", func(t *testing.T) {
+		manager, err := NewControllerManager(
+			config.Config{TenantAccessEnabled: false},
+			slog.Default(),
+			&testutil.MockDB{},
+			fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build(),
+			nil,
+			nil,
+			nil,
+			nil,
+			"",
+			nil,
+		)
+		require.NoError(t, err)
+		require.NotNil(t, manager.tenantAccessController)
+	})
+
+	t.Run("nil k8s client returns error", func(t *testing.T) {
+		manager, err := NewControllerManager(
+			config.Config{TenantAccessEnabled: true},
+			slog.Default(),
+			&testutil.MockDB{},
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+			"",
+			nil,
+		)
+		require.Error(t, err)
+		require.Nil(t, manager)
+		require.ErrorContains(t, err, "kubernetes client is required")
+	})
+}

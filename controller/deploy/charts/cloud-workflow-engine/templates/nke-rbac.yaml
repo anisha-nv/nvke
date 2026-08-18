@@ -45,6 +45,8 @@ kind: ConfigMap
 metadata:
   name: nke-rbac
   namespace: nke-system
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
   labels:
     {{- include "cloud-workflow-engine.labels" . | nindent 4 }}
 data:
@@ -146,5 +148,24 @@ data:
     roleRef:
       kind: Role
       name: nke:cwe
+      apiGroup: rbac.authorization.k8s.io
+    ---
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    metadata:
+      name: nke:capi-cluster-admin
+    subjects:
+      - kind: User
+        name: spiffe://{{ $td }}/nke-service/capi-manager
+        apiGroup: rbac.authorization.k8s.io
+      - kind: User
+        name: spiffe://{{ $td }}/nke-service/capi-kubeadm-control-plane-manager
+        apiGroup: rbac.authorization.k8s.io
+      - kind: User
+        name: spiffe://{{ $td }}/nke-service/capd-manager
+        apiGroup: rbac.authorization.k8s.io
+    roleRef:
+      kind: ClusterRole
+      name: cluster-admin
       apiGroup: rbac.authorization.k8s.io
 {{- end }}

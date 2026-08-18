@@ -10,9 +10,12 @@ import (
 	"github.com/google/uuid"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
+	"github.com/NVIDIA/nke/controller/internal/capi"
+	"github.com/NVIDIA/nke/controller/internal/constants"
 	"github.com/NVIDIA/nke/controller/internal/controllers/tenantaccess"
+	"github.com/NVIDIA/nke/controller/internal/db"
 )
 
 type DeleteTenantAccessSecretsInput struct {
@@ -25,22 +28,12 @@ type DeleteTenantAccessSecretsInput struct {
 }
 
 // DeleteTenantAccessSecrets removes the per-cluster Secrets the tenant-access
-// controller publishes into the management-cluster secret plane (the admin/SPIRE
-// kubeconfig and the CA trust bundle). Missing Secrets are ignored, so the step
-// is idempotent across retries.
-//
-// Unlike the other teardown steps this one does not wrap itself in a cluster
-// condition update: it runs after the cluster row is deleted, so there is no row
-// left to write a Deleting message to.
+// publisher writes into nke-system (kubeconfig and CA trust bundle). Missing
+// Secrets are ignored. Secrets without a matching cluster-id ownership label,
+// or owned by a different cluster UUID, are left untouched. Cleanup is not
+// gated on tenantAccess.enabled so OIDC-mode clusters can be torn down after
+// the live flags are flipped off.
 func (a *Activities) DeleteTenantAccessSecrets(ctx context.Context, input DeleteTenantAccessSecretsInput) error {
-	// Same gate as the publishing controller: with tenant access disabled nothing
-	// was ever written, and CWE is not granted Secret access in the tenant-access
-	// namespace. Attempting the delete anyway would fail Forbidden — which is not
-	// NotFound — and this activity retries without bound, stalling teardown.
-	if !a.cfg.TenantAccessEnabled {
-		return nil
-	}
-
 	if a.k8sClient == nil {
 		return fmt.Errorf("kubernetes client is required to delete tenant-access secrets")
 	}
@@ -49,16 +42,25 @@ func (a *Activities) DeleteTenantAccessSecrets(ctx context.Context, input Delete
 		return fmt.Errorf("cluster name is required to delete tenant-access secrets for cluster %s", input.ClusterID)
 	}
 
+	cluster := db.Cluster{ID: input.ClusterID, Name: input.ClusterName}
 	names := []string{
 		tenantaccess.KubeconfigSecretName(input.ClusterName),
 		tenantaccess.TrustBundleSecretName(input.ClusterName),
 	}
 	for _, name := range names {
-		secret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: tenantaccess.SecretsNamespace,
-				Name:      name,
-			},
+		secret := &corev1.Secret{}
+		key := types.NamespacedName{Namespace: tenantaccess.SecretsNamespace, Name: name}
+		if err := a.k8sClient.Get(ctx, key, secret); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return fmt.Errorf("getting tenant-access secret %s/%s: %w", tenantaccess.SecretsNamespace, name, err)
+		}
+		if err := capi.ValidateSecretOwnership(secret, cluster); err != nil {
+			continue
+		}
+		if secret.Labels == nil || secret.Labels[constants.LabelKeyClusterID] == "" {
+			continue
 		}
 		if err := a.k8sClient.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("deleting tenant-access secret %s/%s: %w", secret.Namespace, name, err)

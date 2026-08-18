@@ -9,12 +9,10 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	capikubeconfig "sigs.k8s.io/cluster-api/util/kubeconfig"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	nicov1 "github.com/NVIDIA/cluster-api-provider-nico/api/v1alpha1"
@@ -109,33 +107,6 @@ func ClusterScaffoldManifest(cluster db.Cluster) (json.RawMessage, error) {
 	default:
 		return nil, fmt.Errorf("unsupported provider type %q for cluster %s", cluster.ProviderType, cluster.ID)
 	}
-}
-
-func ApplyClusterKubeconfigSecret(ctx context.Context, k8sClient client.Client, cluster db.Cluster, kubeconfigBytes []byte) error {
-	namespace := ClusterNamespace(cluster.Name)
-	clusterObj := &clusterv1.Cluster{}
-	if err := k8sClient.Get(ctx, client.ObjectKey{
-		Name:      cluster.Name,
-		Namespace: namespace,
-	}, clusterObj); err != nil {
-		return fmt.Errorf("failed to get CAPI cluster %s/%s: %w", namespace, cluster.Name, err)
-	}
-
-	secretObj := capikubeconfig.GenerateSecret(clusterObj, kubeconfigBytes)
-	secretObj.TypeMeta = metav1.TypeMeta{
-		APIVersion: corev1.SchemeGroupVersion.String(),
-		Kind:       "Secret",
-	}
-
-	if err := k8sClient.Create(ctx, secretObj); err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			// nothing to do, secret already exists
-			return nil
-		}
-		return fmt.Errorf("creating CAPI kubeconfig secret %s/%s: %w", secretObj.Namespace, secretObj.Name, err)
-	}
-
-	return nil
 }
 
 func ParseManifest(raw []byte) (*unstructured.Unstructured, error) {

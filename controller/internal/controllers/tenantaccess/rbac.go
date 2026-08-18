@@ -32,9 +32,13 @@ const (
 // readRBACManifest reads the operator-managed nke-rbac ConfigMap from the
 // management cluster and returns the multi-document tenant RBAC manifest.
 func (c *Controller) readRBACManifest(ctx context.Context) ([]byte, error) {
+	return readRBACManifest(ctx, c.k8sClient)
+}
+
+func readRBACManifest(ctx context.Context, k8sClient ctrlclient.Client) ([]byte, error) {
 	var cm corev1.ConfigMap
 	key := types.NamespacedName{Namespace: SecretsNamespace, Name: rbacConfigMapName}
-	if err := c.k8sClient.Get(ctx, key, &cm); err != nil {
+	if err := k8sClient.Get(ctx, key, &cm); err != nil {
 		return nil, fmt.Errorf("getting NKE RBAC ConfigMap %s/%s: %w", SecretsNamespace, rbacConfigMapName, err)
 	}
 
