@@ -16,7 +16,8 @@ metadata:
     {{- include "cloud-workflow-engine.labels" . | nindent 4 }}
 rules:
   # applyRBAC reads this ConfigMap for persisted-OIDC clusters even when the
-  # live Helm flag is off (the ConfigMap itself is Prune=false).
+  # live Helm flag is off (the ConfigMap is rendered whenever
+  # spiffe.trustDomain is set, not gated on nkeOIDCAuth.enabled).
   - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames:

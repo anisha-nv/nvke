@@ -129,8 +129,9 @@ func (p *Publisher) guardedUpsert(ctx context.Context, cluster db.Cluster, secre
 func (p *Publisher) applyRBAC(ctx context.Context, cluster db.Cluster, adminConf []byte) error {
 	manifest, err := readRBACManifest(ctx, p.ManagementClient)
 	if apierrors.IsNotFound(err) {
-		// Live nkeOIDCAuth=false stops rendering this ConfigMap. Do not publish a
-		// SPIRE kubeconfig that cannot authenticate as nke:cwe / CAPI SPIFFE IDs.
+		// Do not publish a SPIRE kubeconfig that cannot authenticate as
+		// nke:cwe / CAPI SPIFFE IDs. The chart renders this ConfigMap when
+		// spiffe.trustDomain is set, independent of the live OIDC flag.
 		return fmt.Errorf("nke-rbac ConfigMap not found; refusing to publish SPIRE kubeconfig for cluster %s: %w", cluster.Name, err)
 	}
 	if err != nil {

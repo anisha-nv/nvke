@@ -73,6 +73,9 @@ func (a *Activities) CreateCAPIInfraMachineForNode(ctx context.Context, input Cr
 	}
 
 	namespace := capi.ClusterNamespace(cluster.Name)
+	if err := capi.ApplyNamespace(ctx, a.k8sClient, namespace); err != nil {
+		return err
+	}
 
 	createCtx := &capiMachineCreateContext{
 		node:      node,
