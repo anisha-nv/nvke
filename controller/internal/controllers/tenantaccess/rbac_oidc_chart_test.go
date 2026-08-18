@@ -46,7 +46,7 @@ func TestNkeRBACChartRendersConfigMapFromTrustDomainNotOIDCFlag(t *testing.T) {
 	text := string(body)
 
 	cmIdx := strings.Index(text, "kind: ConfigMap")
-	require.Greater(t, cmIdx, 0)
+	require.Positive(t, cmIdx)
 	configMap := text[cmIdx:]
 	require.NotContains(t, configMap, "argocd.argoproj.io", "nke-rbac ConfigMap must not carry Argo prune options")
 	require.Contains(t, text, "{{- if .Values.spiffe.trustDomain }}")
