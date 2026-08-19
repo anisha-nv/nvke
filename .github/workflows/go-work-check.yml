@@ -90,7 +90,7 @@ concurrency:
 jobs:
   work-check:
     name: Check go.work and go.work.sum are current
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     if: github.repository == 'NVIDIA/nke'
     # Raised from 10: step 5 now runs, and it downloads the whole module graph
     # and re-vendors 191 modules. 36s locally with a warm cache.

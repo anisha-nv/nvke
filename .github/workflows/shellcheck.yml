@@ -12,6 +12,8 @@
 #
 # Runs on ubuntu-latest. shellcheck is preinstalled on GitHub runners, so this
 # needs no download, no NVIDIA runner and no credentials.
+# Temporarily using linux-amd64-cpu4 even though this could use ubuntu-latest,
+# to avoid extremely long GitHub-hosted queue times.
 #
 # Deliberately NOT path-filtered, for the reason recorded in actionlint.yml: a
 # filtered check does not report on a pull request that misses the filter, and
@@ -59,7 +61,7 @@ concurrency:
 jobs:
   shellcheck:
     name: shellcheck
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     if: github.repository == 'NVIDIA/nke'
     timeout-minutes: 10
     permissions:
@@ -69,6 +71,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # GitHub-hosted images ship shellcheck; nv-gha may not.
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
 
       # -S error, not -S warning. The tree is clean at error severity as of
       # this commit, so the gate starts green and any new error-level bug fails

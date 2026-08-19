@@ -71,7 +71,9 @@ jobs:
     # Both architectures are produced by cross-compilation from one runner:
     # the agent is pure Go with CGO disabled, so this needs no arm64 runner and
     # no self-hosted capacity, in keeping with go-build.yml and license.yml.
-    runs-on: ubuntu-latest
+    # Temporarily using linux-amd64-cpu4 even though this could use ubuntu-latest,
+    # to avoid extremely long GitHub-hosted queue times.
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 20
     permissions:
       contents: read

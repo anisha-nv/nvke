@@ -12,6 +12,8 @@
 # Runs on ubuntu-latest. actionlint is a static binary that reads YAML — it needs
 # no Docker, no private dependency and no NVIDIA runner, so it should not consume
 # self-hosted capacity, and a contributor working from a fork can see it.
+# Temporarily using linux-amd64-cpu4 even though this could use ubuntu-latest,
+# to avoid extremely long GitHub-hosted queue times.
 #
 # Deliberately NOT path-filtered, unlike most workflows here. A filtered check
 # does not report on a pull request that misses the filter, and a required check
@@ -71,7 +73,7 @@ concurrency:
 jobs:
   actionlint:
     name: actionlint
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     if: github.repository == 'NVIDIA/nke'
     timeout-minutes: 10
     permissions:

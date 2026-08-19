@@ -29,6 +29,8 @@
 # in agent-test.yml: self-hosted runners do not receive pull_request events, so
 # using them would cost coverage of fork and Dependabot pull requests.
 # ubuntu-latest ships a C toolchain, which is what cgo needs.
+# Temporarily using linux-amd64-cpu4 even though this could use ubuntu-latest,
+# to avoid extremely long GitHub-hosted queue times.
 
 name: Controller Unit Tests
 
@@ -78,7 +80,7 @@ concurrency:
 jobs:
   test:
     name: Unit tests (${{ matrix.module }})
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     if: github.repository == 'NVIDIA/nke'
     timeout-minutes: 30
     permissions:
@@ -158,7 +160,7 @@ jobs:
   # point, and it is the cheapest thing that does. All five are green today.
   compile:
     name: Compile (${{ matrix.name }})
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     if: github.repository == 'NVIDIA/nke'
     timeout-minutes: 20
     permissions:

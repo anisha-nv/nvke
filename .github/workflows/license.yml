@@ -84,7 +84,7 @@ env:
 jobs:
   discover-modules:
     name: Discover Go modules
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 5
     permissions:
       contents: read
@@ -121,7 +121,7 @@ jobs:
   license-check:
     name: License check (${{ matrix.module }})
     needs: [discover-modules]
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 15
     permissions:
       contents: read
@@ -204,7 +204,7 @@ jobs:
   # cannot disagree about the answer.
   header-check:
     name: License headers
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     permissions:
       contents: read
@@ -223,7 +223,7 @@ jobs:
 
   shipped-licenses:
     name: Shipped LICENSE and NOTICE copies
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     permissions:
       contents: read

@@ -13,6 +13,8 @@
 # runner and no credentials -- which means it also runs on fork pull requests
 # and on Dependabot's, where the repository currently has almost no coverage.
 # See docs/go-workspace.md.
+# Temporarily using linux-amd64-cpu4 even though this could use ubuntu-latest,
+# to avoid extremely long GitHub-hosted queue times.
 name: Go Build
 
 # workflow_call is what merge-gate.yml uses to call this as a reusable workflow.
@@ -60,7 +62,7 @@ concurrency:
 jobs:
   build:
     name: Build binaries
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     if: github.repository == 'NVIDIA/nke'
     timeout-minutes: 15
     permissions:

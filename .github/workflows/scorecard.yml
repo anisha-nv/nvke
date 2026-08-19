@@ -70,7 +70,7 @@ jobs:
   # is absent on a schedule trigger and would skip every weekly run.
   gate:
     name: Check the repository is public
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     if: github.repository == 'NVIDIA/nke'
     timeout-minutes: 5
     permissions:
@@ -105,7 +105,7 @@ jobs:
     name: Scorecard analysis
     needs: [gate]
     if: needs.gate.outputs.public == 'true'
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 20
     permissions:
       # Upload the findings to the code-scanning dashboard.

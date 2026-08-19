@@ -168,7 +168,7 @@ jobs:
     name: Upload to apt intake
     needs: [build]
     if: github.repository == 'NVIDIA/nke'
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 15
     environment: apt-intake
     permissions:
@@ -257,7 +257,7 @@ jobs:
     if: >-
       github.repository == 'NVIDIA/nke' &&
       startsWith(github.ref, 'refs/tags/agent/v')
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     permissions:
       contents: write

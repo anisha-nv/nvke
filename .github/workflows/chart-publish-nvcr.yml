@@ -49,7 +49,7 @@ env:
 jobs:
   publish:
     name: Publish chart
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     if: github.repository == 'NVIDIA/nke'
     environment: nvcr
     timeout-minutes: 10

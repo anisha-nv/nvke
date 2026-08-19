@@ -10,6 +10,8 @@
 # lint.yml -- so using them would cost coverage of fork and Dependabot pull
 # requests. The agent module resolves from the committed root vendor/ tree
 # (workspace mode), so this needs no NVIDIA runner and no credentials.
+# Temporarily using linux-amd64-cpu4 even though this could use ubuntu-latest,
+# to avoid extremely long GitHub-hosted queue times.
 #
 # Go Build already compiles the workspace; this job is the missing `go test`
 # half for agent/.
@@ -66,7 +68,7 @@ jobs:
     # check left, and branch protection matches a required check by job name --
     # so an unqualified name is one workflow away from being ambiguous.
     name: Unit tests (agent)
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     if: github.repository == 'NVIDIA/nke'
     timeout-minutes: 15
     permissions:
