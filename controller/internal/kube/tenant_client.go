@@ -212,11 +212,7 @@ func (p *DBClusterTenantClientProvider) clientFromTenantAccessSecret(ctx context
 			tenantAccessKubeconfigKey,
 		)
 	}
-	if err := consumePublishedKubeconfig(cluster, secret, kubeconfigBytes, publishedKubeconfigMode(cluster)); err != nil {
-		return nil, err
-	}
-
-	tenantClient, err := p.clientFromSecretVersion(cluster.ID, secret, kubeconfigBytes)
+	tenantClient, err := p.clientFromSecretVersion(cluster, secret, kubeconfigBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client from published tenant kubeconfig secret %s/%s: %w", tenantAccessKubeconfigNamespace, secretName, err)
 	}
@@ -224,16 +220,23 @@ func (p *DBClusterTenantClientProvider) clientFromTenantAccessSecret(ctx context
 }
 
 func (p *DBClusterTenantClientProvider) clientFromSecretVersion(
-	clusterID uuid.UUID,
+	cluster db.Cluster,
 	secret *corev1.Secret,
 	kubeconfigBytes []byte,
 ) (client.Client, error) {
 	secretVersion := secret.Namespace + "/" + secret.Name + "@" + secret.ResourceVersion
 	p.clientsMu.RLock()
-	cached := p.clients[clusterID]
+	cached := p.clients[cluster.ID]
 	p.clientsMu.RUnlock()
 	if cached.client != nil && cached.secretVersion == secretVersion {
 		return cached.client, nil
+	}
+
+	// Past the cache-hit return: a rewritten Secret gets a new resourceVersion,
+	// so every content change is still checked, without parsing the kubeconfig on
+	// each call. ClientForDBCluster runs per cluster per nodehealth pass.
+	if err := consumePublishedKubeconfig(cluster, secret, kubeconfigBytes, publishedKubeconfigMode(cluster)); err != nil {
+		return nil, err
 	}
 
 	tenantClient, err := NewClientFromKubeconfig(kubeconfigBytes)
@@ -244,11 +247,11 @@ func (p *DBClusterTenantClientProvider) clientFromSecretVersion(
 	// Client construction may race for the same Secret version. Keep and return
 	// the first successfully constructed instance for that version.
 	p.clientsMu.Lock()
-	cached = p.clients[clusterID]
+	cached = p.clients[cluster.ID]
 	if cached.client != nil && cached.secretVersion == secretVersion {
 		tenantClient = cached.client
 	} else {
-		p.clients[clusterID] = tenantClientCacheEntry{
+		p.clients[cluster.ID] = tenantClientCacheEntry{
 			secretVersion: secretVersion,
 			client:        tenantClient,
 		}

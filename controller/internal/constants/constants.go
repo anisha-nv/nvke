@@ -93,9 +93,11 @@ const (
 	// Secrets and OIDC-mode CAPI objects. The Helm chart creates it unconditionally.
 	NamespaceNKESystem = "nke-system"
 
-	// LabelKeyKubeconfigMode marks whether a published kubeconfig Secret is SPIRE
-	// exec-auth or a verbatim admin.conf. Immutable once set; publish/consume/delete
-	// refuse a Secret whose mode (or cluster-id) does not match the caller.
+	// LabelKeyKubeconfigMode records whether a published kubeconfig Secret holds
+	// SPIRE exec-auth or a verbatim admin.conf. The mode is rewritten in place when
+	// EnableOIDC flips a cluster, so it is descriptive, not an ownership key:
+	// publish and delete key off cluster-id alone, and the consume path checks the
+	// payload itself rather than this label.
 	LabelKeyKubeconfigMode        = "nke.nvidia.com/kubeconfig-mode"
 	LabelValueKubeconfigModeSPIRE = "spire"
 	LabelValueKubeconfigModeAdmin = "admin"
