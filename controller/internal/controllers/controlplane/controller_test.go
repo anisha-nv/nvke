@@ -210,6 +210,7 @@ func newControllerTest(ctx context.Context, t *testing.T) *controllerTest {
 	cluster := db.Cluster{
 		ID:                clusterID,
 		Name:              "test-cluster",
+		CAPINamespace:     "nke-system",
 		OrgID:             "test-org",
 		SiteID:            siteID,
 		VpcID:             uuid.New(),

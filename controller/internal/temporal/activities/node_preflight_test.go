@@ -163,6 +163,7 @@ func setupNodePreflightRequestTest(
 		ID:                uuid.New(),
 		SiteID:            siteID,
 		Name:              "test-cluster",
+		CAPINamespace:     "nke-system",
 		OrgID:             "test-org",
 		VpcID:             uuid.New(),
 		KubernetesVersion: "1.34.0",

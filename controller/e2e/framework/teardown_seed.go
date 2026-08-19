@@ -77,6 +77,7 @@ func seedTeardownScenario(ctx context.Context, database db.DB, scenario Teardown
 	if _, err := database.CreateCluster(ctx, &db.Cluster{
 		ID:                scenario.ClusterID,
 		Name:              "cwe-gofail-" + scenario.Name,
+		CAPINamespace:     "nke-system",
 		OrgID:             "cwe-gofail-org",
 		SiteID:            siteID,
 		VpcID:             uuid.New(),

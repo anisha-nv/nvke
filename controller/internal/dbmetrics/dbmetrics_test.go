@@ -51,6 +51,7 @@ func (te *collectorTestEnv) createCluster(ctx context.Context, t *testing.T, nam
 	cluster := db.Cluster{
 		ID:                uuid.New(),
 		Name:              name,
+		CAPINamespace:     "nke-system",
 		KubernetesVersion: "1.31.0",
 	}
 	cluster.SetNicoProvider(db.NicoClusterProvider{OrgID: "test-org", SiteID: te.site.ID, VpcID: uuid.New()})

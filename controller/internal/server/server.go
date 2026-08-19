@@ -171,7 +171,7 @@ func NewServerImpl(cfg config.Config, logger *slog.Logger, database db.DB, forge
 
 	return &serverImpl{
 		siteService:          *NewSiteService(logger, database, forgeProvider),
-		clusterService:       *NewClusterService(logger, database, nodePoolService, cfg.Teleport, cfg.EnableForgeCapi, cfg.NkeOIDCAuth.Enabled, cfg.UseControlPlaneControllerForControlPlane()),
+		clusterService:       *NewClusterService(logger, database, nodePoolService, cfg.Teleport, cfg.EnableForgeCapi, cfg.CAPINamespace, cfg.NkeOIDCAuth.Enabled, cfg.UseControlPlaneControllerForControlPlane()),
 		nodePoolService:      *nodePoolService,
 		nodeSetService:       *NewNodeSetService(logger, database, temporalClient),
 		nodeService:          *NewNodeService(logger, database, temporalClient, cfg.AllowEtcdSafetyOverrides),

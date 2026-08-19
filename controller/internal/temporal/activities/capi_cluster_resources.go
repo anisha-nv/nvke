@@ -8,7 +8,6 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -94,7 +93,7 @@ func (a *Activities) DeleteCAPIClusterResources(ctx context.Context, input Delet
 		return nil
 	}
 
-	namespace := capi.ClusterNamespace(cluster.Name)
+	namespace := cluster.CAPINamespace
 
 	infraCluster, err := capi.ParseManifest(manifest)
 	if err != nil {
@@ -126,21 +125,6 @@ func (a *Activities) DeleteCAPIClusterResources(ctx context.Context, input Delet
 		return fmt.Errorf("failed waiting for capi cluster %s deletion: %w", clusterObj.Name, err)
 	}
 
-	namespaceObj := &corev1.Namespace{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "Namespace",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: namespace,
-		},
-	}
-	if err := a.k8sClient.Delete(ctx, namespaceObj); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete cluster namespace %s: %w", namespace, err)
-	}
-	if err := waitForObjectDeleted(ctx, a.k8sClient, namespaceObj); err != nil {
-		return fmt.Errorf("failed waiting for cluster namespace %s deletion: %w", namespace, err)
-	}
-
+	// Never delete the Namespace: shared nke-system must stay.
 	return nil
 }

@@ -24,7 +24,7 @@ import (
 )
 
 func ApplyClusterScaffold(ctx context.Context, k8sClient client.Client, cluster db.Cluster) error {
-	namespace := ClusterNamespace(cluster.Name)
+	namespace := cluster.CAPINamespace
 	if err := ApplyNamespace(ctx, k8sClient, namespace); err != nil {
 		return err
 	}
@@ -115,7 +115,7 @@ func ClusterScaffoldManifest(cluster db.Cluster) (json.RawMessage, error) {
 // for replay of provisioning workflows started before TenantAccess became the
 // sole publisher. New workflows do not call this path.
 func ApplyClusterKubeconfigSecret(ctx context.Context, k8sClient client.Client, cluster db.Cluster, kubeconfigBytes []byte) error {
-	namespace := ClusterNamespace(cluster.Name)
+	namespace := cluster.CAPINamespace
 	clusterObj := &clusterv1.Cluster{}
 	if err := k8sClient.Get(ctx, client.ObjectKey{
 		Name:      cluster.Name,

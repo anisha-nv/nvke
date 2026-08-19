@@ -27,9 +27,8 @@ import (
 )
 
 const (
-	tenantAccessKubeconfigNamespace = constants.NamespaceNKESystem
-	tenantAccessKubeconfigKey       = "value"
-	tenantAPIServerProbeTimeout     = 5 * time.Second
+	tenantAccessKubeconfigKey   = "value"
+	tenantAPIServerProbeTimeout = 5 * time.Second
 )
 
 var ErrTenantClientNotReady = errors.New("tenant client not ready")
@@ -119,9 +118,8 @@ func NewClientFromRESTConfig(restConfig *rest.Config, addToSchemes ...AddToSchem
 
 // DBClusterTenantClientProvider returns shared tenant-cluster Kubernetes clients
 // for CWE DB clusters. CAPI clusters, and Nico clusters when tenant-access
-// consume is enabled, read nke-system/<name>-kubeconfig (TenantAccess). Nico
-// keeps the node-agent path as the disabled-state rollout fallback. CAPI
-// Cluster/Machine objects stay in cluster-<name> (NKX-14454).
+// consume is enabled, read <capi_namespace>/<name>-kubeconfig (TenantAccess).
+// Nico keeps the node-agent path as the disabled-state rollout fallback.
 type DBClusterTenantClientProvider struct {
 	database            db.DB
 	managementClient    client.Reader
@@ -185,21 +183,22 @@ func (p *DBClusterTenantClientProvider) ClientForDBCluster(ctx context.Context, 
 
 func (p *DBClusterTenantClientProvider) clientFromTenantAccessSecret(ctx context.Context, cluster db.Cluster) (client.Client, error) {
 	secretName := cluster.Name + "-kubeconfig"
+	namespace := cluster.CAPINamespace
 	secret := &corev1.Secret{}
 	if err := p.managementClient.Get(ctx, client.ObjectKey{
-		Namespace: tenantAccessKubeconfigNamespace,
+		Namespace: namespace,
 		Name:      secretName,
 	}, secret); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf(
 				"%w: published tenant kubeconfig secret %s/%s not found: %w",
 				ErrTenantClientNotReady,
-				tenantAccessKubeconfigNamespace,
+				namespace,
 				secretName,
 				err,
 			)
 		}
-		return nil, fmt.Errorf("failed to get published tenant kubeconfig secret %s/%s: %w", tenantAccessKubeconfigNamespace, secretName, err)
+		return nil, fmt.Errorf("failed to get published tenant kubeconfig secret %s/%s: %w", namespace, secretName, err)
 	}
 
 	kubeconfigBytes := secret.Data[tenantAccessKubeconfigKey]
@@ -207,14 +206,14 @@ func (p *DBClusterTenantClientProvider) clientFromTenantAccessSecret(ctx context
 		return nil, fmt.Errorf(
 			"%w: published tenant kubeconfig secret %s/%s has no non-empty %q key",
 			ErrTenantClientNotReady,
-			tenantAccessKubeconfigNamespace,
+			namespace,
 			secretName,
 			tenantAccessKubeconfigKey,
 		)
 	}
 	tenantClient, err := p.clientFromSecretVersion(cluster, secret, kubeconfigBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create client from published tenant kubeconfig secret %s/%s: %w", tenantAccessKubeconfigNamespace, secretName, err)
+		return nil, fmt.Errorf("failed to create client from published tenant kubeconfig secret %s/%s: %w", namespace, secretName, err)
 	}
 	return tenantClient, nil
 }
@@ -224,7 +223,12 @@ func (p *DBClusterTenantClientProvider) clientFromSecretVersion(
 	secret *corev1.Secret,
 	kubeconfigBytes []byte,
 ) (client.Client, error) {
-	cacheKey := secret.Namespace + "/" + secret.Name + "@" + secret.ResourceVersion
+	expectedMode := publishedKubeconfigMode(cluster)
+	if err := consumePublishedKubeconfig(cluster, secret, kubeconfigBytes, expectedMode); err != nil {
+		return nil, err
+	}
+
+	cacheKey := secret.Namespace + "/" + secret.Name + "@" + secret.ResourceVersion + "#" + expectedMode
 	p.clientsMu.RLock()
 	cached := p.clients[cluster.ID]
 	p.clientsMu.RUnlock()
@@ -252,6 +256,31 @@ func (p *DBClusterTenantClientProvider) clientFromSecretVersion(
 	p.clientsMu.Unlock()
 
 	return tenantClient, nil
+}
+
+func publishedKubeconfigMode(cluster db.Cluster) string {
+	if cluster.OIDCAuthEnabled {
+		return constants.LabelValueKubeconfigModeSPIRE
+	}
+	return constants.LabelValueKubeconfigModeAdmin
+}
+
+func consumePublishedKubeconfig(cluster db.Cluster, secret *corev1.Secret, kubeconfigBytes []byte, expectedMode string) error {
+	if err := capi.ValidateSecretOwnership(secret, cluster); err != nil {
+		return err
+	}
+	if expectedMode != constants.LabelValueKubeconfigModeSPIRE {
+		return nil
+	}
+
+	ok, err := capi.IsSPIREExecKubeconfig(kubeconfigBytes)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%w: published tenant kubeconfig secret %s/%s is not SPIRE exec-auth", ErrTenantClientNotReady, secret.Namespace, secret.Name)
+	}
+	return nil
 }
 
 // clientFromControlPlaneNodeAgent gets kubeconfigs from joined control-plane

@@ -13,7 +13,6 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/NVIDIA/nke/controller/internal/capi"
 	"github.com/NVIDIA/nke/controller/internal/constants"
 )
 
@@ -79,7 +78,7 @@ func (a *Activities) waitForNodeReboot(ctx context.Context, input WaitForNodeReb
 			return WaitForNodeRebootResult{}, fmt.Errorf("failed to get cluster: %w", err)
 		}
 
-		machineNamespace = capi.ClusterNamespace(cluster.Name)
+		machineNamespace = cluster.CAPINamespace
 		machineName = node.Name
 	}
 

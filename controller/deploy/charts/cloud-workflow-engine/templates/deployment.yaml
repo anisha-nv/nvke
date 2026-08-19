@@ -291,6 +291,8 @@ spec:
             - name: ENABLE_CAPI
               value: "true"
             {{- end }}
+            - name: CAPI_NAMESPACE
+              value: {{ .Values.capi.namespace | quote }}
             {{- if .Values.capi.forgeCapiEnabled }}
             - name: ENABLE_FORGE_CAPI
               value: "true"

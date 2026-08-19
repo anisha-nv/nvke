@@ -30,6 +30,10 @@ type ClusterProvisioningContext struct {
 	// ClusterName lets teardown reference name-keyed resources after the cluster
 	// row is gone.
 	ClusterName string
+
+	// CAPINamespace is the management-cluster namespace for CAPI objects and
+	// tenantaccess Secrets. Carried into teardown after the row is deleted.
+	CAPINamespace string
 }
 
 type NodeProvisioningContext struct {
@@ -113,9 +117,10 @@ func (a *Activities) GetClusterProvisioningContext(ctx context.Context, clusterI
 	}
 
 	return ClusterProvisioningContext{
-		ClusterID:   cluster.ID,
-		InfraMode:   infraMode,
-		ClusterName: cluster.Name,
+		ClusterID:     cluster.ID,
+		InfraMode:     infraMode,
+		ClusterName:   cluster.Name,
+		CAPINamespace: cluster.CAPINamespace,
 	}, nil
 }
 

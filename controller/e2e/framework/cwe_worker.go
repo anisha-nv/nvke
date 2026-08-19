@@ -231,6 +231,7 @@ func seedCWEGofailDB(ctx context.Context, database db.DB) error {
 	if _, err := database.CreateCluster(ctx, &db.Cluster{
 		ID:                CWEGofailClusterID,
 		Name:              "cwe-gofail-cluster",
+		CAPINamespace:     "nke-system",
 		OrgID:             "cwe-gofail-org",
 		SiteID:            cweGofailSiteID,
 		VpcID:             uuid.New(),

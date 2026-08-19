@@ -20,7 +20,6 @@ import (
 
 	nicov1 "github.com/NVIDIA/cluster-api-provider-nico/api/v1alpha1"
 
-	"github.com/NVIDIA/nke/controller/internal/capi"
 	"github.com/NVIDIA/nke/controller/internal/config"
 	"github.com/NVIDIA/nke/controller/internal/db"
 	"github.com/NVIDIA/nke/controller/internal/providers/forge"
@@ -119,7 +118,7 @@ func (c *NodeTPMEKPubController) getNicoMachine(ctx context.Context, node db.Nod
 	// buildNicoMachine names the NicoMachine CR after the database node name, so
 	// node.Name is the corresponding NicoMachine lookup key.
 	if err := c.k8sClient.Get(ctx, client.ObjectKey{
-		Namespace: capi.ClusterNamespace(cluster.Name),
+		Namespace: cluster.CAPINamespace,
 		Name:      node.Name,
 	}, nicoMachine); err != nil {
 		if apierrors.IsNotFound(err) {

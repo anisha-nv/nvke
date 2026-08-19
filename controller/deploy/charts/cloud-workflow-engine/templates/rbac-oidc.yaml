@@ -11,7 +11,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "cloud-workflow-engine.fullname" . }}-nke-rbac
-  namespace: nke-system
+  namespace: {{ .Values.capi.namespace }}
   labels:
     {{- include "cloud-workflow-engine.labels" . | nindent 4 }}
 rules:
@@ -32,7 +32,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "cloud-workflow-engine.fullname" . }}-nke-rbac
-  namespace: nke-system
+  namespace: {{ .Values.capi.namespace }}
   labels:
     {{- include "cloud-workflow-engine.labels" . | nindent 4 }}
 roleRef:

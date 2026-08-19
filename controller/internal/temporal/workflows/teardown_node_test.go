@@ -828,6 +828,7 @@ func setupTestDB(t *testing.T, opts seedOpts) (db.DB, seedResult) {
 	_, err = database.CreateCluster(ctx, &db.Cluster{
 		ID:                clusterID,
 		Name:              "test-cluster",
+		CAPINamespace:     "nke-system",
 		OrgID:             "test-org",
 		SiteID:            siteID,
 		VpcID:             uuid.New(),

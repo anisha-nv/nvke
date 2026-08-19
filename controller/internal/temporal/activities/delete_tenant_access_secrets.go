@@ -23,6 +23,9 @@ type DeleteTenantAccessSecretsInput struct {
 	// rather than looked up here because this step runs after the cluster row has
 	// been deleted.
 	ClusterName string
+
+	// CAPINamespace is the management-cluster namespace that held the Secrets.
+	CAPINamespace string
 }
 
 // DeleteTenantAccessSecrets removes the per-cluster Secrets the tenant-access
@@ -40,23 +43,28 @@ func (a *Activities) DeleteTenantAccessSecrets(ctx context.Context, input Delete
 		return fmt.Errorf("cluster name is required to delete tenant-access secrets for cluster %s", input.ClusterID)
 	}
 
+	if input.CAPINamespace == "" {
+		return fmt.Errorf("capi namespace is required to delete tenant-access secrets for cluster %s", input.ClusterID)
+	}
+
 	names := []string{
 		tenantaccess.KubeconfigSecretName(input.ClusterName),
 		tenantaccess.TrustBundleSecretName(input.ClusterName),
 	}
 	for _, name := range names {
 		secret := &corev1.Secret{}
-		key := types.NamespacedName{Namespace: tenantaccess.SecretsNamespace, Name: name}
+		key := types.NamespacedName{Namespace: input.CAPINamespace, Name: name}
 		if err := a.k8sClient.Get(ctx, key, secret); err != nil {
 			if apierrors.IsNotFound(err) {
 				continue
 			}
-			return fmt.Errorf("getting tenant-access secret %s/%s: %w", tenantaccess.SecretsNamespace, name, err)
+			return fmt.Errorf("getting tenant-access secret %s/%s: %w", input.CAPINamespace, name, err)
 		}
 		// The cluster row is already gone (teardown deletes it first so no
 		// in-flight tenant-access pass can re-publish from a stale snapshot), so
 		// the ownership label is the only evidence available here. Secret names
-		// derive from the reusable cluster name, and nke-system also holds
+		// derive from the reusable cluster name, and the default nke-system also
+		// holds CAPI-written <name>-kubeconfig Secrets. Delete strictly what we
 		// CAPI-written <name>-kubeconfig Secrets. Delete strictly what we
 		// labeled: a recreated same-name cluster or a foreign Secret must
 		// survive. Deliberately not capi.ValidateSecretOwnership, which permits

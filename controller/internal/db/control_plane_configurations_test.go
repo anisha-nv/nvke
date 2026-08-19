@@ -153,6 +153,7 @@ func newControlPlaneConfigTestCluster() db.Cluster {
 	return db.Cluster{
 		ID:                uuid.New(),
 		Name:              fmt.Sprintf("cluster-%s", uuid.New().String()),
+		CAPINamespace:     "nke-system",
 		OrgID:             "org1",
 		SiteID:            uuid.MustParse("11111111-1111-1111-1111-111111111111"),
 		ProviderType:      db.ProviderTypeNico,

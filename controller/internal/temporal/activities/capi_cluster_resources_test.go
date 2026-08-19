@@ -21,25 +21,25 @@ import (
 
 	nicov1 "github.com/NVIDIA/cluster-api-provider-nico/api/v1alpha1"
 
-	"github.com/NVIDIA/nke/controller/internal/capi"
 	"github.com/NVIDIA/nke/controller/internal/db"
 	"github.com/NVIDIA/nke/controller/internal/testutil"
 )
 
-func TestDeleteCAPIClusterResources_DeletesClusterNamespace(t *testing.T) {
+func TestDeleteCAPIClusterResources_KeepsClusterNamespace(t *testing.T) {
 	ctx := context.Background()
 	siteID := uuid.New()
 	vpcID := uuid.New()
 	cluster := db.Cluster{
-		ID:           uuid.New(),
-		Name:         "alpha",
-		OrgID:        "org-1",
-		SiteID:       siteID,
-		VpcID:        vpcID,
-		ProviderType: db.ProviderTypeNico,
-		Nico:         &db.NicoClusterProvider{OrgID: "org-1", SiteID: siteID, VpcID: vpcID},
+		ID:            uuid.New(),
+		Name:          "alpha",
+		CAPINamespace: "nke-system",
+		OrgID:         "org-1",
+		SiteID:        siteID,
+		VpcID:         vpcID,
+		ProviderType:  db.ProviderTypeNico,
+		Nico:          &db.NicoClusterProvider{OrgID: "org-1", SiteID: siteID, VpcID: vpcID},
 	}
-	ns := capi.ClusterNamespace(cluster.Name)
+	ns := cluster.CAPINamespace
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
@@ -64,5 +64,5 @@ func TestDeleteCAPIClusterResources_DeletesClusterNamespace(t *testing.T) {
 	err := k8sClient.Get(ctx, client.ObjectKey{Name: cluster.Name, Namespace: ns}, &clusterv1.Cluster{})
 	assert.True(t, apierrors.IsNotFound(err))
 	err = k8sClient.Get(ctx, client.ObjectKey{Name: ns}, &corev1.Namespace{})
-	assert.True(t, apierrors.IsNotFound(err), "cluster-<name> namespace should be deleted")
+	require.NoError(t, err, "CAPI resource teardown must not delete the namespace")
 }

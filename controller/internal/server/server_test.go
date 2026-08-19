@@ -20,7 +20,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/NVIDIA/nke/controller/api"
-	"github.com/NVIDIA/nke/controller/internal/capi"
 	"github.com/NVIDIA/nke/controller/internal/config"
 	"github.com/NVIDIA/nke/controller/internal/db"
 	"github.com/NVIDIA/nke/controller/internal/providers/forge"
@@ -265,10 +264,10 @@ func TestOpenAPIValidator_CreateCluster(t *testing.T) {
 			expectReject bool
 		}{
 			{"valid name", "test-cluster", false},
-			{"valid max length", strings.Repeat("a", capi.ClusterNameMaxLength), false},
+			{"valid max length", strings.Repeat("a", 55), false},
 			{"contains dot", "test.cluster", true},
 			{"contains uppercase", "Test-cluster", true},
-			{"too long for cluster namespace", strings.Repeat("a", capi.ClusterNameMaxLength+1), true},
+			{"too long", strings.Repeat("a", 56), true},
 		}
 
 		for _, tt := range tests {

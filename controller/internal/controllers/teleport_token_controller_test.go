@@ -77,6 +77,7 @@ func setupTestEnv(ctx context.Context, t *testing.T) *testEnv {
 		ID:                uuid.New(),
 		SiteID:            site.ID,
 		Name:              "test-cluster",
+		CAPINamespace:     "nke-system",
 		OrgID:             "test-org",
 		VpcID:             uuid.New(),
 		KubernetesVersion: "1.31.0",

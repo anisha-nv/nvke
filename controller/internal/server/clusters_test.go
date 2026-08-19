@@ -23,10 +23,10 @@ import (
 	forgesdk "github.com/NVIDIA/ncx-infra-controller-rest/sdk/standard"
 
 	"github.com/NVIDIA/nke/controller/api"
-	"github.com/NVIDIA/nke/controller/internal/capi"
 	"github.com/NVIDIA/nke/controller/internal/config"
 	"github.com/NVIDIA/nke/controller/internal/constants"
 	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/NVIDIA/nke/controller/internal/naming"
 	"github.com/NVIDIA/nke/controller/internal/server"
 	"github.com/NVIDIA/nke/controller/internal/testutil"
 )
@@ -68,7 +68,7 @@ func newTestClusterServiceWithControlPlaneController(logger *slog.Logger, mockDB
 		getSiteByIDFunc: getSiteByIDFunc,
 	}
 	nodePoolService := server.NewNodePoolService(logger, mockDB, mockForge, config.TeleportConfig{}, useControlPlaneController)
-	return server.NewClusterService(logger, mockDB, nodePoolService, config.TeleportConfig{}, false, false, useControlPlaneController)
+	return server.NewClusterService(logger, mockDB, nodePoolService, config.TeleportConfig{}, false, "nke-system", false, useControlPlaneController)
 }
 
 func discardLogger() *slog.Logger {
@@ -475,9 +475,10 @@ func TestClusterService_CreateCluster(t *testing.T) {
 			responseErrorContains: "cluster must have at least one control plane node",
 		},
 		{
-			name: "cluster name too long for cluster namespace",
+			name: "cluster name too long for generated node names",
 			request: api.CreateClusterRequest{
-				Name:                          strings.Repeat("a", capi.ClusterNameMaxLength+1),
+				// 57 chars leaves MaxNodeNamePrefixLen == 0 (need >= 1).
+				Name:                          strings.Repeat("a", naming.MaxGeneratedNodeNameLength-naming.NodeNameSuffixLength-2),
 				OrgID:                         testOrgID,
 				SiteID:                        siteID,
 				VpcID:                         uuid.MustParse("550e8400-e29b-41d4-a716-446655440002"),
@@ -492,7 +493,7 @@ func TestClusterService_CreateCluster(t *testing.T) {
 			},
 			wantResponseError:     true,
 			responseStatus:        http.StatusBadRequest,
-			responseErrorContains: "cluster name must be 55 characters or fewer",
+			responseErrorContains: "node names use format",
 		},
 	}
 

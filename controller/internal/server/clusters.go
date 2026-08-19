@@ -82,6 +82,7 @@ type clusterService struct {
 	nodePoolService *nodePoolService
 	teleportCfg     config.TeleportConfig
 	enableForgeCapi bool
+	capiNamespace   string
 	oidcAuthEnabled bool
 	// useControlPlaneController mirrors the CWE feature flag
 	// PROVISION_CONTROL_PLANE_WITH_CONTROL_PLANE_CONTROLLER. When true, the
@@ -99,6 +100,7 @@ func NewClusterService(
 	nodePoolService *nodePoolService,
 	teleportCfg config.TeleportConfig,
 	enableForgeCapi bool,
+	capiNamespace string,
 	oidcAuthEnabled bool,
 	useControlPlaneController bool,
 ) *clusterService {
@@ -108,6 +110,7 @@ func NewClusterService(
 		nodePoolService:           nodePoolService,
 		teleportCfg:               teleportCfg,
 		enableForgeCapi:           enableForgeCapi,
+		capiNamespace:             capiNamespace,
 		oidcAuthEnabled:           oidcAuthEnabled,
 		useControlPlaneController: useControlPlaneController,
 	}
@@ -116,6 +119,7 @@ func NewClusterService(
 // applyClusterDefaults fills in server-side defaults for omitted cluster fields.
 func (s *clusterService) applyClusterDefaults(req *api.CreateClusterRequest, cluster *db.Cluster) error {
 	cluster.OIDCAuthEnabled = s.oidcAuthEnabled
+	cluster.CAPINamespace = s.capiNamespace
 
 	if req.TeleportEnabled == nil {
 		cluster.TeleportEnabled = s.teleportCfg.DefaultClusterEnabled
@@ -330,12 +334,6 @@ func forgeCAPINicoClusterManifest(siteID uuid.UUID) ([]byte, error) {
 func (s *clusterService) validateCreateClusterRequestFields(req *api.CreateClusterRequest) error {
 	if err := naming.ValidateClusterNameForNodeNaming(req.Name); err != nil {
 		return err
-	}
-	if len(req.Name) > capi.ClusterNameMaxLength {
-		return fmt.Errorf(
-			"cluster name must be %d characters or fewer so it can be used as a cluster namespace name",
-			capi.ClusterNameMaxLength,
-		)
 	}
 
 	var nodePools []api.NodePoolCreateConfig

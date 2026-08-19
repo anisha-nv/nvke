@@ -38,18 +38,11 @@ const (
 	// KubeconfigSecretKey is the data key inside the per-cluster kubeconfig Secret.
 	KubeconfigSecretKey = "value"
 
-	// SecretsNamespace is the management-cluster namespace that holds the
-	// per-cluster Secrets this controller owns (kubeconfig + trust bundle). It is
-	// exported because the teardown activity deletes those Secrets on cluster
-	// removal. The chart creates the namespace and scopes CWE's Secret grant to
-	// it, so this is a constant rather than a config knob.
-	SecretsNamespace = constants.NamespaceNKESystem
-
 	resyncInterval = 3 * time.Minute
 )
 
 // KubeconfigSecretName returns the Secret name that holds the per-cluster
-// kubeconfig published into SecretsNamespace.
+// kubeconfig.
 func KubeconfigSecretName(clusterName string) string { return clusterName + "-kubeconfig" }
 
 // TenantManagerSet stops the per-cluster controller manager when its cluster
@@ -167,7 +160,7 @@ func (c *Controller) publish(ctx context.Context, cluster db.Cluster, adminConf 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      KubeconfigSecretName(live.Name),
-			Namespace: SecretsNamespace,
+			Namespace: live.CAPINamespace,
 			Labels: map[string]string{
 				clusterv1.ClusterNameLabel: live.Name,
 			},
@@ -228,7 +221,7 @@ func (c *Controller) publishSPIRE(ctx context.Context, cluster db.Cluster, admin
 	kubeconfigSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      KubeconfigSecretName(cluster.Name),
-			Namespace: SecretsNamespace,
+			Namespace: cluster.CAPINamespace,
 			Labels: map[string]string{
 				clusterv1.ClusterNameLabel: cluster.Name,
 			},
@@ -244,7 +237,7 @@ func (c *Controller) publishSPIRE(ctx context.Context, cluster db.Cluster, admin
 	trustBundleSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      TrustBundleSecretName(cluster.Name),
-			Namespace: SecretsNamespace,
+			Namespace: cluster.CAPINamespace,
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{TrustBundleSecretKey: ca},

@@ -22,6 +22,8 @@ import (
 	"github.com/NVIDIA/nke/controller/internal/db"
 )
 
+const testTenantAccessNamespace = "nke-system"
+
 type staticClusterReader struct {
 	cluster db.Cluster
 	err     error
@@ -36,7 +38,7 @@ func TestSecretReconcilerFeedsSecretIdentityToManagerSet(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cluster := db.Cluster{ID: uuid.New(), Name: "active"}
+	cluster := db.Cluster{ID: uuid.New(), Name: "active", CAPINamespace: testTenantAccessNamespace}
 	secret := tenantAccessSecret(cluster.ID, cluster.Name, "uid-active", "7", []byte("active-kubeconfig"))
 
 	scheme := runtime.NewScheme()
@@ -59,7 +61,7 @@ func TestSecretReconcilerFeedsSecretIdentityToManagerSet(t *testing.T) {
 	target := <-started
 	require.Equal(t, cluster.ID, target.ClusterID)
 	require.Equal(t, types.NamespacedName{
-		Namespace: tenantaccess.SecretsNamespace,
+		Namespace: testTenantAccessNamespace,
 		Name:      "active-kubeconfig",
 	}, target.KubeconfigSecretRef)
 	require.Equal(t, types.UID("uid-active"), target.KubeconfigSecretUID)
@@ -71,7 +73,7 @@ func TestSecretReconcilerIgnoresMetadataOnlySecretUpdate(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cluster := db.Cluster{ID: uuid.New(), Name: "active"}
+	cluster := db.Cluster{ID: uuid.New(), Name: "active", CAPINamespace: testTenantAccessNamespace}
 	secret := tenantAccessSecret(cluster.ID, cluster.Name, "uid-active", "7", []byte("active-kubeconfig"))
 
 	scheme := runtime.NewScheme()
@@ -111,7 +113,7 @@ func TestSecretReconcilerStopsRuntimeWhenSecretIsDeleted(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cluster := db.Cluster{ID: uuid.New(), Name: "active"}
+	cluster := db.Cluster{ID: uuid.New(), Name: "active", CAPINamespace: testTenantAccessNamespace}
 	secret := tenantAccessSecret(cluster.ID, cluster.Name, "uid-active", "7", []byte("active-kubeconfig"))
 
 	scheme := runtime.NewScheme()
@@ -144,14 +146,52 @@ func TestSecretReconcilerStopsRuntimeWhenSecretIsDeleted(t *testing.T) {
 	}
 }
 
+func TestSecretReconcilerIgnoresStaleNamespaceSecret(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cluster := db.Cluster{ID: uuid.New(), Name: "active", CAPINamespace: testTenantAccessNamespace}
+	currentSecret := tenantAccessSecret(cluster.ID, cluster.Name, "uid-current", "7", []byte("active-kubeconfig"))
+	staleSecret := tenantAccessSecret(cluster.ID, cluster.Name, "uid-stale", "8", []byte("stale-kubeconfig"))
+	staleSecret.Namespace = "old-namespace"
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(currentSecret, staleSecret).Build()
+	started := make(chan struct{}, 1)
+	stopped := make(chan struct{}, 1)
+	managerSet := newTestManagerSet(t, ctx, runtimeFactoryFunc(func(_ context.Context, _ Target) (Runtime, error) {
+		started <- struct{}{}
+		return newFakeRuntime(func() { stopped <- struct{}{} }), nil
+	}), 1)
+	t.Cleanup(managerSet.Shutdown)
+	reconciler := NewSecretReconciler(staticClusterReader{cluster: cluster}, reader, managerSet)
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Namespace: currentSecret.Namespace, Name: currentSecret.Name}})
+	require.NoError(t, err)
+	select {
+	case <-started:
+	case <-time.After(testEventuallyTimeout):
+		t.Fatal("runtime was not started")
+	}
+
+	_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Namespace: staleSecret.Namespace, Name: staleSecret.Name}})
+	require.NoError(t, err)
+	require.Never(t, func() bool {
+		return len(stopped) > 0
+	}, 50*time.Millisecond, testEventuallyInterval)
+}
+
 func TestSecretReconcilerRejectsDeletingCluster(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cluster := db.Cluster{
-		ID:   uuid.New(),
-		Name: "deleting",
+		ID:            uuid.New(),
+		Name:          "deleting",
+		CAPINamespace: testTenantAccessNamespace,
 		Conditions: db.ClusterConditions{
 			Deleting: db.Condition{Status: db.ConditionStatusTrue},
 		},
@@ -177,7 +217,7 @@ func TestSecretReconcilerRejectsDeletingCluster(t *testing.T) {
 func tenantAccessSecret(clusterID uuid.UUID, clusterName, uid, resourceVersion string, kubeconfig []byte) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace:       tenantaccess.SecretsNamespace,
+			Namespace:       testTenantAccessNamespace,
 			Name:            tenantaccess.KubeconfigSecretName(clusterName),
 			UID:             types.UID(uid),
 			ResourceVersion: resourceVersion,

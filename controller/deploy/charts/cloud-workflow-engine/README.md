@@ -18,8 +18,10 @@ A Helm chart to deploy the cloud-workflow-engine service
 | autoscaling.maxReplicas | int | `100` |  |
 | autoscaling.minReplicas | int | `1` |  |
 | autoscaling.targetCPUUtilizationPercentage | int | `80` |  |
+| capi.createNamespace | bool | `true` | Create the Namespace named by capi.namespace. Not gated on capi.enabled. Tilt sets this false and applies the Namespace itself. |
 | capi.enabled | bool | `false` | Enable Cluster API controllers in CWE. |
 | capi.forgeCapiEnabled | bool | `false` | Enable the Forge-CAPI bridge controllers. |
+| capi.namespace | string | `"nke-system"` | Default management-cluster namespace for CAPI objects and tenantaccess Secrets. Independent of capi.enabled: tenantaccess and OIDC still use this name. |
 | capi.rbac.create | bool | `false` | Create RBAC for CWE to watch and patch CAPI/NICo resources. |
 | cni.imageRegistry | string | `""` | Optional OCI registry prefix for CNI component images. Empty uses chart defaults. |
 | env | list | `[]` | Additional environment variables to inject into the CWE container. |
@@ -117,7 +119,7 @@ A Helm chart to deploy the cloud-workflow-engine service
 | temporal.mtls.mountPath | string | `"/var/secrets/temporal/certs/client"` | Mount path for the Temporal client certificate secret. |
 | temporal.port | int | `7233` |  |
 | temporal.publicTemporalHostPort | string | `""` |  |
-| tenantAccess.enabled | bool | `true` | Publish each cluster's kubeconfig as a Secret in the nke-system namespace, and remove those Secrets during cluster teardown. Gates both the controller and its cleanup activity, and the Secret grant they depend on. |
+| tenantAccess.enabled | bool | `false` | Publish each cluster's kubeconfig as a Secret in capi.namespace, and remove those Secrets during cluster teardown. Gates both the controller and its cleanup activity, and the Secret grant they depend on. |
 | tolerations | list | `[]` |  |
 | volumeMounts | list | `[]` |  |
 | volumes | list | `[]` |  |

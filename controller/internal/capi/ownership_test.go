@@ -20,7 +20,7 @@ import (
 func TestValidateSecretOwnership(t *testing.T) {
 	t.Parallel()
 
-	cluster := db.Cluster{ID: uuid.New(), Name: "alpha"}
+	cluster := db.Cluster{ID: uuid.New(), Name: "alpha", CAPINamespace: "nke-system"}
 
 	t.Run("missing labels are allowed", func(t *testing.T) {
 		t.Parallel()
@@ -42,7 +42,7 @@ func TestValidateSecretOwnership(t *testing.T) {
 		t.Parallel()
 		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
 			Name:      "alpha-kubeconfig",
-			Namespace: constants.NamespaceNKESystem,
+			Namespace: cluster.CAPINamespace,
 			Labels:    map[string]string{constants.LabelKeyClusterID: uuid.New().String()},
 		}}
 		err := capi.ValidateSecretOwnership(secret, cluster)
@@ -54,7 +54,7 @@ func TestValidateSecretOwnership(t *testing.T) {
 		t.Parallel()
 		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
 			Name:      "alpha-kubeconfig",
-			Namespace: constants.NamespaceNKESystem,
+			Namespace: cluster.CAPINamespace,
 			Labels: map[string]string{
 				constants.LabelKeyClusterID:      cluster.ID.String(),
 				constants.LabelKeyKubeconfigMode: constants.LabelValueKubeconfigModeAdmin,

@@ -23,7 +23,6 @@ import (
 	nicov1 "github.com/NVIDIA/cluster-api-provider-nico/api/v1alpha1"
 
 	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/constants"
 	"github.com/NVIDIA/nke/controller/internal/controllers"
 	"github.com/NVIDIA/nke/controller/internal/db"
 	"github.com/NVIDIA/nke/controller/internal/testutil"
@@ -45,7 +44,7 @@ func TestCAPIClusterScaffoldController_Reconcile(t *testing.T) {
 	}
 	emptyCluster.SetCAPIProvider(db.CAPIClusterProvider{InfraCluster: json.RawMessage(`{}`)})
 
-	t.Run("applies CAPI objects in cluster-<name> and does not write kubeconfig", func(t *testing.T) {
+	t.Run("applies CAPI objects in the persisted namespace and does not write kubeconfig", func(t *testing.T) {
 		mockDB := &testutil.MockDB{}
 		mockDB.On("ListClusters", mock.Anything, mock.MatchedBy(func(filters db.ClusterFilters) bool {
 			return filters.SiteID != nil && *filters.SiteID == siteID
@@ -61,7 +60,7 @@ func TestCAPIClusterScaffoldController_Reconcile(t *testing.T) {
 		)
 		require.NoError(t, controller.Reconcile(ctx, db.Site{ID: siteID}))
 
-		clusterNS := "cluster-" + activeCluster.Name
+		clusterNS := activeCluster.CAPINamespace
 		clusterObj := &clusterv1.Cluster{}
 		require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{
 			Name:      activeCluster.Name,
@@ -73,11 +72,6 @@ func TestCAPIClusterScaffoldController_Reconcile(t *testing.T) {
 			Namespace: clusterNS,
 		}, &corev1.Secret{})
 		assert.True(t, apierrors.IsNotFound(err), "scaffold must not write the kubeconfig Secret")
-		err = k8sClient.Get(ctx, types.NamespacedName{
-			Name:      activeCluster.Name + "-kubeconfig",
-			Namespace: constants.NamespaceNKESystem,
-		}, &corev1.Secret{})
-		assert.True(t, apierrors.IsNotFound(err), "scaffold must not write the kubeconfig Secret in nke-system")
 		mockDB.AssertNotCalled(t, "ListNodes", mock.Anything, mock.Anything)
 		mockDB.AssertExpectations(t)
 	})
@@ -107,8 +101,9 @@ func scaffoldCluster(t *testing.T, clusterID, siteID uuid.UUID, name string) db.
 	t.Helper()
 
 	cluster := db.Cluster{
-		ID:   clusterID,
-		Name: name,
+		ID:            clusterID,
+		Name:          name,
+		CAPINamespace: "nke-system",
 	}
 	cluster.SetNicoProvider(db.NicoClusterProvider{OrgID: "org-1", SiteID: siteID, VpcID: uuid.New()})
 	return cluster

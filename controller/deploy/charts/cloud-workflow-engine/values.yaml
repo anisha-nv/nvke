@@ -59,10 +59,6 @@ fullnameOverride: ""
 # -- Deploy into this namespace instead of the release namespace (umbrella use).
 namespaceOverride: ""
 
-nkeSystemNamespace:
-  # -- Create the shared nke-system namespace.
-  create: true
-
 # This section builds out the service account.
 # https://kubernetes.io/docs/concepts/security/service-accounts/
 serviceAccount:
@@ -253,6 +249,10 @@ affinity: {}
 capi:
   # -- Enable Cluster API controllers in CWE.
   enabled: false
+  # -- Default management-cluster namespace for CAPI objects and tenantaccess Secrets.
+  namespace: nke-system
+  # -- Create the Namespace named by capi.namespace. Not gated on capi.enabled.
+  createNamespace: true
   # -- Enable the Forge-CAPI bridge controllers.
   forgeCapiEnabled: false
   rbac:
@@ -268,7 +268,7 @@ cni:
   imageRegistry: ""
 
 tenantAccess:
-  # -- Publish each cluster's kubeconfig as a Secret in the nke-system namespace,
+  # -- Publish each cluster's kubeconfig as a Secret in capi.namespace,
   # and remove those Secrets during cluster teardown. Gates both the controller
   # and its cleanup activity, and the Secret grant they depend on.
   enabled: true

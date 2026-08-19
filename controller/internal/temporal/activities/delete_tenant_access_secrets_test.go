@@ -25,6 +25,8 @@ import (
 	"github.com/NVIDIA/nke/controller/internal/testutil"
 )
 
+const testCAPINamespace = "nke-system"
+
 func tenantAccessScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -34,7 +36,7 @@ func tenantAccessScheme(t *testing.T) *runtime.Scheme {
 
 func tenantAccessSecretExists(t *testing.T, c client.Client, name string) bool {
 	t.Helper()
-	err := c.Get(context.Background(), types.NamespacedName{Namespace: tenantaccess.SecretsNamespace, Name: name}, &corev1.Secret{})
+	err := c.Get(context.Background(), types.NamespacedName{Namespace: testCAPINamespace, Name: name}, &corev1.Secret{})
 	if apierrors.IsNotFound(err) {
 		return false
 	}
@@ -50,7 +52,7 @@ func TestDeleteTenantAccessSecrets_DeletesBothAndIsIdempotent(t *testing.T) {
 
 	newSecret := func(name string) *corev1.Secret {
 		return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-			Namespace: tenantaccess.SecretsNamespace,
+			Namespace: testCAPINamespace,
 			Name:      name,
 			Labels: map[string]string{
 				constants.LabelKeyClusterID: clusterID.String(),
@@ -71,17 +73,17 @@ func TestDeleteTenantAccessSecrets_DeletesBothAndIsIdempotent(t *testing.T) {
 		k8sClient: k8sClient,
 	}
 
-	require.NoError(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: clusterID, ClusterName: clusterName}))
+	require.NoError(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: clusterID, ClusterName: clusterName, CAPINamespace: testCAPINamespace}))
 	assert.False(t, tenantAccessSecretExists(t, k8sClient, kubeconfigName), "kubeconfig secret should be deleted")
 	assert.False(t, tenantAccessSecretExists(t, k8sClient, trustBundleName), "trust-bundle secret should be deleted")
 
-	require.NoError(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: clusterID, ClusterName: clusterName}))
+	require.NoError(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: clusterID, ClusterName: clusterName, CAPINamespace: testCAPINamespace}))
 	mockDB.AssertNotCalled(t, "GetCluster", mock.Anything, mock.Anything)
 }
 
 func TestDeleteTenantAccessSecrets_RequiresK8sClient(t *testing.T) {
 	a := &Activities{cfg: config.Config{TenantAccessEnabled: true}}
-	require.Error(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: uuid.New(), ClusterName: "tenant-a"}))
+	require.Error(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: uuid.New(), ClusterName: "tenant-a", CAPINamespace: testCAPINamespace}))
 }
 
 func TestDeleteTenantAccessSecrets_DeletesWhenTenantAccessDisabled(t *testing.T) {
@@ -92,7 +94,7 @@ func TestDeleteTenantAccessSecrets_DeletesWhenTenantAccessDisabled(t *testing.T)
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(tenantAccessScheme(t)).
 		WithObjects(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-			Namespace: tenantaccess.SecretsNamespace,
+			Namespace: testCAPINamespace,
 			Name:      kubeconfigName,
 			Labels:    map[string]string{constants.LabelKeyClusterID: clusterID.String()},
 		}}).
@@ -103,13 +105,13 @@ func TestDeleteTenantAccessSecrets_DeletesWhenTenantAccessDisabled(t *testing.T)
 		k8sClient: k8sClient,
 	}
 
-	require.NoError(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: clusterID, ClusterName: clusterName}))
+	require.NoError(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: clusterID, ClusterName: clusterName, CAPINamespace: testCAPINamespace}))
 	assert.False(t, tenantAccessSecretExists(t, k8sClient, kubeconfigName), "owned secret must be deleted even when tenant access is disabled")
 }
 
 func TestDeleteTenantAccessSecrets_RequiresK8sClientWhenDisabled(t *testing.T) {
 	a := &Activities{cfg: config.Config{TenantAccessEnabled: false}}
-	require.Error(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: uuid.New(), ClusterName: "tenant-a"}))
+	require.Error(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: uuid.New(), ClusterName: "tenant-a", CAPINamespace: testCAPINamespace}))
 }
 
 func TestDeleteTenantAccessSecrets_RequiresClusterName(t *testing.T) {
@@ -117,7 +119,7 @@ func TestDeleteTenantAccessSecrets_RequiresClusterName(t *testing.T) {
 		cfg:       config.Config{TenantAccessEnabled: true},
 		k8sClient: fake.NewClientBuilder().WithScheme(tenantAccessScheme(t)).Build(),
 	}
-	require.Error(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: uuid.New()}))
+	require.Error(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: uuid.New(), CAPINamespace: testCAPINamespace}))
 }
 
 func TestDeleteTenantAccessSecrets_SkipsWrongOwner(t *testing.T) {
@@ -129,14 +131,14 @@ func TestDeleteTenantAccessSecrets_SkipsWrongOwner(t *testing.T) {
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(tenantAccessScheme(t)).
 		WithObjects(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-			Namespace: tenantaccess.SecretsNamespace,
+			Namespace: testCAPINamespace,
 			Name:      kubeconfigName,
 			Labels:    map[string]string{constants.LabelKeyClusterID: otherID.String()},
 		}}).
 		Build()
 
 	a := &Activities{k8sClient: k8sClient}
-	require.NoError(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: clusterID, ClusterName: clusterName}))
+	require.NoError(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: clusterID, ClusterName: clusterName, CAPINamespace: testCAPINamespace}))
 	assert.True(t, tenantAccessSecretExists(t, k8sClient, kubeconfigName), "wrong-owner secret must not be deleted")
 }
 
@@ -148,13 +150,13 @@ func TestDeleteTenantAccessSecrets_SkipsUnlabeledSecret(t *testing.T) {
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(tenantAccessScheme(t)).
 		WithObjects(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-			Namespace: tenantaccess.SecretsNamespace,
+			Namespace: testCAPINamespace,
 			Name:      kubeconfigName,
 		}}).
 		Build()
 
 	a := &Activities{k8sClient: k8sClient}
-	require.NoError(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: clusterID, ClusterName: clusterName}))
+	require.NoError(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: clusterID, ClusterName: clusterName, CAPINamespace: testCAPINamespace}))
 	assert.True(t, tenantAccessSecretExists(t, k8sClient, kubeconfigName), "unlabeled secret must not be deleted")
 }
 
@@ -166,14 +168,14 @@ func TestDeleteTenantAccessSecrets_TeardownIsolation(t *testing.T) {
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(tenantAccessScheme(t)).
 		WithObjects(
-			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: tenantaccess.SecretsNamespace}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testCAPINamespace}},
 			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-				Namespace: tenantaccess.SecretsNamespace,
+				Namespace: testCAPINamespace,
 				Name:      tenantaccess.KubeconfigSecretName(nameA),
 				Labels:    map[string]string{constants.LabelKeyClusterID: clusterA.String()},
 			}},
 			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-				Namespace: tenantaccess.SecretsNamespace,
+				Namespace: testCAPINamespace,
 				Name:      tenantaccess.KubeconfigSecretName(nameB),
 				Labels:    map[string]string{constants.LabelKeyClusterID: clusterB.String()},
 			}},
@@ -181,9 +183,9 @@ func TestDeleteTenantAccessSecrets_TeardownIsolation(t *testing.T) {
 		Build()
 
 	a := &Activities{k8sClient: k8sClient}
-	require.NoError(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: clusterA, ClusterName: nameA}))
+	require.NoError(t, a.DeleteTenantAccessSecrets(context.Background(), DeleteTenantAccessSecretsInput{ClusterID: clusterA, ClusterName: nameA, CAPINamespace: testCAPINamespace}))
 
 	assert.False(t, tenantAccessSecretExists(t, k8sClient, tenantaccess.KubeconfigSecretName(nameA)))
 	assert.True(t, tenantAccessSecretExists(t, k8sClient, tenantaccess.KubeconfigSecretName(nameB)), "cluster B secret must remain")
-	require.NoError(t, k8sClient.Get(context.Background(), types.NamespacedName{Name: tenantaccess.SecretsNamespace}, &corev1.Namespace{}))
+	require.NoError(t, k8sClient.Get(context.Background(), types.NamespacedName{Name: testCAPINamespace}, &corev1.Namespace{}))
 }

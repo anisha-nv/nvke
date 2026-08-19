@@ -60,6 +60,7 @@ type Cluster struct {
 	ServiceCIDR           string    `bun:"service_cidr,type:text,notnull,default:'10.96.0.0/12'"`
 	OIDCAuthEnabled       bool      `bun:"type:boolean,notnull,default:false"`
 
+	CAPINamespace    string               `bun:"capi_namespace,type:text,notnull"`
 	CapiInfraCluster json.RawMessage      `bun:"type:jsonb,notnull,default:'{}'"`
 	ProviderType     ProviderType         `bun:"provider_type,type:text,notnull"`
 	Nico             *NicoClusterProvider `bun:"nico,type:jsonb"`
@@ -529,7 +530,8 @@ func (q *queriesImpl) CreateCluster(ctx context.Context, cluster *Cluster) (Clus
 
 func (q *queriesImpl) UpdateCluster(ctx context.Context, cluster *Cluster) (Cluster, error) {
 	cluster.SyncProviderFields()
-	res, err := q.db.NewUpdate().Model(cluster).WherePK().Exec(ctx)
+	// capi_namespace is write-once, enforced here, not as a database update trigger.
+	res, err := q.db.NewUpdate().Model(cluster).WherePK().ExcludeColumn("capi_namespace").Exec(ctx)
 	if err != nil {
 		return Cluster{}, err
 	}

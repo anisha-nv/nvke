@@ -579,9 +579,9 @@ components:
           type: string
           pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
           minLength: 1
-          maxLength: 55
+          maxLength: 56
           example: "my-cluster"
-          description: The name of the cluster. Must be a lowercase DNS label so CWE can derive the `cluster-<name>` namespace for CAPI resources.
+          description: The name of the cluster. Must be a lowercase DNS label. Length is capped so generated node names (`<cluster>-<prefix>-<suffix>`) fit within the Kubernetes 63-character limit.
           x-order: 1
         orgID:
           type: string

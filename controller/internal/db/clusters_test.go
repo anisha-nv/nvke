@@ -122,6 +122,7 @@ func TestClusterProviderGettersSettersAndSync(t *testing.T) {
 	vpcID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	infraCluster := json.RawMessage(`{"kind":"ForgeCluster"}`)
 	cluster := db.Cluster{
+		CAPINamespace:     "nke-system",
 		OrgID:             "org-a",
 		SiteID:            siteID,
 		VpcID:             vpcID,
@@ -167,6 +168,7 @@ func newValidCluster(opts ...func(*db.Cluster)) db.Cluster {
 	cluster := db.Cluster{
 		ID:                uuid.New(),
 		Name:              fmt.Sprintf("cluster-%s", uuid.New().String()),
+		CAPINamespace:     "nke-system",
 		OrgID:             "org1",
 		SiteID:            uuid.MustParse("11111111-1111-1111-1111-111111111111"),
 		VpcID:             uuid.New(),

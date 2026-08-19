@@ -248,6 +248,11 @@ type Config struct {
 	// Requires EnableCapi=true.
 	EnableForgeCapi bool `env:"ENABLE_FORGE_CAPI" default:"false"`
 
+	// CAPINamespace is the management-cluster namespace used for CAPI objects
+	// and related Secrets for newly created clusters. Existing clusters retain
+	// their current namespace.
+	CAPINamespace string `env:"CAPI_NAMESPACE" default:"nke-system"`
+
 	// LocalDevForceDockerMachineBootstrap forces every node through the
 	// DockerMachine bootstrap/preflight + container-mode kubeadm contract
 	// (the /run/cluster-api/bootstrap-success.complete sentinel) regardless of

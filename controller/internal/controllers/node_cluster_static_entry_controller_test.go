@@ -19,7 +19,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/NVIDIA/nke/controller/internal/capi"
 	"github.com/NVIDIA/nke/controller/internal/config"
 	"github.com/NVIDIA/nke/controller/internal/constants"
 	"github.com/NVIDIA/nke/controller/internal/db"
@@ -32,9 +31,10 @@ func TestNodeClusterStaticEntryController_SkipsTPMEntryForJoinTokenCAPIMachine(t
 	clusterID := uuid.New()
 	nodeID := uuid.New()
 	cluster := db.Cluster{
-		ID:           clusterID,
-		Name:         "join-token-capi",
-		ProviderType: db.ProviderTypeCAPI,
+		ID:            clusterID,
+		Name:          "join-token-capi",
+		CAPINamespace: "nke-system",
+		ProviderType:  db.ProviderTypeCAPI,
 	}
 	node := db.Node{
 		ID:           nodeID,
@@ -59,7 +59,7 @@ func TestNodeClusterStaticEntryController_SkipsTPMEntryForJoinTokenCAPIMachine(t
 			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      node.Name,
-				Namespace: capi.ClusterNamespace(cluster.Name),
+				Namespace: cluster.CAPINamespace,
 				Annotations: map[string]string{
 					constants.MachineAnnotationKeySpireAgentSpiffeIDPath: constants.JoinTokenAlternateSpireAgentPath + nodeID.String(),
 				},
@@ -107,9 +107,10 @@ func TestNodeClusterStaticEntryController_DeletesStaleTPMEntryForJoinTokenCAPIMa
 	clusterID := uuid.New()
 	nodeID := uuid.New()
 	cluster := db.Cluster{
-		ID:           clusterID,
-		Name:         "join-token-capi",
-		ProviderType: db.ProviderTypeCAPI,
+		ID:            clusterID,
+		Name:          "join-token-capi",
+		CAPINamespace: "nke-system",
+		ProviderType:  db.ProviderTypeCAPI,
 	}
 	node := db.Node{
 		ID:           nodeID,
@@ -133,7 +134,7 @@ func TestNodeClusterStaticEntryController_DeletesStaleTPMEntryForJoinTokenCAPIMa
 			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      node.Name,
-				Namespace: capi.ClusterNamespace(cluster.Name),
+				Namespace: cluster.CAPINamespace,
 				Annotations: map[string]string{
 					constants.MachineAnnotationKeySpireAgentSpiffeIDPath: constants.JoinTokenAlternateSpireAgentPath + nodeID.String(),
 				},
@@ -183,9 +184,10 @@ func TestNodeClusterStaticEntryController_AppliesTPMEntryForTPMCAPIMachine(t *te
 	nodeID := uuid.New()
 	tpmHash := "hash-from-nicomachine"
 	cluster := db.Cluster{
-		ID:           clusterID,
-		Name:         "tpm-capi",
-		ProviderType: db.ProviderTypeCAPI,
+		ID:            clusterID,
+		Name:          "tpm-capi",
+		CAPINamespace: "nke-system",
+		ProviderType:  db.ProviderTypeCAPI,
 	}
 	node := db.Node{
 		ID:           nodeID,
@@ -208,7 +210,7 @@ func TestNodeClusterStaticEntryController_AppliesTPMEntryForTPMCAPIMachine(t *te
 			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      node.Name,
-				Namespace: capi.ClusterNamespace(cluster.Name),
+				Namespace: cluster.CAPINamespace,
 				Annotations: map[string]string{
 					constants.MachineAnnotationKeySpireAgentSpiffeIDPath: constants.TPMSpireAgentPath + tpmHash,
 				},
@@ -238,9 +240,10 @@ func TestNodeClusterStaticEntryController_PreservesTPMEntryWhenCAPIMachineMissin
 	clusterID := uuid.New()
 	nodeID := uuid.New()
 	cluster := db.Cluster{
-		ID:           clusterID,
-		Name:         "missing-machine-capi",
-		ProviderType: db.ProviderTypeCAPI,
+		ID:            clusterID,
+		Name:          "missing-machine-capi",
+		CAPINamespace: "nke-system",
+		ProviderType:  db.ProviderTypeCAPI,
 	}
 	node := db.Node{
 		ID:           nodeID,

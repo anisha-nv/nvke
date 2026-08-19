@@ -32,20 +32,21 @@ const (
 // readRBACManifest reads the operator-managed nke-rbac ConfigMap from the
 // management cluster and returns the multi-document tenant RBAC manifest.
 func (c *Controller) readRBACManifest(ctx context.Context) ([]byte, error) {
+	namespace := c.cfg.CAPINamespace
 	var cm corev1.ConfigMap
-	key := types.NamespacedName{Namespace: SecretsNamespace, Name: rbacConfigMapName}
+	key := types.NamespacedName{Namespace: namespace, Name: rbacConfigMapName}
 	if err := c.k8sClient.Get(ctx, key, &cm); err != nil {
-		return nil, fmt.Errorf("getting NKE RBAC ConfigMap %s/%s: %w", SecretsNamespace, rbacConfigMapName, err)
+		return nil, fmt.Errorf("getting NKE RBAC ConfigMap %s/%s: %w", namespace, rbacConfigMapName, err)
 	}
 
 	manifest, ok := cm.Data[rbacConfigMapKey]
 	if !ok {
-		return nil, fmt.Errorf("NKE RBAC ConfigMap %s/%s missing required key %q", SecretsNamespace, rbacConfigMapName, rbacConfigMapKey)
+		return nil, fmt.Errorf("NKE RBAC ConfigMap %s/%s missing required key %q", namespace, rbacConfigMapName, rbacConfigMapKey)
 	}
 
 	result := bytes.TrimSpace([]byte(manifest))
 	if len(result) == 0 {
-		return nil, fmt.Errorf("NKE RBAC ConfigMap %s/%s key %q is empty", SecretsNamespace, rbacConfigMapName, rbacConfigMapKey)
+		return nil, fmt.Errorf("NKE RBAC ConfigMap %s/%s key %q is empty", namespace, rbacConfigMapName, rbacConfigMapKey)
 	}
 
 	return result, nil

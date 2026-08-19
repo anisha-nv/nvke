@@ -12,7 +12,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	"github.com/NVIDIA/nke/controller/internal/capi"
 	"github.com/NVIDIA/nke/controller/internal/db"
 )
 
@@ -45,9 +44,6 @@ func upsertOwnedSecret(
 	}
 
 	op, err := controllerutil.CreateOrUpdate(ctx, k8sClient, secret, func() error {
-		if err := capi.ValidateSecretOwnership(secret, cluster); err != nil {
-			return err
-		}
 		if secret.Labels == nil {
 			secret.Labels = map[string]string{}
 		}

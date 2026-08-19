@@ -34,6 +34,7 @@ func TestGetNodeContext_NoNodePoolControlPlane(t *testing.T) {
 		ID:                uuid.New(),
 		SiteID:            site.ID,
 		Name:              "cp-cluster",
+		CAPINamespace:     "nke-system",
 		OrgID:             "test-org",
 		VpcID:             uuid.New(),
 		KubernetesVersion: "1.31.0",

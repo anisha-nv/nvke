@@ -1,11 +1,13 @@
-# Shared nke-system namespace and tenant RBAC ConfigMap.
+# Shared management namespace (name from .Values.capi.namespace) and tenant RBAC ConfigMap.
 #
-# The nke-system namespace is created unconditionally (Prune=false): the CWE
-# controller that reconciles tenant access (NKX-12975) publishes per-cluster Secrets
-# (<cluster>-kubeconfig, <cluster>-cluster-trust-bundle) into it for every reconciled
-# cluster, so it must exist whenever that controller runs, independent of
-# tenantAccess.enabled and nkeOIDCAuth.enabled. Keeping it unconditional also means
-# a site that has published Secrets and is then disabled keeps them addressable.
+# Creation is gated by capi.createNamespace, not capi.enabled: tenantaccess
+# publishes per-cluster Secrets (<cluster>-kubeconfig,
+# <cluster>-cluster-trust-bundle) into each cluster's capi_namespace (default
+# .Values.capi.namespace) for every reconciled cluster, so the shared default
+# namespace must exist whenever that controller runs, independent of
+# capi.enabled, tenantAccess.enabled, and nkeOIDCAuth.enabled. Keeping the
+# Namespace (Prune=false) also means a site that has published Secrets and is
+# then disabled keeps them addressable.
 #
 # The nke-rbac ConfigMap (key manifest.yaml) is rendered whenever
 # spiffe.trustDomain is set, not when the live nkeOIDCAuth flag is on.
@@ -13,11 +15,11 @@
 # persisted-OIDC tenant cluster. Flipping nkeOIDCAuth.enabled off must not
 # drop the document. It defines the SPIFFE identities allowed to call each
 # tenant API surface (nke:cwe).
-{{- if .Values.nkeSystemNamespace.create }}
+{{- if .Values.capi.createNamespace }}
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: nke-system
+  name: {{ .Values.capi.namespace }}
   annotations:
     argocd.argoproj.io/sync-options: Prune=false
 {{- end }}
@@ -48,7 +50,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: nke-rbac
-  namespace: nke-system
+  namespace: {{ .Values.capi.namespace }}
   labels:
     {{- include "cloud-workflow-engine.labels" . | nindent 4 }}
 data:

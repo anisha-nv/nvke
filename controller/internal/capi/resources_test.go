@@ -58,7 +58,7 @@ func TestResources_ApplyClusterScaffold(t *testing.T) {
 			err := capi.ApplyClusterScaffold(ctx, k8sClient, params.cluster)
 			require.NoError(t, err)
 
-			namespace := capi.ClusterNamespace(params.cluster.Name)
+			namespace := params.cluster.CAPINamespace
 
 			clusterObj := &clusterv1.Cluster{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: params.cluster.Name, Namespace: namespace}, clusterObj))
@@ -273,13 +273,14 @@ func testCluster() db.Cluster {
 	siteID := uuid.New()
 	vpcID := uuid.New()
 	cluster := db.Cluster{
-		ID:           uuid.New(),
-		Name:         testClusterName,
-		OrgID:        "org-1",
-		SiteID:       siteID,
-		VpcID:        vpcID,
-		ProviderType: db.ProviderTypeNico,
-		Nico:         &db.NicoClusterProvider{OrgID: "org-1", SiteID: siteID, VpcID: vpcID},
+		ID:            uuid.New(),
+		Name:          testClusterName,
+		OrgID:         "org-1",
+		SiteID:        siteID,
+		VpcID:         vpcID,
+		CAPINamespace: "nke-system",
+		ProviderType:  db.ProviderTypeNico,
+		Nico:          &db.NicoClusterProvider{OrgID: "org-1", SiteID: siteID, VpcID: vpcID},
 	}
 	return cluster
 }

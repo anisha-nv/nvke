@@ -77,14 +77,19 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, request ctrl.Request) 
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("getting cluster %s for tenant-access Secret %s: %w", clusterID, secretRef, err)
 	}
-	if cluster.Conditions.Deleting.Status == db.ConditionStatusTrue || secret.Name != tenantaccess.KubeconfigSecretName(cluster.Name) {
+	if cluster.Conditions.Deleting.Status == db.ConditionStatusTrue {
 		r.managerSet.RemoveCluster(clusterID)
+		return ctrl.Result{}, nil
+	}
+	if secret.Namespace != cluster.CAPINamespace ||
+		secret.Name != tenantaccess.KubeconfigSecretName(cluster.Name) {
+		r.managerSet.RemoveKubeconfigSecret(secretRef)
 		return ctrl.Result{}, nil
 	}
 
 	kubeconfig := secret.Data[tenantaccess.KubeconfigSecretKey]
 	if len(kubeconfig) == 0 {
-		r.managerSet.RemoveCluster(clusterID)
+		r.managerSet.RemoveKubeconfigSecret(secretRef)
 		return ctrl.Result{}, nil
 	}
 
@@ -101,8 +106,7 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, request ctrl.Request) 
 }
 
 func clusterIDForKubeconfigSecret(secret *corev1.Secret) (uuid.UUID, bool) {
-	if secret.Namespace != tenantaccess.SecretsNamespace ||
-		secret.Labels[constants.LabelKeyNkeManagedBy] != constants.LabelValueNkeManagedBy ||
+	if secret.Labels[constants.LabelKeyNkeManagedBy] != constants.LabelValueNkeManagedBy ||
 		!strings.HasSuffix(secret.Name, "-kubeconfig") {
 		return uuid.Nil, false
 	}

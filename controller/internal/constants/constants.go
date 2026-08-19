@@ -89,10 +89,6 @@ const (
 	LabelKeyNkeManagedBy   = "nke.nvidia.com/managed-by"
 	LabelValueNkeManagedBy = "cloud-workflow-engine"
 
-	// NamespaceNKESystem is the shared management-plane namespace for tenant-access
-	// Secrets and OIDC-mode CAPI objects. The Helm chart creates it unconditionally.
-	NamespaceNKESystem = "nke-system"
-
 	// LabelKeyKubeconfigMode records whether a published kubeconfig Secret holds
 	// SPIRE exec-auth or a verbatim admin.conf. The mode is rewritten in place when
 	// EnableOIDC flips a cluster, so it is descriptive, not an ownership key:

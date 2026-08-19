@@ -1,8 +1,8 @@
 fullnameOverride: cloud-workflow-engine
 namespaceOverride: cloud-workflow-engine
 
-nkeSystemNamespace:
-  create: false
+capi:
+  createNamespace: false
 
 image:
   repository: docker.local/cwe

@@ -51,6 +51,7 @@ func (te *collectorTestEnv) createCluster(ctx context.Context, t *testing.T, nam
 		ID:                uuid.New(),
 		SiteID:            te.site.ID,
 		Name:              name,
+		CAPINamespace:     "nke-system",
 		OrgID:             "test-org",
 		VpcID:             uuid.New(),
 		KubernetesVersion: "1.31.0",

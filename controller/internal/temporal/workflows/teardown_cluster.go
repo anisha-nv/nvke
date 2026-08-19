@@ -88,7 +88,7 @@ func teardownCluster(ctx workflow.Context, input TeardownClusterInput) error {
 	// the row first means no later pass can observe the cluster at all. The name
 	// comes from the context read at the top of teardown, since the row no longer
 	// exists to look it up.
-	if err := deleteTenantAccessSecrets(ctx, input.ClusterID, clusterCtx.ClusterName); err != nil {
+	if err := deleteTenantAccessSecrets(ctx, input.ClusterID, clusterCtx.ClusterName, clusterCtx.CAPINamespace); err != nil {
 		return fmt.Errorf("failed to delete tenant-access secrets: %w", err)
 	}
 
@@ -207,15 +207,16 @@ func deleteEtcdEncryptionKeySecret(ctx workflow.Context, clusterID uuid.UUID) er
 	return nil
 }
 
-func deleteTenantAccessSecrets(ctx workflow.Context, clusterID uuid.UUID, clusterName string) error {
+func deleteTenantAccessSecrets(ctx workflow.Context, clusterID uuid.UUID, clusterName, capiNamespace string) error {
 	var a *activities.Activities
 
 	if err := workflow.ExecuteActivity(
 		withK8sDeleteWaitOptions(ctx),
 		a.DeleteTenantAccessSecrets,
 		activities.DeleteTenantAccessSecretsInput{
-			ClusterID:   clusterID,
-			ClusterName: clusterName,
+			ClusterID:     clusterID,
+			ClusterName:   clusterName,
+			CAPINamespace: capiNamespace,
 		},
 	).Get(ctx, nil); err != nil {
 		return fmt.Errorf("failed to delete tenant-access secrets: %w", err)

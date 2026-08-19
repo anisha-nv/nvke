@@ -24,13 +24,18 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/NVIDIA/nke/controller/internal/config"
 )
 
 // update regenerates the golden files instead of asserting against them:
 // `go test ./internal/controllers/tenantaccess/... -run TestBuildSpireKubeconfig -update`.
 var update = flag.Bool("update", false, "regenerate golden files")
 
-const testEndpointSocket = "unix:///var/run/spire/agent/sockets/public/api.sock"
+const (
+	testEndpointSocket = "unix:///var/run/spire/agent/sockets/public/api.sock"
+	testCAPINamespace  = "nke-system"
+)
 
 func TestBuildSpireKubeconfig(t *testing.T) {
 	t.Parallel()
@@ -96,11 +101,11 @@ func TestReadAndApplyRBACManifest(t *testing.T) {
 
 			ctx := context.Background()
 			cm := &corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{Namespace: SecretsNamespace, Name: rbacConfigMapName},
+				ObjectMeta: metav1.ObjectMeta{Namespace: testCAPINamespace, Name: rbacConfigMapName},
 				Data:       map[string]string{rbacConfigMapKey: tc.manifest},
 			}
 			c := crfake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(cm).Build()
-			ctrl := &Controller{k8sClient: c}
+			ctrl := &Controller{k8sClient: c, cfg: config.Config{CAPINamespace: testCAPINamespace}}
 
 			manifest, err := ctrl.readRBACManifest(ctx)
 			if err == nil {
@@ -127,11 +132,11 @@ func TestReadRBACManifestMissingKey(t *testing.T) {
 	t.Parallel()
 
 	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Namespace: SecretsNamespace, Name: rbacConfigMapName},
+		ObjectMeta: metav1.ObjectMeta{Namespace: testCAPINamespace, Name: rbacConfigMapName},
 		Data:       map[string]string{"other.yaml": "irrelevant"},
 	}
 	c := crfake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(cm).Build()
-	ctrl := &Controller{k8sClient: c}
+	ctrl := &Controller{k8sClient: c, cfg: config.Config{CAPINamespace: testCAPINamespace}}
 
 	_, err := ctrl.readRBACManifest(context.Background())
 	require.ErrorContains(t, err, "missing required key")
@@ -143,7 +148,7 @@ func TestReadRBACManifestAbsentConfigMap(t *testing.T) {
 	t.Parallel()
 
 	c := crfake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
-	ctrl := &Controller{k8sClient: c}
+	ctrl := &Controller{k8sClient: c, cfg: config.Config{CAPINamespace: testCAPINamespace}}
 
 	_, err := ctrl.readRBACManifest(context.Background())
 	require.ErrorContains(t, err, "getting NKE RBAC ConfigMap")
