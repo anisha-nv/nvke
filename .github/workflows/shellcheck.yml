@@ -10,10 +10,9 @@
 # executed on nodes, and that never detected a missing tool. All three parsed
 # fine under `bash -n`; only shellcheck saw them.
 #
-# Runs on ubuntu-latest. shellcheck is preinstalled on GitHub runners, so this
-# needs no download, no NVIDIA runner and no credentials.
-# Temporarily using linux-amd64-cpu4 even though this could use ubuntu-latest,
-# to avoid extremely long GitHub-hosted queue times.
+# Runs on the self-hosted pool: this needs no NVIDIA runner and no credentials,
+# but GitHub-hosted queue times have been reaching tens of minutes. shellcheck is
+# preinstalled on the GitHub images and not on nv-gha, so the job installs it.
 #
 # Deliberately NOT path-filtered, for the reason recorded in actionlint.yml: a
 # filtered check does not report on a pull request that misses the filter, and
@@ -22,20 +21,11 @@
 
 name: Shellcheck
 
-# workflow_call is declared so merge-gate.yml can call this as a reusable
-# workflow. Adding the trigger changes nothing on its own: this workflow still
-# runs exactly as it did, on the same events.
-#
-# It lands ahead of the gate on purpose. A local `uses: ./.github/workflows/...`
-# reference resolves against the BASE branch, so a workflow whose workflow_call
-# trigger exists only on a pull-request head cannot be called from that same
-# pull request -- the call fails with no jobs and no error message.
 on:
   push:
     branches:
       - main
       - "pull-request/[0-9]+"
-  workflow_call:
   workflow_dispatch: {}
 
 permissions: {}
@@ -52,9 +42,9 @@ concurrency:
   # Pull-request branches keep sharing a group and still cancel, which is
   # what you want there.
   # A literal name, NOT ${{ github.workflow }}. Inside a called workflow that
-  # expression is the CALLER's name, so every workflow merge-gate.yml calls would
+  # expression is the CALLER's name, so every workflow one caller invokes would
   # compute the same group and cancel each other -- 8 of 9 calls died that way,
-  # reported to the gate as failures with no jobs and no error message.
+  # reported as failures with no jobs and no error message.
   group: Shellcheck-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 

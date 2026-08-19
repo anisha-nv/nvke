@@ -251,13 +251,15 @@ on it rather than on your own branch.
 ⚠️ **This is not a fork-only mechanism, despite what this file used to say.**
 The bot gates on **author vetting**, not on whether the pull request comes from
 a fork. Same-repository pull requests from unvetted authors are not mirrored
-either, and receive none of the checks that depend on it — `golangci-lint`,
-CodeQL, `govulncheck`, `gitleaks`, `grype`, `actionlint`, `shellcheck`, the
-image build and the notices gate.
+either, and receive none of the checks that depend on it — which is now nearly
+everything: `golangci-lint`, CodeQL, `govulncheck`, `gitleaks`, `grype`,
+`actionlint`, `shellcheck`, the unit tests, `Go Build`, the chart lint, the
+licence checks, the image build and the notices gate.
 
-**Absence of a check does not look like failure.** The seven workflows on the
-real `pull_request` event still report, so the pull request page shows a column
-of green ticks with the other checks simply missing. If you are reviewing, check
+**Absence of a check does not look like failure.** The two workflows still on
+the real `pull_request` event -- `deb.yml` and `dependency-review.yml` -- report
+either way, so the pull request page shows a column of green ticks with
+everything else simply missing. If you are reviewing, check
 that the checks you care about are *present*, not just passing:
 
 ```bash

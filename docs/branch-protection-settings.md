@@ -98,24 +98,30 @@ checks the current workflows report.
 
 ### Which workflows always report on a pull request
 
-Only these seven trigger on the real `pull_request` event, so only these are
+Only these two trigger on the real `pull_request` event, so only these are
 guaranteed to appear on every pull request regardless of who opened it:
 
-`agent-test.yml` · `chart.yml` · `controller-test.yml` · `deb.yml` ·
-`go-build.yml` · `go-work-check.yml` · `license.yml`
+`deb.yml` · `dependency-review.yml`
 
-⚠️ **Every one of them is also path-filtered**, so a documentation-only pull
-request receives none of them either — it gets `DCO` and nothing else.
+⚠️ **`deb.yml` is also path-filtered**, so a documentation-only pull request
+receives neither — it gets `DCO` and `Dependency Review` and nothing else.
 
-Everything else — `lint`, `codeql`, `govulncheck`, `secrets`, `security-scan`,
-`image`, `notices-check`, `actionlint`, `shellcheck`, `generate-check` — depends
-on the mirror branch described above.
+Everything else depends on the mirror branch described above: `lint`, `codeql`,
+`govulncheck`, `secrets`, `security-scan`, `image`, `notices-check`,
+`actionlint`, `shellcheck`, `generate-check`, `agent-test`, `chart`,
+`controller-test`, `go-build`, `go-work-check` and `license`.
 
 **So the honest position today is that no check is both unconditional and
 meaningful.** Fixing that is a prerequisite for branch protection, not a
-follow-up to it. The cheapest route is to move the checks that need no
-self-hosted runner onto `pull_request`: `actionlint`, `shellcheck`,
-`generate-check`, `codeql` and `govulncheck` already run on `ubuntu-latest`.
+follow-up to it.
+
+⚠️ **The obvious route — moving the checks that need no self-hosted runner onto
+`pull_request` — is closed for now.** It was tried, and GitHub-hosted queue times
+of 30-40 minutes for a `ubuntu-latest` job made it unusable, so those checks
+moved to the self-hosted pool instead. Every job that could have run on
+`pull_request` now cannot: self-hosted runners never receive that event. The
+trade was made knowingly and costs coverage of pull requests from unvetted
+authors.
 
 ⚠️ **Do not mark the last two required.** Both filter on `paths:`, so a
 documentation-only pull request never reports them — which is exactly the trap
@@ -128,9 +134,9 @@ required. The filter had already cost something: a red run merged to `main`, and
 because every branch inherits the workflow file, the failure then reported on
 every open pull request as though that pull request had caused it. Dropping the
 filter was cheaper than the alternative — a skip shim reporting the same check
-name — because the job is an eight-second static binary on a GitHub-hosted
-runner, so it consumes no self-hosted capacity. **Add it to the required list;
-it is not required yet.**
+name — because the job is an eight-second static binary, so running it on every
+push costs nothing worth counting. **Add it to the required list; it is not
+required yet.**
 
 Confirm the exact names before you require one. A required check that names a
 job which never reports leaves every pull request waiting forever:

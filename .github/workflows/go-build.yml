@@ -7,26 +7,26 @@
 # agent or the two hack controllers on a pull request, so a change that did not
 # compile could merge and only fail later in a release or an image build.
 #
-# Runs on ubuntu-latest with `pull_request`, deliberately. Every module in
-# go.work — all eight, including controller, forge-vms, and nkectl — resolves
-# its dependencies from the committed vendor/ tree, so this needs no NVIDIA
-# runner and no credentials -- which means it also runs on fork pull requests
-# and on Dependabot's, where the repository currently has almost no coverage.
-# See docs/go-workspace.md.
-# Temporarily using linux-amd64-cpu4 even though this could use ubuntu-latest,
-# to avoid extremely long GitHub-hosted queue times.
+# Every module in go.work — all eight, including controller, forge-vms, and
+# nkectl — resolves its dependencies from the committed vendor/ tree, so this
+# needs no NVIDIA runner and no credentials. See docs/go-workspace.md.
+#
+# It runs on the self-hosted pool anyway, because GitHub-hosted queue times have
+# been reaching tens of minutes. Those runners never see a pull_request event, so
+# a fork pull request is covered only once copy-pr-bot mirrors it; Dependabot's
+# own branches are matched directly below.
 name: Go Build
 
-# workflow_call is what merge-gate.yml uses to call this as a reusable workflow.
-# Its own `pull_request:` trigger is gone: pull requests reach it through the
-# gate, so it runs once per pull request rather than twice.
-#
-# A called workflow does not apply its own `paths:` filter, so on a pull request
-# this runs whatever changed. That is deliberate -- see the note in
-# merge-gate.yml. The filter below still applies to `push`.
+# No `pull_request:` trigger. Self-hosted runners do not pick up jobs from
+# pull_request events, so pull requests are tested through the
+# pull-request/<number> branch that copy-pr-bot pushes for vetted authors. The
+# `paths:` filter below applies there as well as on main.
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "pull-request/[0-9]+"
+      - "dependabot/**"
     paths:
       - '**/*.go'
       - '**/go.mod'
@@ -35,7 +35,6 @@ on:
       - 'go.work.sum'
       - 'Makefile'
       - '.github/workflows/go-build.yml'
-  workflow_call:
   workflow_dispatch:
 
 permissions: {}
@@ -52,9 +51,9 @@ concurrency:
   # Pull-request branches keep sharing a group and still cancel, which is
   # what you want there.
   # A literal name, NOT ${{ github.workflow }}. Inside a called workflow that
-  # expression is the CALLER's name, so every workflow merge-gate.yml calls would
+  # expression is the CALLER's name, so every workflow one caller invokes would
   # compute the same group and cancel each other -- 8 of 9 calls died that way,
-  # reported to the gate as failures with no jobs and no error message.
+  # reported as failures with no jobs and no error message.
   group: Go Build-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
   # Do not cancel a run on main; the newer workflows here all guard this.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}

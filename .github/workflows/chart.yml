@@ -12,27 +12,26 @@
 # catches a bad range, a missing value, or an indentation error inside a
 # template -- lint alone passes all of those.
 #
-# GitHub-hosted, not the self-hosted pool: helm needs no NVIDIA runner, and
-# self-hosted runners do not receive fork or Dependabot pull_request events.
-# Temporarily using linux-amd64-cpu4 even though this could use ubuntu-latest,
-# to avoid extremely long GitHub-hosted queue times.
+# helm needs no NVIDIA runner, but this runs on the self-hosted pool because
+# GitHub-hosted queue times have been reaching tens of minutes. Those runners
+# never see a pull_request event, so a fork pull request is covered only once
+# copy-pr-bot mirrors it.
 
 name: Chart
 
-# workflow_call is what merge-gate.yml uses to call this as a reusable workflow.
-# Its own `pull_request:` trigger is gone: pull requests reach it through the
-# gate, so it runs once per pull request rather than twice.
-#
-# A called workflow does not apply its own `paths:` filter, so on a pull request
-# this runs whatever changed. That is deliberate -- see the note in
-# merge-gate.yml. The filter below still applies to `push`.
+# No `pull_request:` trigger. Self-hosted runners do not pick up jobs from
+# pull_request events, so pull requests are tested through the
+# pull-request/<number> branch that copy-pr-bot pushes for vetted authors. The
+# `paths:` filter below applies there as well as on main.
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "pull-request/[0-9]+"
+      - "dependabot/**"
     paths:
       - 'controller/deploy/charts/**'
       - '.github/workflows/chart.yml'
-  workflow_call:
   workflow_dispatch:
 
 permissions: {}
@@ -49,9 +48,9 @@ concurrency:
   # Pull-request branches keep sharing a group and still cancel, which is
   # what you want there.
   # A literal name, NOT ${{ github.workflow }}. Inside a called workflow that
-  # expression is the CALLER's name, so every workflow merge-gate.yml calls would
+  # expression is the CALLER's name, so every workflow one caller invokes would
   # compute the same group and cancel each other -- 8 of 9 calls died that way,
-  # reported to the gate as failures with no jobs and no error message.
+  # reported as failures with no jobs and no error message.
   group: Chart-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 

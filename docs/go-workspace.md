@@ -108,9 +108,10 @@ things. Each maps to a failure this repository can produce:
 | Every `go.mod` in the tree is classified in the `Makefile` | A **new module** added without being listed in `WORK_MODULES`. It would never be built or synced, and nothing else in CI would mention it. | add it to the list in the `Makefile`, then `make work-sync` |
 | A full refresh changes nothing | The ordinary stale case: a bump landed in one module, so the others build against a version none of their `go.mod` files admits to. Skipped (with a note) where `cluster-api-provider-nico` is unreachable — see "The vendored dependency". | `make work-sync` and commit everything it changes |
 
-The **Go Build** workflow runs `make build`. Both run on `ubuntu-latest` and
-need no NVIDIA credentials, so they also run on fork and Dependabot pull
-requests.
+The **Go Build** workflow runs `make build`. Neither needs NVIDIA credentials,
+but both run on the self-hosted pool, so they report on a pull request only once
+`copy-pr-bot` mirrors it to `pull-request/<number>`. Dependabot's own branches
+are matched directly, so a dependency bump is still covered.
 
 ## Adding a module
 

@@ -27,7 +27,10 @@ name: License Checks
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "pull-request/[0-9]+"
+      - "dependabot/**"
     paths:
       - '**/*.go'
       - '**/go.mod'
@@ -42,9 +45,9 @@ on:
       - 'controller/deploy/charts/cloud-workflow-engine/LICENSE'
       - 'controller/deploy/charts/cloud-workflow-engine/NOTICE'
       - '.github/workflows/license.yml'
-  # No `pull_request:` trigger. Pull requests reach this through merge-gate.yml,
-  # which calls it as a reusable workflow, so it runs once rather than twice.
-  # release.yml also calls it, which is why workflow_call was already here.
+  # No `pull_request:` trigger. Self-hosted runners do not pick up jobs from
+  # pull_request events, so pull requests are covered by the branch list above.
+  # workflow_call is here for release.yml, which calls this as its publish gate.
   workflow_call:
 
 # Every job here only reads the checkout. Declared rather than inherited: a

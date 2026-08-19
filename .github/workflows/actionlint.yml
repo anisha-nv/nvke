@@ -9,11 +9,9 @@
 # its merge gate for a while; this is the same check for a repository without a
 # merge gate.
 #
-# Runs on ubuntu-latest. actionlint is a static binary that reads YAML — it needs
-# no Docker, no private dependency and no NVIDIA runner, so it should not consume
-# self-hosted capacity, and a contributor working from a fork can see it.
-# Temporarily using linux-amd64-cpu4 even though this could use ubuntu-latest,
-# to avoid extremely long GitHub-hosted queue times.
+# Runs on the self-hosted pool. actionlint is a static binary that reads YAML —
+# it needs no Docker, no private dependency and no NVIDIA runner, so ubuntu-latest
+# would do, but GitHub-hosted queue times have been reaching tens of minutes.
 #
 # Deliberately NOT path-filtered, unlike most workflows here. A filtered check
 # does not report on a pull request that misses the filter, and a required check
@@ -24,19 +22,11 @@
 # request as though that pull request had caused it.
 #
 # The filter was saving nothing worth having. This is an eight-second static
-# binary on a GitHub-hosted runner, so running it on pushes that touch no
-# workflow file costs no self-hosted capacity and no meaningful time.
+# binary, so running it on pushes that touch no workflow file costs no
+# meaningful time.
 
 name: Actionlint
 
-# workflow_call is declared so merge-gate.yml can call this as a reusable
-# workflow. Adding the trigger changes nothing on its own: this workflow still
-# runs exactly as it did, on the same events.
-#
-# It lands ahead of the gate on purpose. A local `uses: ./.github/workflows/...`
-# reference resolves against the BASE branch, so a workflow whose workflow_call
-# trigger exists only on a pull-request head cannot be called from that same
-# pull request -- the call fails with no jobs and no error message.
 on:
   push:
     branches:
@@ -47,7 +37,6 @@ on:
       # of this check -- and a check that cannot report on a pull request
       # cannot be required. Same list as notices-check.yml.
       - "dependabot/**"
-  workflow_call:
   workflow_dispatch: {}
 
 permissions: {}
@@ -64,9 +53,9 @@ concurrency:
   # Pull-request branches keep sharing a group and still cancel, which is
   # what you want there.
   # A literal name, NOT ${{ github.workflow }}. Inside a called workflow that
-  # expression is the CALLER's name, so every workflow merge-gate.yml calls would
+  # expression is the CALLER's name, so every workflow one caller invokes would
   # compute the same group and cancel each other -- 8 of 9 calls died that way,
-  # reported to the gate as failures with no jobs and no error message.
+  # reported as failures with no jobs and no error message.
   group: Actionlint-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 

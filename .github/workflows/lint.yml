@@ -5,19 +5,11 @@ name: Lint
 
 # Self-hosted runners do not pick up jobs from pull_request events, so pull
 # requests are tested through the pull-request/<number> branch instead.
-# workflow_call so merge-gate.yml can call this, and ubuntu-latest so the call
-# works on a real pull_request event -- self-hosted runners do not receive fork
-# pull_request events, so a gate member left on one would queue forever.
-# Temporarily using linux-amd64-cpu4 even though this could use ubuntu-latest,
-# to avoid extremely long GitHub-hosted queue times.
 #
 # Nothing here needs an NVIDIA runner: the whole workspace resolves from the
-# committed vendor/ tree, so this is ordinary Go work with no credentials.
-#
-# Lands ahead of the gate change on purpose. A local `uses: ./.github/...`
-# reference resolves against the BASE branch, so a workflow whose workflow_call
-# trigger exists only on a pull-request head cannot be called from it -- the call
-# fails with no jobs and no error message.
+# committed vendor/ tree, so this is ordinary Go work with no credentials. The
+# self-hosted pool is used anyway, because that is where the capacity is --
+# GitHub-hosted queue times have been reaching tens of minutes.
 on:
   push:
     branches:
@@ -28,7 +20,6 @@ on:
       # of this check -- and a check that cannot report on a pull request
       # cannot be required. Same list as notices-check.yml.
       - "dependabot/**"
-  workflow_call:
   workflow_dispatch:
 
 permissions: {}
@@ -45,7 +36,7 @@ concurrency:
   # Pull-request branches keep sharing a group and still cancel, which is
   # what you want there.
   # A literal name, NOT ${{ github.workflow }}. Inside a called workflow that
-  # expression is the CALLER's name, so any workflow merge-gate.yml calls would
+  # expression is the CALLER's name, so any workflow one caller invokes would
   # share a group with its siblings and cancel them. 8 of 9 calls died that way,
   # reported as failures with no jobs and no error message.
   group: Lint-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
@@ -69,7 +60,7 @@ jobs:
     # (see docs/branch-protection-settings.md); a renamed job never reports
     # under the required name and leaves every PR waiting forever.
     name: golangci-lint
-    runs-on: linux-amd64-cpu4
+    runs-on: linux-amd64-cpu16
     if: github.repository == 'NVIDIA/nke'
     timeout-minutes: 15
     permissions:
@@ -93,7 +84,7 @@ jobs:
 
   lint-controller:
     name: golangci-lint (controller)
-    runs-on: linux-amd64-cpu4
+    runs-on: linux-amd64-cpu16
     if: github.repository == 'NVIDIA/nke'
     # make lint gives golangci-lint a 20m budget on this module; leave headroom
     # for an uncached run.
@@ -134,7 +125,7 @@ jobs:
 
   lint-cli:
     name: golangci-lint (cli)
-    runs-on: linux-amd64-cpu4
+    runs-on: linux-amd64-cpu16
     if: github.repository == 'NVIDIA/nke'
     timeout-minutes: 15
     permissions:
@@ -163,7 +154,7 @@ jobs:
 
   lint-nico-mock:
     name: golangci-lint (nico-mock)
-    runs-on: linux-amd64-cpu4
+    runs-on: linux-amd64-cpu16
     if: github.repository == 'NVIDIA/nke'
     timeout-minutes: 15
     permissions:
@@ -193,7 +184,7 @@ jobs:
 
   lint-forge-vms:
     name: golangci-lint (forge-vms)
-    runs-on: linux-amd64-cpu4
+    runs-on: linux-amd64-cpu16
     if: github.repository == 'NVIDIA/nke'
     timeout-minutes: 15
     permissions:

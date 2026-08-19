@@ -41,7 +41,7 @@ permissions: {}
 
 concurrency:
   # A literal name, NOT ${{ github.workflow }}. Inside a called workflow that
-  # expression is the CALLER's name, so any workflow merge-gate.yml calls would
+  # expression is the CALLER's name, so any workflow one caller invokes would
   # share a group with its siblings and cancel them.
   group: Agent Deb Publish-${{ github.ref }}
   # Never cancel a publish midway: a half-written index.json leaves apt-publisher

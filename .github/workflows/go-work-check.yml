@@ -45,16 +45,16 @@ name: Go Workspace Check
 # The two path lists are duplicated by hand. github.com has supported YAML
 # anchors since August 2025, but GitHub Enterprise Server does not, and merge
 # keys are still unsupported everywhere. Keep the two lists identical.
-# workflow_call is what merge-gate.yml uses to call this as a reusable workflow.
-# Its own `pull_request:` trigger is gone: pull requests reach it through the
-# gate, so it runs once per pull request rather than twice.
-#
-# A called workflow does not apply its own `paths:` filter, so on a pull request
-# this runs whatever changed. That is deliberate -- see the note in
-# merge-gate.yml. The filter below still applies to `push`.
+# No `pull_request:` trigger. Self-hosted runners do not pick up jobs from
+# pull_request events, so pull requests are tested through the
+# pull-request/<number> branch that copy-pr-bot pushes for vetted authors. The
+# `paths:` filter below applies there as well as on main.
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "pull-request/[0-9]+"
+      - "dependabot/**"
     paths:
       - '**/go.mod'
       - '**/go.sum'
@@ -63,7 +63,6 @@ on:
       - 'vendor/**'
       - 'Makefile'
       - '.github/workflows/go-work-check.yml'
-  workflow_call:
   workflow_dispatch:
 
 permissions: {}
@@ -80,9 +79,9 @@ concurrency:
   # Pull-request branches keep sharing a group and still cancel, which is
   # what you want there.
   # A literal name, NOT ${{ github.workflow }}. Inside a called workflow that
-  # expression is the CALLER's name, so every workflow merge-gate.yml calls would
+  # expression is the CALLER's name, so every workflow one caller invokes would
   # compute the same group and cancel each other -- 8 of 9 calls died that way,
-  # reported to the gate as failures with no jobs and no error message.
+  # reported as failures with no jobs and no error message.
   group: Go Workspace Check-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
   # Do not cancel a run on main; the newer workflows here all guard this.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
