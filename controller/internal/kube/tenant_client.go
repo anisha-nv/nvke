@@ -133,8 +133,8 @@ type DBClusterTenantClientProvider struct {
 }
 
 type tenantClientCacheEntry struct {
-	secretVersion string
-	client        client.Client
+	cacheKey string
+	client   client.Client
 }
 
 func NewDBClusterTenantClientProvider(
@@ -224,11 +224,18 @@ func (p *DBClusterTenantClientProvider) clientFromSecretVersion(
 	secret *corev1.Secret,
 	kubeconfigBytes []byte,
 ) (client.Client, error) {
-	secretVersion := secret.Namespace + "/" + secret.Name + "@" + secret.ResourceVersion
+	// The expected credential mode comes from the DB row, not the Secret, so it is
+	// an independent input and belongs in the key. Without it a cluster that flips
+	// to OIDC before TenantAccess rewrites its Secret keeps the same
+	// resourceVersion, hits this cache, and returns the cached admin.conf client
+	// without ever running consumePublishedKubeconfig — silently continuing to use
+	// the credential OIDC was meant to retire.
+	cacheKey := secret.Namespace + "/" + secret.Name + "@" + secret.ResourceVersion +
+		"|" + publishedKubeconfigMode(cluster)
 	p.clientsMu.RLock()
 	cached := p.clients[cluster.ID]
 	p.clientsMu.RUnlock()
-	if cached.client != nil && cached.secretVersion == secretVersion {
+	if cached.client != nil && cached.cacheKey == cacheKey {
 		return cached.client, nil
 	}
 
@@ -248,12 +255,12 @@ func (p *DBClusterTenantClientProvider) clientFromSecretVersion(
 	// the first successfully constructed instance for that version.
 	p.clientsMu.Lock()
 	cached = p.clients[cluster.ID]
-	if cached.client != nil && cached.secretVersion == secretVersion {
+	if cached.client != nil && cached.cacheKey == cacheKey {
 		tenantClient = cached.client
 	} else {
 		p.clients[cluster.ID] = tenantClientCacheEntry{
-			secretVersion: secretVersion,
-			client:        tenantClient,
+			cacheKey: cacheKey,
+			client:   tenantClient,
 		}
 	}
 	p.clientsMu.Unlock()

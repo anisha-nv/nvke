@@ -440,3 +440,43 @@ func newCAPIClusterForTenantClientProviderTest() *clusterv1.Cluster {
 		},
 	}
 }
+
+// Flipping a cluster to OIDC does not change the published Secret until
+// TenantAccess rewrites it, so the resourceVersion-keyed cache would otherwise
+// keep handing back the admin.conf client built before the flip -- silently
+// continuing to use the credential OIDC retires. The expected mode is part of
+// the cache key so the flip forces consumePublishedKubeconfig to run.
+func TestDBClusterTenantClientProviderRejectsCachedAdminClientAfterOIDCFlip(t *testing.T) {
+	ctx := context.Background()
+	cluster := newSiteDBClusterForTenantClientProviderTest()
+	adminSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:       tenantAccessKubeconfigNamespace,
+			Name:            cluster.Name + "-kubeconfig",
+			ResourceVersion: "1",
+		},
+		Data: map[string][]byte{
+			tenantAccessKubeconfigKey: newTenantClientProviderTestKubeconfig(t),
+		},
+	}
+	managementClient := fake.NewClientBuilder().
+		WithScheme(newTenantClientProviderTestScheme(t)).
+		WithObjects(adminSecret).
+		Build()
+	provider := NewDBClusterTenantClientProvider(nil, managementClient, nil, true)
+
+	// Pre-OIDC: admin mode, credential-bearing kubeconfig is expected and cached.
+	adminClient, err := provider.ClientForDBCluster(ctx, cluster)
+	require.NoError(t, err)
+	require.NotNil(t, adminClient)
+
+	// The flag flips before TenantAccess republishes: same Secret, same
+	// resourceVersion, but the admin credential is no longer acceptable.
+	oidcCluster := cluster
+	oidcCluster.OIDCAuthEnabled = true
+
+	_, err = provider.ClientForDBCluster(ctx, oidcCluster)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTenantClientNotReady)
+	require.Contains(t, err.Error(), "not SPIRE exec-auth")
+}
