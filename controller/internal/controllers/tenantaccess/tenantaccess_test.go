@@ -198,7 +198,7 @@ func TestController_Reconcile(t *testing.T) {
 
 	mockDB := &testutil.MockDB{}
 	// Active is read by Reconcile and the mode refresh.
-	mockDB.On("GetCluster", mock.Anything, activeCluster.ID).Return(activeCluster, nil).Twice()
+	mockDB.On("GetCluster", mock.Anything, activeCluster.ID).Return(activeCluster, nil).Times(3)
 	mockDB.On("GetCluster", mock.Anything, deletingCluster.ID).Return(deletingCluster, nil).Once()
 	mockDB.On("GetCluster", mock.Anything, notReadyCluster.ID).Return(notReadyCluster, nil).Once()
 	mockDB.On("ListNodes", mock.Anything, mock.MatchedBy(func(f db.NodeFilters) bool {
@@ -394,7 +394,7 @@ func TestController_ReconcileOIDC(t *testing.T) {
 
 	mockDB := &testutil.MockDB{}
 	// Reconcile reads once and the mode refresh reads once.
-	mockDB.On("GetCluster", mock.Anything, oidcID).Return(oidcCluster, nil).Twice()
+	mockDB.On("GetCluster", mock.Anything, oidcID).Return(oidcCluster, nil).Times(4)
 	mockDB.On("ListNodes", mock.Anything, mock.MatchedBy(func(f db.NodeFilters) bool {
 		return f.ClusterID != nil && *f.ClusterID == oidcID
 	})).Return([]db.Node{joinedCPNode(oidcNodeID, oidcID)}, nil)
@@ -487,8 +487,8 @@ func TestController_ReconcileMixed(t *testing.T) {
 	oidcCluster := db.Cluster{ID: oidcID, Name: "oidc", OIDCAuthEnabled: true}
 
 	mockDB := &testutil.MockDB{}
-	mockDB.On("GetCluster", mock.Anything, plainID).Return(plainCluster, nil).Twice()
-	mockDB.On("GetCluster", mock.Anything, oidcID).Return(oidcCluster, nil).Twice()
+	mockDB.On("GetCluster", mock.Anything, plainID).Return(plainCluster, nil).Times(3)
+	mockDB.On("GetCluster", mock.Anything, oidcID).Return(oidcCluster, nil).Times(4)
 	mockDB.On("ListNodes", mock.Anything, mock.MatchedBy(func(f db.NodeFilters) bool {
 		return f.ClusterID != nil && *f.ClusterID == plainID
 	})).Return([]db.Node{joinedCPNode(plainNodeID, plainID)}, nil)
@@ -724,7 +724,7 @@ func TestController_PublishesOIDCWhenTenantAccessDisabled(t *testing.T) {
 	oidcCluster := db.Cluster{ID: oidcID, Name: "oidc", OIDCAuthEnabled: true}
 
 	mockDB := &testutil.MockDB{}
-	mockDB.On("GetCluster", mock.Anything, oidcID).Return(oidcCluster, nil).Twice()
+	mockDB.On("GetCluster", mock.Anything, oidcID).Return(oidcCluster, nil).Times(4)
 	mockDB.On("ListNodes", mock.Anything, mock.Anything).Return([]db.Node{joinedCPNode(oidcNodeID, oidcID)}, nil)
 
 	k8sClient := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(nkeRBACConfigMap()).Build()
@@ -754,7 +754,7 @@ func TestController_PublishesAdminWhenTenantAccessDisabled(t *testing.T) {
 	cluster := db.Cluster{ID: clusterID, Name: "plain"}
 
 	mockDB := &testutil.MockDB{}
-	mockDB.On("GetCluster", mock.Anything, clusterID).Return(cluster, nil).Twice()
+	mockDB.On("GetCluster", mock.Anything, clusterID).Return(cluster, nil).Times(3)
 	mockDB.On("ListNodes", mock.Anything, mock.Anything).Return([]db.Node{joinedCPNode(nodeID, clusterID)}, nil)
 
 	k8sClient := fake.NewClientBuilder().WithScheme(testScheme(t)).Build()
@@ -808,7 +808,7 @@ func TestController_PublishesAdminForCAPIWhenFlagsOff(t *testing.T) {
 	cluster.SetCAPIProvider(db.CAPIClusterProvider{InfraCluster: []byte(`{"kind":"DockerCluster"}`)})
 
 	mockDB := &testutil.MockDB{}
-	mockDB.On("GetCluster", mock.Anything, clusterID).Return(cluster, nil).Twice()
+	mockDB.On("GetCluster", mock.Anything, clusterID).Return(cluster, nil).Times(3)
 	mockDB.On("ListNodes", mock.Anything, mock.Anything).Return([]db.Node{joinedCPNode(nodeID, clusterID)}, nil)
 
 	k8sClient := fake.NewClientBuilder().WithScheme(testScheme(t)).Build()
@@ -988,4 +988,28 @@ users:
 - name: u
   user: {}
 `, base64.StdEncoding.EncodeToString(caPEM))
+}
+
+// A cluster can start deleting after publish() has picked a mode but before the
+// Secret is written -- on the OIDC path applyRBAC sits in that window and is
+// bounded only by tenantRequestTimeout. Publishing from the earlier row would
+// re-create Secrets teardown had already deleted, orphaning them once the row is
+// gone, so upsertSecret re-reads immediately before each write.
+func TestPublish_SkipsClusterThatStartsDeletingBeforeTheWrite(t *testing.T) {
+	ctx := context.Background()
+	cluster := db.Cluster{ID: uuid.New(), Name: "racing"}
+	deleting := cluster
+	deleting.Conditions.Deleting = db.Condition{Status: db.ConditionStatusTrue}
+
+	mockDB := &testutil.MockDB{}
+	// First read is publish()'s mode selection; the row is still live.
+	mockDB.On("GetCluster", mock.Anything, cluster.ID).Return(cluster, nil).Once()
+	// By the time upsertSecret re-reads, teardown has marked it deleting.
+	mockDB.On("GetCluster", mock.Anything, cluster.ID).Return(deleting, nil)
+
+	k8sClient := fake.NewClientBuilder().WithScheme(testScheme(t)).Build()
+	c := newPublishTestController(mockDB, k8sClient)
+
+	require.NoError(t, c.publish(ctx, cluster, []byte(testKubeconfig)))
+	assertSecret(t, ctx, k8sClient, cluster, false)
 }

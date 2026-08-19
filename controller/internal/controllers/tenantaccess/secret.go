@@ -18,10 +18,21 @@ import (
 	"github.com/NVIDIA/nke/controller/internal/db"
 )
 
-// upsertSecret publishes one Controller-owned Secret. The caller has already
-// re-read the live cluster row, so this does not re-read it again.
+// upsertSecret publishes one Controller-owned Secret.
+//
+// The live row is re-read here, immediately before the write, and not only once
+// per publish: on the OIDC path publishSPIRE applies RBAC into the tenant
+// cluster between the publish-time refresh and these writes, and that apply is
+// bounded by tenantRequestTimeout, not by anything quick. A cluster that started
+// deleting during it would otherwise have its Secrets re-created after teardown
+// had already removed them, orphaning them for good once the row is gone.
 func (c *Controller) upsertSecret(ctx context.Context, cluster db.Cluster, secretName, dataKey string, value []byte, mode string) error {
-	return upsertOwnedSecret(ctx, c.k8sClient, c.logger, cluster, secretName, dataKey, value, mode)
+	live, skip, err := c.refreshCluster(ctx, cluster)
+	if err != nil || skip {
+		return err
+	}
+
+	return upsertOwnedSecret(ctx, c.k8sClient, c.logger, live, secretName, dataKey, value, mode)
 }
 
 func upsertOwnedSecret(

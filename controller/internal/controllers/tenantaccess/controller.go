@@ -143,11 +143,14 @@ func (c *Controller) reconcileCluster(ctx context.Context, cluster db.Cluster) e
 // reconcileCluster so the publish decision can be exercised without standing up
 // a node-agent to serve admin.conf.
 func (c *Controller) publish(ctx context.Context, cluster db.Cluster, adminConf []byte) error {
-	// Re-read the cluster immediately before publishing. Reconcile's initial row
-	// can become stale during the agent probe and tenant apply. Without this, a
-	// cluster that started deleting mid-pass could recreate Secrets teardown had
-	// already removed. The mode follows this live row, not the initial read, so an
-	// OIDC flag change during the probe is honored.
+	// Re-read the cluster before choosing a mode: Reconcile's initial row can
+	// become stale during the agent probe, so an OIDC flag change during the probe
+	// must be honored.
+	//
+	// This refresh selects the mode; it does not guard the writes. upsertSecret
+	// re-reads again immediately before each write, because the OIDC path applies
+	// RBAC into the tenant cluster in between and that window is long enough for a
+	// teardown to land.
 	live, skip, err := c.refreshCluster(ctx, cluster)
 	if err != nil || skip {
 		return err
