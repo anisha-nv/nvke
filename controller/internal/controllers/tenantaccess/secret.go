@@ -18,6 +18,12 @@ import (
 	"github.com/NVIDIA/nke/controller/internal/db"
 )
 
+// upsertSecret publishes one Controller-owned Secret. The caller has already
+// re-read the live cluster row, so this does not re-read it again.
+func (c *Controller) upsertSecret(ctx context.Context, cluster db.Cluster, secretName, dataKey string, value []byte, mode string) error {
+	return upsertOwnedSecret(ctx, c.k8sClient, c.logger, cluster, secretName, dataKey, value, mode)
+}
+
 func upsertOwnedSecret(
 	ctx context.Context,
 	k8sClient client.Client,

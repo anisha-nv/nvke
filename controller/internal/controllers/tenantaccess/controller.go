@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/ptr"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -25,6 +27,7 @@ import (
 	"github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile"
 	"github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile/dbwrapper"
 	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/NVIDIA/nke/controller/internal/kube"
 )
 
 const (
@@ -60,7 +63,7 @@ type Controller struct {
 	k8sClient       ctrlclient.Client
 	nodeAgentClient agent.Client
 	tenantManagers  TenantManagerSet
-	publisher       *Publisher
+	tenantClientFor func(adminConf []byte) (ctrlclient.Client, error)
 }
 
 // NewController creates a new TenantAccessController.
@@ -72,16 +75,15 @@ func NewController(
 	nodeAgentClient agent.Client,
 	tenantManagers TenantManagerSet,
 ) *Controller {
-	c := &Controller{
+	return &Controller{
 		cfg:             cfg,
 		logger:          logger.With("controller", "tenant-access"),
 		db:              dbInstance,
 		k8sClient:       k8sClient,
 		nodeAgentClient: nodeAgentClient,
 		tenantManagers:  tenantManagers,
+		tenantClientFor: newTenantClient,
 	}
-	c.publisher = NewPublisher(k8sClient, c.logger, cfg.SpiffeEndpointSocket, dbInstance)
-	return c
 }
 
 // SetupWithManager registers the cluster-scoped tenant-access reconciler. A
@@ -134,5 +136,122 @@ func (c *Controller) reconcileCluster(ctx context.Context, cluster db.Cluster) e
 		return nil
 	}
 
-	return c.publisher.EnsurePublished(ctx, cluster, adminConf)
+	return c.publish(ctx, cluster, adminConf)
+}
+
+// publish writes the kubeconfig Secret for one cluster. Split from
+// reconcileCluster so the publish decision can be exercised without standing up
+// a node-agent to serve admin.conf.
+func (c *Controller) publish(ctx context.Context, cluster db.Cluster, adminConf []byte) error {
+	// Re-read the cluster immediately before publishing. Reconcile's initial row
+	// can become stale during the agent probe and tenant apply. Without this, a
+	// cluster that started deleting mid-pass could recreate Secrets teardown had
+	// already removed. The mode follows this live row, not the initial read, so an
+	// OIDC flag change during the probe is honored.
+	live, skip, err := c.refreshCluster(ctx, cluster)
+	if err != nil || skip {
+		return err
+	}
+
+	if live.OIDCAuthEnabled {
+		return c.publishSPIRE(ctx, live, adminConf)
+	}
+
+	return c.upsertSecret(ctx, live, KubeconfigSecretName(live.Name), KubeconfigSecretKey, adminConf, constants.LabelValueKubeconfigModeAdmin)
+}
+
+// refreshCluster returns the live DB row. skip means do not publish because the
+// cluster is gone or has started deleting.
+func (c *Controller) refreshCluster(ctx context.Context, cluster db.Cluster) (db.Cluster, bool, error) {
+	live, err := c.db.GetCluster(ctx, cluster.ID)
+	if errors.Is(err, db.ErrNotFound) {
+		c.logger.Debug("Cluster no longer exists; skipping tenant-access publish", "clusterID", cluster.ID)
+		return db.Cluster{}, true, nil
+	}
+	if err != nil {
+		return db.Cluster{}, false, fmt.Errorf("re-reading cluster %s before publish: %w", cluster.ID, err)
+	}
+	if live.Conditions.Deleting.Status == db.ConditionStatusTrue {
+		c.logger.Debug("Cluster started deleting; skipping tenant-access publish", "clusterID", cluster.ID)
+		return db.Cluster{}, true, nil
+	}
+
+	return live, false, nil
+}
+
+// publishSPIRE applies the NKE tenant RBAC first, then publishes the SPIRE
+// exec-auth kubeconfig and the tenant CA trust bundle. RBAC lands before the
+// kubeconfig Secret because the Secret is only useful once NKE has access to the
+// tenant cluster.
+func (c *Controller) publishSPIRE(ctx context.Context, cluster db.Cluster, adminConf []byte) error {
+	if err := c.applyRBAC(ctx, cluster, adminConf); err != nil {
+		return err
+	}
+
+	parsedAdmin, err := clientcmd.Load(adminConf)
+	if err != nil {
+		return fmt.Errorf("parsing kubeconfig for cluster %s: %w", cluster.Name, err)
+	}
+	ca, err := extractCAFromKubeconfig(parsedAdmin)
+	if err != nil {
+		return err
+	}
+	server, err := extractServerFromKubeconfig(parsedAdmin)
+	if err != nil {
+		return err
+	}
+
+	kubeconfig, err := buildSpireKubeconfig(cluster.Name, server, ca, c.cfg.SpiffeEndpointSocket)
+	if err != nil {
+		return fmt.Errorf("building SPIRE kubeconfig for cluster %s: %w", cluster.Name, err)
+	}
+
+	if err := c.upsertSecret(ctx, cluster, KubeconfigSecretName(cluster.Name), KubeconfigSecretKey, kubeconfig, constants.LabelValueKubeconfigModeSPIRE); err != nil {
+		return err
+	}
+
+	return c.upsertSecret(ctx, cluster, TrustBundleSecretName(cluster.Name), TrustBundleSecretKey, ca, constants.LabelValueKubeconfigModeSPIRE)
+}
+
+// applyRBAC server-side applies the operator-managed nke-rbac manifest into the
+// tenant cluster.
+func (c *Controller) applyRBAC(ctx context.Context, cluster db.Cluster, adminConf []byte) error {
+	manifest, err := c.readRBACManifest(ctx)
+	if apierrors.IsNotFound(err) {
+		// Do not publish a SPIRE kubeconfig that cannot authenticate as nke:cwe /
+		// CAPI SPIFFE IDs. The chart renders this ConfigMap when spiffe.trustDomain
+		// is set, independent of the live OIDC flag.
+		return fmt.Errorf("nke-rbac ConfigMap not found; refusing to publish SPIRE kubeconfig for cluster %s: %w", cluster.Name, err)
+	}
+	if err != nil {
+		return err
+	}
+
+	tenantClient, err := c.tenantClientFor(adminConf)
+	if err != nil {
+		return fmt.Errorf("building tenant client for cluster %s: %w", cluster.Name, err)
+	}
+	if err := applyManifestSSA(ctx, tenantClient, manifest, rbacFieldManager); err != nil {
+		return fmt.Errorf("applying NKE RBAC to cluster %s: %w", cluster.Name, err)
+	}
+
+	return nil
+}
+
+// newTenantClient builds a controller-runtime client for a tenant cluster from
+// its admin.conf.
+//
+// The REST timeout is set explicitly because node-agent serves admin.conf
+// verbatim without rewriting its server URL, so the endpoint it names is not
+// guaranteed to be routable from CWE. Both client construction (which performs
+// discovery) and every subsequent apply would otherwise block on the
+// long-lived reconcile context.
+func newTenantClient(adminConf []byte) (ctrlclient.Client, error) {
+	restConfig, err := kube.NewRESTConfigFromKubeconfig(adminConf)
+	if err != nil {
+		return nil, err
+	}
+	restConfig.Timeout = tenantRequestTimeout
+
+	return kube.NewClientFromRESTConfig(restConfig)
 }
