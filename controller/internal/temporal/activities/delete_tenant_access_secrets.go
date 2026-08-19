@@ -12,10 +12,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/NVIDIA/nke/controller/internal/capi"
 	"github.com/NVIDIA/nke/controller/internal/constants"
 	"github.com/NVIDIA/nke/controller/internal/controllers/tenantaccess"
-	"github.com/NVIDIA/nke/controller/internal/db"
 )
 
 type DeleteTenantAccessSecretsInput struct {
@@ -42,7 +40,6 @@ func (a *Activities) DeleteTenantAccessSecrets(ctx context.Context, input Delete
 		return fmt.Errorf("cluster name is required to delete tenant-access secrets for cluster %s", input.ClusterID)
 	}
 
-	cluster := db.Cluster{ID: input.ClusterID, Name: input.ClusterName}
 	names := []string{
 		tenantaccess.KubeconfigSecretName(input.ClusterName),
 		tenantaccess.TrustBundleSecretName(input.ClusterName),
@@ -56,10 +53,15 @@ func (a *Activities) DeleteTenantAccessSecrets(ctx context.Context, input Delete
 			}
 			return fmt.Errorf("getting tenant-access secret %s/%s: %w", tenantaccess.SecretsNamespace, name, err)
 		}
-		if err := capi.ValidateSecretOwnership(secret, cluster); err != nil {
-			continue
-		}
-		if secret.Labels == nil || secret.Labels[constants.LabelKeyClusterID] == "" {
+		// The cluster row is already gone (teardown deletes it first so no
+		// in-flight tenant-access pass can re-publish from a stale snapshot), so
+		// the ownership label is the only evidence available here. Secret names
+		// derive from the reusable cluster name, and nke-system also holds
+		// CAPI-written <name>-kubeconfig Secrets. Delete strictly what we
+		// labeled: a recreated same-name cluster or a foreign Secret must
+		// survive. Deliberately not capi.ValidateSecretOwnership, which permits
+		// missing labels for the publish-side adopt path.
+		if secret.Labels[constants.LabelKeyClusterID] != input.ClusterID.String() {
 			continue
 		}
 		if err := a.k8sClient.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
