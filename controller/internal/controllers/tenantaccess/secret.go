@@ -9,8 +9,6 @@ import (
 	"log/slog"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
@@ -26,13 +24,13 @@ import (
 // bounded by tenantRequestTimeout, not by anything quick. A cluster that started
 // deleting during it would otherwise have its Secrets re-created after teardown
 // had already removed them, orphaning them for good once the row is gone.
-func (c *Controller) upsertSecret(ctx context.Context, cluster db.Cluster, secretName, dataKey string, value []byte, mode string) error {
+func (c *Controller) upsertSecret(ctx context.Context, cluster db.Cluster, desired *corev1.Secret) error {
 	live, skip, err := c.refreshCluster(ctx, cluster)
 	if err != nil || skip {
 		return err
 	}
 
-	return upsertOwnedSecret(ctx, c.k8sClient, c.logger, live, secretName, dataKey, value, mode)
+	return upsertOwnedSecret(ctx, c.k8sClient, c.logger, live, desired)
 }
 
 func upsertOwnedSecret(
@@ -40,47 +38,43 @@ func upsertOwnedSecret(
 	k8sClient client.Client,
 	logger *slog.Logger,
 	cluster db.Cluster,
-	secretName, dataKey string,
-	value []byte,
-	mode string,
+	desired *corev1.Secret,
 ) error {
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: SecretsNamespace,
-		},
+		ObjectMeta: desired.ObjectMeta,
 	}
 
 	op, err := controllerutil.CreateOrUpdate(ctx, k8sClient, secret, func() error {
 		if err := capi.ValidateSecretOwnership(secret, cluster); err != nil {
 			return err
 		}
-		capi.SetSecretOwnership(secret, cluster, mode)
-		if dataKey == KubeconfigSecretKey {
-			secret.Labels[clusterv1.ClusterNameLabel] = cluster.Name
-			// CAPI indexes kubeconfig Secrets by this type in the Cluster namespace.
-			secret.Type = clusterv1.ClusterSecretType
-		} else {
-			secret.Type = corev1.SecretTypeOpaque
+		if secret.Labels == nil {
+			secret.Labels = map[string]string{}
 		}
+		for key, value := range desired.Labels {
+			secret.Labels[key] = value
+		}
+		secret.Type = desired.Type
 		if secret.Data == nil {
 			secret.Data = map[string][]byte{}
 		}
-		secret.Data[dataKey] = value
+		for key, value := range desired.Data {
+			secret.Data[key] = value
+		}
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("upserting secret %s/%s: %w", SecretsNamespace, secretName, err)
+		return fmt.Errorf("upserting secret %s/%s: %w", desired.Namespace, desired.Name, err)
 	}
 
 	switch op {
 	case controllerutil.OperationResultCreated:
-		logger.Info("Tenant-access secret created", "clusterName", cluster.Name, "secret", secretName)
+		logger.Info("Tenant-access secret created", "clusterName", cluster.Name, "secret", desired.Name)
 	case controllerutil.OperationResultNone:
 	case controllerutil.OperationResultUpdated,
 		controllerutil.OperationResultUpdatedStatus,
 		controllerutil.OperationResultUpdatedStatusOnly:
-		logger.Debug("Tenant-access secret updated", "clusterName", cluster.Name, "secret", secretName, "operation", string(op))
+		logger.Debug("Tenant-access secret updated", "clusterName", cluster.Name, "secret", desired.Name, "operation", string(op))
 	}
 	return nil
 }

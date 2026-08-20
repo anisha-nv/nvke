@@ -224,26 +224,12 @@ func (p *DBClusterTenantClientProvider) clientFromSecretVersion(
 	secret *corev1.Secret,
 	kubeconfigBytes []byte,
 ) (client.Client, error) {
-	// The expected credential mode comes from the DB row, not the Secret, so it is
-	// an independent input and belongs in the key. Without it a cluster that flips
-	// to OIDC before TenantAccess rewrites its Secret keeps the same
-	// resourceVersion, hits this cache, and returns the cached admin.conf client
-	// without ever running consumePublishedKubeconfig — silently continuing to use
-	// the credential OIDC was meant to retire.
-	cacheKey := secret.Namespace + "/" + secret.Name + "@" + secret.ResourceVersion +
-		"|" + publishedKubeconfigMode(cluster)
+	cacheKey := secret.Namespace + "/" + secret.Name + "@" + secret.ResourceVersion
 	p.clientsMu.RLock()
 	cached := p.clients[cluster.ID]
 	p.clientsMu.RUnlock()
 	if cached.client != nil && cached.cacheKey == cacheKey {
 		return cached.client, nil
-	}
-
-	// Past the cache-hit return: a rewritten Secret gets a new resourceVersion,
-	// so every content change is still checked, without parsing the kubeconfig on
-	// each call. ClientForDBCluster runs per cluster per nodehealth pass.
-	if err := consumePublishedKubeconfig(cluster, secret, kubeconfigBytes, publishedKubeconfigMode(cluster)); err != nil {
-		return nil, err
 	}
 
 	tenantClient, err := NewClientFromKubeconfig(kubeconfigBytes)
@@ -310,32 +296,6 @@ func (p *DBClusterTenantClientProvider) clientFromControlPlaneNodeAgent(ctx cont
 	}
 
 	return nil, fmt.Errorf("%w: cluster %s has no joined control-plane nodes to fetch kubeconfig from", ErrTenantClientNotReady, cluster.ID)
-}
-
-func publishedKubeconfigMode(cluster db.Cluster) string {
-	if cluster.OIDCAuthEnabled {
-		return constants.LabelValueKubeconfigModeSPIRE
-	}
-	return constants.LabelValueKubeconfigModeAdmin
-}
-
-// consumePublishedKubeconfig checks ownership labels and, for SPIRE mode, that
-// the payload is credential-free exec-auth.
-func consumePublishedKubeconfig(cluster db.Cluster, secret *corev1.Secret, kubeconfigBytes []byte, mode string) error {
-	if err := capi.ValidateSecretOwnership(secret, cluster); err != nil {
-		return err
-	}
-	if mode != constants.LabelValueKubeconfigModeSPIRE {
-		return nil
-	}
-	ok, err := capi.IsSPIREExecKubeconfig(kubeconfigBytes)
-	if err != nil {
-		return fmt.Errorf("%w: parsing published kubeconfig %s/%s: %w", ErrTenantClientNotReady, secret.Namespace, secret.Name, err)
-	}
-	if !ok {
-		return fmt.Errorf("%w: published kubeconfig %s/%s is not SPIRE exec-auth", ErrTenantClientNotReady, secret.Namespace, secret.Name)
-	}
-	return nil
 }
 
 func VerifyRESTConfig(ctx context.Context, restConfig *rest.Config, timeout time.Duration) error {

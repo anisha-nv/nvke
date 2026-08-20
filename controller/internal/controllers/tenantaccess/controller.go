@@ -14,14 +14,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/ptr"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/NVIDIA/nke/controller/internal/agent"
+	"github.com/NVIDIA/nke/controller/internal/capi"
 	"github.com/NVIDIA/nke/controller/internal/config"
 	"github.com/NVIDIA/nke/controller/internal/constants"
 	"github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile"
@@ -160,7 +164,19 @@ func (c *Controller) publish(ctx context.Context, cluster db.Cluster, adminConf 
 		return c.publishSPIRE(ctx, live, adminConf)
 	}
 
-	return c.upsertSecret(ctx, live, KubeconfigSecretName(live.Name), KubeconfigSecretKey, adminConf, constants.LabelValueKubeconfigModeAdmin)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      KubeconfigSecretName(live.Name),
+			Namespace: SecretsNamespace,
+			Labels: map[string]string{
+				clusterv1.ClusterNameLabel: live.Name,
+			},
+		},
+		Type: clusterv1.ClusterSecretType,
+		Data: map[string][]byte{KubeconfigSecretKey: adminConf},
+	}
+	capi.SetSecretOwnership(secret, live, constants.LabelValueKubeconfigModeAdmin)
+	return c.upsertSecret(ctx, live, secret)
 }
 
 // refreshCluster returns the live DB row. skip means do not publish because the
@@ -209,11 +225,32 @@ func (c *Controller) publishSPIRE(ctx context.Context, cluster db.Cluster, admin
 		return fmt.Errorf("building SPIRE kubeconfig for cluster %s: %w", cluster.Name, err)
 	}
 
-	if err := c.upsertSecret(ctx, cluster, KubeconfigSecretName(cluster.Name), KubeconfigSecretKey, kubeconfig, constants.LabelValueKubeconfigModeSPIRE); err != nil {
+	kubeconfigSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      KubeconfigSecretName(cluster.Name),
+			Namespace: SecretsNamespace,
+			Labels: map[string]string{
+				clusterv1.ClusterNameLabel: cluster.Name,
+			},
+		},
+		Type: clusterv1.ClusterSecretType,
+		Data: map[string][]byte{KubeconfigSecretKey: kubeconfig},
+	}
+	capi.SetSecretOwnership(kubeconfigSecret, cluster, constants.LabelValueKubeconfigModeSPIRE)
+	if err := c.upsertSecret(ctx, cluster, kubeconfigSecret); err != nil {
 		return err
 	}
 
-	return c.upsertSecret(ctx, cluster, TrustBundleSecretName(cluster.Name), TrustBundleSecretKey, ca, constants.LabelValueKubeconfigModeSPIRE)
+	trustBundleSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      TrustBundleSecretName(cluster.Name),
+			Namespace: SecretsNamespace,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{TrustBundleSecretKey: ca},
+	}
+	capi.SetSecretOwnership(trustBundleSecret, cluster, constants.LabelValueKubeconfigModeSPIRE)
+	return c.upsertSecret(ctx, cluster, trustBundleSecret)
 }
 
 // applyRBAC server-side applies the operator-managed nke-rbac manifest into the
