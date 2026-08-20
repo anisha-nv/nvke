@@ -36,6 +36,47 @@ func (a *Activities) ApplyCAPIClusterResources(ctx context.Context, input ApplyC
 	return capi.ApplyClusterScaffold(ctx, a.k8sClient, cluster)
 }
 
+// ApplyCAPIClusterKubeconfigSecretInput identifies a legacy provisioning
+// workflow whose recorded history still schedules the former CAPI publisher.
+type ApplyCAPIClusterKubeconfigSecretInput struct {
+	ClusterID                 uuid.UUID
+	InitialControlPlaneNodeID uuid.UUID
+}
+
+// ApplyCAPIClusterKubeconfigSecret is retained only for replay compatibility.
+// TenantAccess is the sole publisher for workflows started by current code.
+func (a *Activities) ApplyCAPIClusterKubeconfigSecret(ctx context.Context, input ApplyCAPIClusterKubeconfigSecretInput) error {
+	cluster, err := a.db.GetCluster(ctx, input.ClusterID)
+	if err != nil {
+		return fmt.Errorf("failed to get cluster: %w", err)
+	}
+	manifest, err := capi.ClusterScaffoldManifest(cluster)
+	if err != nil {
+		return err
+	}
+	if capi.IsEmptyManifest(manifest) {
+		return nil
+	}
+
+	node, err := a.db.GetNode(ctx, input.InitialControlPlaneNodeID)
+	if err != nil {
+		return fmt.Errorf("failed to get initial control plane node: %w", err)
+	}
+	if node.IP == "" {
+		return fmt.Errorf("initial control plane node %s has no IP address", node.ID)
+	}
+
+	kubeconfigBytes, err := a.nodeAgentClient.GetKubeconfig(ctx, node)
+	if err != nil {
+		return fmt.Errorf("failed to fetch admin kubeconfig from initial control plane node: %w", err)
+	}
+	if kubeconfigBytes == "" {
+		return fmt.Errorf("node agent returned an empty kubeconfig for node %s", node.ID)
+	}
+
+	return capi.ApplyClusterKubeconfigSecret(ctx, a.k8sClient, cluster, []byte(kubeconfigBytes))
+}
+
 type DeleteCAPIClusterResourcesInput struct {
 	ClusterID uuid.UUID
 }
