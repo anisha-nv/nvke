@@ -20,7 +20,8 @@ A Helm chart to deploy the cloud-workflow-engine service
 | autoscaling.targetCPUUtilizationPercentage | int | `80` |  |
 | capi.enabled | bool | `false` | Enable Cluster API controllers in CWE. |
 | capi.forgeCapiEnabled | bool | `false` | Enable the Forge-CAPI bridge controllers. |
-| capi.rbac.create | bool | `false` | Create RBAC for CWE to watch and patch CAPI/NICo resources. |
+| capi.launchLayerCapiEnabled | bool | `false` | Enable the LaunchLayer-CAPI bridge controllers. Requires the CAPLL CRDs. |
+| capi.rbac.create | bool | `false` | Create RBAC for CWE to watch and patch CAPI, NICo and LaunchLayer resources. |
 | cni.imageRegistry | string | `""` | Optional OCI registry prefix for CNI component images. Empty uses chart defaults. |
 | env | list | `[]` | Additional environment variables to inject into the CWE container. |
 | fullnameOverride | string | `""` |  |

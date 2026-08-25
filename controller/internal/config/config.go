@@ -254,6 +254,14 @@ type Config struct {
 	// Requires EnableCapi=true.
 	EnableForgeCapi bool `env:"ENABLE_FORGE_CAPI" default:"false"`
 
+	// EnableLaunchLayerCapi is a feature flag controlling whether the LaunchLayer
+	// CAPI bridge controllers are registered. It is separate from EnableForgeCapi
+	// because the two infrastructure providers are installed independently, and
+	// registering these controllers starts an informer that fails where the CAPLL
+	// CRDs are absent.
+	// Requires EnableCapi=true.
+	EnableLaunchLayerCapi bool `env:"ENABLE_LAUNCHLAYER_CAPI" default:"false"`
+
 	// LocalDevForceDockerMachineBootstrap forces every node through the
 	// DockerMachine bootstrap/preflight + container-mode kubeadm contract
 	// (the /run/cluster-api/bootstrap-success.complete sentinel) regardless of
@@ -418,6 +426,9 @@ func (c *Config) Validate() error {
 
 	if c.EnableForgeCapi && !c.EnableCapi {
 		return fmt.Errorf("ENABLE_FORGE_CAPI=true requires ENABLE_CAPI=true")
+	}
+	if c.EnableLaunchLayerCapi && !c.EnableCapi {
+		return fmt.Errorf("ENABLE_LAUNCHLAYER_CAPI=true requires ENABLE_CAPI=true")
 	}
 	return nil
 }

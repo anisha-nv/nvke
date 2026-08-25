@@ -292,6 +292,7 @@ func main() {
 	logger.Info("Kubernetes controller-runtime manager configuration",
 		"enableCapi", cfg.EnableCapi,
 		"enableForgeCapi", cfg.EnableForgeCapi,
+		"enableLaunchLayerCapi", cfg.EnableLaunchLayerCapi,
 		"enableNodeProvisioningMonitor", enableNodeProvisioningMonitor,
 		"enableTenantAccess", cfg.TenantAccessEnabled)
 	if cfg.EnableCapi {
@@ -324,6 +325,18 @@ func main() {
 			)
 			if err := nicoProviderIDController.SetupWithManager(k8sControllerManager); err != nil {
 				logger.Error("Failed to set up nico provider ID controller", "error", err)
+				os.Exit(1)
+			}
+		}
+
+		if cfg.EnableLaunchLayerCapi {
+			launchLayerProviderIDController := capi.NewLaunchLayerProviderIDController(
+				k8sControllerManager.GetClient(),
+				tenantClientProvider,
+				logger.With("logger", "launchlayer-provider-id-controller"),
+			)
+			if err := launchLayerProviderIDController.SetupWithManager(k8sControllerManager); err != nil {
+				logger.Error("Failed to set up launchlayer provider ID controller", "error", err)
 				os.Exit(1)
 			}
 		}

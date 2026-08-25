@@ -304,6 +304,10 @@ spec:
             - name: ENABLE_FORGE_CAPI
               value: "true"
             {{- end }}
+            {{- if .Values.capi.launchLayerCapiEnabled }}
+            - name: ENABLE_LAUNCHLAYER_CAPI
+              value: "true"
+            {{- end }}
             # Teleport config
             {{- if .Values.teleport.enabled }}
             - name: TELEPORT_ENABLED

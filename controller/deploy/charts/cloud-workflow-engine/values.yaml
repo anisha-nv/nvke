@@ -255,8 +255,10 @@ capi:
   enabled: false
   # -- Enable the Forge-CAPI bridge controllers.
   forgeCapiEnabled: false
+  # -- Enable the LaunchLayer-CAPI bridge controllers. Requires the CAPLL CRDs.
+  launchLayerCapiEnabled: false
   rbac:
-    # -- Create RBAC for CWE to watch and patch CAPI/NICo resources.
+    # -- Create RBAC for CWE to watch and patch CAPI, NICo and LaunchLayer resources.
     create: false
 
 kubeadm:
