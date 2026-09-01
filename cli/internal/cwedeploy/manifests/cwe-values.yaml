@@ -66,5 +66,14 @@ spiffe:
 nkeOIDCAuth:
   enabled: false
 
+# Cluster API. A site cluster is a CAPI cluster whose infrastructure provider
+# is cluster-api-provider-provisioned, so CWE runs its CAPI controllers and gets
+# the RBAC to write the objects. Engine.Deploy installs CAPI itself, before this
+# release, so the controllers exist by the time CWE writes anything.
+#
+# forgeCapiEnabled stays off: it starts the NICo-coupled controllers, which
+# belong to a Forge site, not to hosts that already exist.
 capi:
-  enabled: false
+  enabled: true
+  rbac:
+    create: true

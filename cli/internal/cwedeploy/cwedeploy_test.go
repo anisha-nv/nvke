@@ -6,6 +6,7 @@ package cwedeploy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -146,6 +147,46 @@ func TestDeploy_RequiresKubeconfigAndImage(t *testing.T) {
 	if err := e.Deploy(context.Background(), "/tmp/kubeconfig",
 		Config{CWEImage: "nvcr.io/org/controller:edge"}); err == nil {
 		t.Fatal("expected an error for a missing Config.ProfilesImage")
+	}
+	if err := e.Deploy(context.Background(), "/tmp/kubeconfig", Config{
+		CWEImage:      "nvcr.io/org/controller:edge",
+		ProfilesImage: "nvcr.io/org/cwe-profiles:v1",
+	}); err == nil {
+		t.Fatal("expected an error for a missing Config.ProvisionedProviderImage")
+	}
+}
+
+func TestNodeAgentPortArgs(t *testing.T) {
+	if got := nodeAgentPortArgs(Config{}); len(got) != 0 {
+		t.Errorf("nodeAgentPortArgs with no port = %v, want none", got)
+	}
+	got := joinArgs(nodeAgentPortArgs(Config{NodeAgentPort: "15005"}))
+	for _, want := range []string{"env[0].name=NODE_AGENT_PORT", "env[0].value=15005"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nodeAgentPortArgs = %q, want it to contain %q", got, want)
+		}
+	}
+}
+
+func TestDeploy_PublishesCWEAfterTheRelease(t *testing.T) {
+	runner := &fakeRunner{}
+	if err := New(runner, nil).Deploy(context.Background(), "/tmp/kubeconfig", testConfig(t)); err != nil {
+		t.Fatalf("Deploy returned error: %v", err)
+	}
+
+	cwe := callIndex(runner, "upgrade --install "+cweReleaseName)
+	nodePort := -1
+	for i, call := range runner.calls {
+		args := joinArgs(call.args)
+		if call.name == "kubectl" && strings.Contains(args, "apply") && !strings.Contains(args, "--server-side") {
+			nodePort = i
+		}
+	}
+	if nodePort < cwe {
+		t.Errorf("the CWE NodePort (%d) was applied before CWE itself (%d)", nodePort, cwe)
+	}
+	if want := fmt.Sprintf("nodePort: %d", NodePort); !strings.Contains(runner.applied[len(runner.applied)-1], want) {
+		t.Errorf("the published Service does not carry %q:\n%s", want, runner.applied[len(runner.applied)-1])
 	}
 }
 

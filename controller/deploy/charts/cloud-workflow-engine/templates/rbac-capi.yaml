@@ -19,11 +19,20 @@ rules:
       - patch
       - update
       - watch
+  # CWE applies whatever infrastructure manifest the caller sent as
+  # capiInfraCluster / capiInfraMachineTemplate, so every infrastructure
+  # provider it is expected to drive needs its kinds named here. NICo backs
+  # Forge sites; provisioned backs hosts that already exist, which is what
+  # `nkectl bootstrap site` creates a site cluster from
+  # (cluster-api-provider-provisioned).
   - apiGroups:
       - infrastructure.cluster.x-k8s.io
     resources:
       - nicoclusters
       - nicomachines
+      - provisionedclusters
+      - provisionedmachines
+      - provisionedmachinetemplates
     verbs:
       - create
       - delete
@@ -39,6 +48,9 @@ rules:
     resourceNames:
       - nicoclusters.infrastructure.cluster.x-k8s.io
       - nicomachines.infrastructure.cluster.x-k8s.io
+      - provisionedclusters.infrastructure.cluster.x-k8s.io
+      - provisionedmachines.infrastructure.cluster.x-k8s.io
+      - provisionedmachinetemplates.infrastructure.cluster.x-k8s.io
     verbs:
       - get
   # Needed for cluster specific namespaces and bootstrap secrets

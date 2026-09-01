@@ -22,6 +22,7 @@ package cwedeploy
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -43,6 +44,12 @@ const (
 	temporalNamespace = "temporal"
 	spireNamespace    = "spire-server"
 	cweNamespace      = "cloud-workflow-engine"
+
+	// tenantSecretsNamespace is where CWE publishes each cluster's kubeconfig
+	// and where it puts the cluster's CAPI objects. It matches
+	// controller/internal/constants.NamespaceNKESystem, which the chart creates
+	// and scopes CWE's Secret grant to, so it is a constant on both sides.
+	tenantSecretsNamespace = "nke-system"
 
 	postgresReleaseName  = "postgres"
 	temporalReleaseName  = "temporal"
@@ -124,6 +131,20 @@ const (
 	// through it.
 	spireServerValuesPrefix = "spire-server"
 
+	// NodePort is the port the CWE API is published on outside the cluster.
+	//
+	// nkectl has to reach the API it just deployed, from the host, to create the
+	// site cluster. It cannot use the ClusterIP, and the chart's Service
+	// template has no nodePort field -- so this is a second Service beside the
+	// chart's own, the same shape and for the same reason as
+	// spire-server-nodeport.yaml. bootstrapengine maps it to a host port (see
+	// cmd/nkectl/bootstrap.go), which keeps the route the same whether kind runs
+	// on Docker or nerdctl, on Linux or macOS.
+	//
+	// Fixed rather than allocated: the number is written into
+	// manifests/cwe-nodeport.yaml, and a Service cannot compute it.
+	NodePort = 30080
+
 	// readyzPath is polled through the API server's service proxy rather
 	// than a port-forward, so no local port has to be reserved or cleaned
 	// up. controller/internal/server/health.go serves it from the CWE pod
@@ -200,16 +221,20 @@ type Config struct {
 	ChartPath string
 
 	// ProvisionedProviderImage is the cluster-api-provider-provisioned image to
-	// run as the CAPI infrastructure provider for hosts that already exist. If
-	// it is empty, Deploy installs only CAPI core and the kubeadm providers.
-	// Nothing publishes this image yet, so the caller builds it and loads it into
-	// the cluster rather than pulling it.
+	// run as the CAPI infrastructure provider for hosts that already exist.
+	// Required for site-cluster creation. Nothing publishes this image yet, so
+	// the caller builds it and loads it into the cluster rather than pulling it.
 	ProvisionedProviderImage string
 
 	// ProvisionedProviderPath is the local path to
 	// cluster-api-provider-provisioned/config/default. Empty triggers
 	// repo-root discovery, with the same standalone-binary caveat as ChartPath.
 	ProvisionedProviderPath string
+
+	// NodeAgentPort is the port CWE dials nke-agent on. Empty leaves CWE's own
+	// default (15005) alone. It comes from the inventory, because it describes
+	// how the site's hosts were configured long before this cluster existed.
+	NodeAgentPort string
 
 	// PostgresPassword is the Postgres superuser password shared by the
 	// Postgres, Temporal, and CWE releases. Generated if empty.
@@ -299,6 +324,11 @@ func (e *Engine) Deploy(ctx context.Context, kubeconfigPath string, cfg Config) 
 	if cfg.ProfilesImage == "" {
 		return errors.New("cwedeploy: Config.ProfilesImage is required; CWE fails " +
 			"its schema migration without an OS profiles tree (see Config.ProfilesImage)")
+	}
+	if cfg.ProvisionedProviderImage == "" {
+		return errors.New("cwedeploy: Config.ProvisionedProviderImage is required; the CAPI " +
+			"objects CWE writes for a site cluster have no controller without it " +
+			"(see Config.ProvisionedProviderImage)")
 	}
 
 	chartPath := cfg.ChartPath
@@ -425,30 +455,67 @@ func (e *Engine) Deploy(ctx context.Context, kubeconfigPath string, cfg Config) 
 	profRepo, profTag, profDigest := splitImageRef(cfg.ProfilesImage)
 	e.log.Info("installing cwe", "namespace", cweNamespace, "image", cfg.CWEImage,
 		"profilesImage", cfg.ProfilesImage, "chart", chartPath)
-	if _, err := e.helm(ctx, kubeconfigPath,
+	cweArgs := []string{
 		"upgrade", "--install", cweReleaseName, chartPath,
 		"--namespace", cweNamespace, "--create-namespace",
 		"--values", cweValues,
-		"--set-string", "appDb.postgresPassword="+password,
-		"--set-string", "image.repository="+imageRepo,
-		"--set-string", "image.tag="+imageTag,
-		"--set-string", "image.digest="+imageDigest,
+		"--set-string", "appDb.postgresPassword=" + password,
+		"--set-string", "image.repository=" + imageRepo,
+		"--set-string", "image.tag=" + imageTag,
+		"--set-string", "image.digest=" + imageDigest,
 		"--set-string", "image.pullPolicy=IfNotPresent",
 		"--set", "profiles.image.enabled=true",
-		"--set-string", "profiles.path="+profilesPath,
-		"--set-string", "profiles.image.repository="+profRepo,
-		"--set-string", "profiles.image.tag="+profTag,
-		"--set-string", "profiles.image.digest="+profDigest,
+		"--set-string", "profiles.path=" + profilesPath,
+		"--set-string", "profiles.image.repository=" + profRepo,
+		"--set-string", "profiles.image.tag=" + profTag,
+		"--set-string", "profiles.image.digest=" + profDigest,
 		"--set", "spiffe.enabled=true",
-		"--set-string", "spiffe.trustDomain="+spireTrustDomain,
-		"--set-string", "spiffe.spire.className="+spireControllerManagerClass,
-		"--set-string", "spiffe.spire.serverAddress="+spireServiceHost(),
-		"--set-string", "spiffe.spire.serverPort="+spireServerPort,
-		"--wait", "--timeout", helmTimeout.String(),
-	); err != nil {
+		"--set-string", "spiffe.trustDomain=" + spireTrustDomain,
+		"--set-string", "spiffe.spire.className=" + spireControllerManagerClass,
+		"--set-string", "spiffe.spire.serverAddress=" + spireServiceHost(),
+		"--set-string", "spiffe.spire.serverPort=" + spireServerPort,
+	}
+	cweArgs = append(cweArgs, nodeAgentPortArgs(cfg)...)
+	cweArgs = append(cweArgs, "--wait", "--timeout", helmTimeout.String())
+	if _, err := e.helm(ctx, kubeconfigPath, cweArgs...); err != nil {
 		return fmt.Errorf("cwedeploy: installing cwe: %w", err)
 	}
 
+	// The API has to be reachable from the host that ran this command: it is
+	// what creates the cluster next. See the NodePort constant.
+	return e.publishCWEExternally(ctx, kubeconfigPath)
+}
+
+// nodeAgentPortArgs passes the inventory's node-agent port through to CWE.
+//
+// The chart has no value of its own for it, so this rides the generic `env`
+// passthrough. Empty leaves CWE's own default in place rather than restating
+// it here, so there is one default and it lives in CWE.
+func nodeAgentPortArgs(cfg Config) []string {
+	if cfg.NodeAgentPort == "" {
+		return nil
+	}
+	return []string{
+		"--set-string", "env[0].name=NODE_AGENT_PORT",
+		"--set-string", "env[0].value=" + cfg.NodeAgentPort,
+	}
+}
+
+// publishCWEExternally applies the NodePort Service the CLI reaches the CWE API
+// through. Same second-Service shape as publishSpireExternally, and applied for
+// the same reason: the chart owns its own Service and this does not touch it.
+func (e *Engine) publishCWEExternally(ctx context.Context, kubeconfigPath string) error {
+	manifest, cleanup, err := writeEmbeddedFile(cweNodePortFile)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	e.log.Info("publishing the cwe api for the host", "namespace", cweNamespace, "nodePort", NodePort)
+	if out, err := e.Runner.Run(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", cweNamespace, "apply", "-f", manifest); err != nil {
+		return fmt.Errorf("cwedeploy: publishing the cwe api with %s: %w\n%s", cweNodePortFile, err, out)
+	}
 	return nil
 }
 
@@ -720,6 +787,34 @@ func (e *Engine) publishSpireExternally(ctx context.Context, kubeconfigPath stri
 		return fmt.Errorf("cwedeploy: publishing SPIRE with %s: %w\n%s", spireNodePortFile, err, out)
 	}
 	return nil
+}
+
+// TenantKubeconfig returns the admin kubeconfig CWE published for clusterName.
+//
+// CWE writes it as a Secret in nke-system, which is also the namespace it puts
+// the cluster's CAPI objects in — so this is the same Secret Cluster API
+// resolves by name for the cluster, and the one
+// cluster-api-provider-provisioned reads to set each Node's provider ID.
+//
+// It is the plain admin kubeconfig. CWE only rewrites it to a SPIRE exec-auth
+// kubeconfig when OIDC authentication is enabled on the cluster, which a
+// bootstrap does not turn on (see nkeOIDCAuth in manifests/cwe-values.yaml).
+func (e *Engine) TenantKubeconfig(ctx context.Context, kubeconfigPath, clusterName string) ([]byte, error) {
+	secret := clusterName + "-kubeconfig"
+	out, err := e.Runner.Run(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", tenantSecretsNamespace, "get", "secret", secret,
+		"-o", "jsonpath={.data.value}")
+	if err != nil {
+		return nil, fmt.Errorf("cwedeploy: reading %s/%s: %w\n%s", tenantSecretsNamespace, secret, err, out)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(out))
+	if err != nil {
+		return nil, fmt.Errorf("cwedeploy: decoding %s/%s: %w", tenantSecretsNamespace, secret, err)
+	}
+	if len(decoded) == 0 {
+		return nil, fmt.Errorf("cwedeploy: %s/%s holds an empty kubeconfig", tenantSecretsNamespace, secret)
+	}
+	return decoded, nil
 }
 
 // DumpDiagnostics writes everything the cluster can say about why a bootstrap

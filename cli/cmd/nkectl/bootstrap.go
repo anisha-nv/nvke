@@ -10,13 +10,18 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
 	"github.com/NVIDIA/nke/cli/internal/bootstrapengine"
+	"github.com/NVIDIA/nke/cli/internal/clients"
+	"github.com/NVIDIA/nke/cli/internal/config"
 	"github.com/NVIDIA/nke/cli/internal/cwedeploy"
 	"github.com/NVIDIA/nke/cli/internal/inventory"
+	"github.com/NVIDIA/nke/cli/internal/sitecluster"
 )
 
 const (
@@ -27,6 +32,11 @@ const (
 	// credential when it is not passed on the command line. Keeping the secret
 	// out of the inventory file lets the file be committed and shared safely.
 	registryAPIKeyEnv = "REGISTRY_API_KEY" //nolint:gosec // G101: this is an env var name, not a credential
+
+	// defaultCWEHostPort is where the bootstrap cluster's CWE API is published
+	// on this host. Overridable with NKECTL_CWE_HOST_PORT for the case that
+	// matters: something else on the machine already holds 8080.
+	defaultCWEHostPort = 8080
 )
 
 // newBootstrapCmd is the "bootstrap" command group. Site bootstrap is the only
@@ -50,6 +60,15 @@ type bootstrapSiteOptions struct {
 	diagnosticsDir    string
 	provider          string
 	keepBootstrapKind bool
+
+	// clusterTimeout bounds the wait for CWE to finish provisioning the
+	// cluster, from the create call to every node having joined.
+	clusterTimeout time.Duration
+
+	// kubeconfigOut is where the finished cluster's admin kubeconfig is
+	// written. Empty defaults to <clusterName>.kubeconfig in the working
+	// directory.
+	kubeconfigOut string
 
 	// bootstrapRunner overrides the CommandRunner the bootstrap engine uses.
 	// Nil in production (bootstrapengine.New defaults to the real exec-backed
@@ -110,6 +129,13 @@ inventory file format.`,
 			" (rollback path). Overrides NKECTL_BOOTSTRAP_PROVIDER.")
 	cmd.Flags().BoolVar(&opts.keepBootstrapKind, "keep-bootstrap-cluster", false,
 		"Leave the ephemeral bootstrap Kind cluster running after the command exits, for debugging")
+	cmd.Flags().DurationVar(&opts.clusterTimeout, "timeout",
+		envDurationOrDefault("NKECTL_BOOTSTRAP_CLUSTER_TIMEOUT", 30*time.Minute),
+		"How long to wait for the cluster to finish provisioning. "+
+			"Overrides NKECTL_BOOTSTRAP_CLUSTER_TIMEOUT.")
+	cmd.Flags().StringVar(&opts.kubeconfigOut, "kubeconfig-out", "",
+		"Where to write the finished cluster's admin kubeconfig "+
+			"(default: <clusterName>.kubeconfig in the working directory)")
 
 	return cmd
 }
@@ -148,6 +174,14 @@ func runBootstrapSite(out io.Writer, opts *bootstrapSiteOptions) (err error) {
 	if opts.provider != "" {
 		cfg.Provider = bootstrapengine.Provider(opts.provider)
 	}
+	// The CWE API has to be reachable from this host: this command deploys it
+	// and then calls it. A host port mapping rather than the node container's
+	// own address, because that address is only routable from the host on
+	// Linux with the Docker provider.
+	cfg.ExtraPortMappings = append(cfg.ExtraPortMappings, bootstrapengine.PortMapping{
+		ContainerPort: cwedeploy.NodePort,
+		HostPort:      cweHostPort(),
+	})
 
 	cweCfg, err := cweDeployConfig(inv, cfg.ClusterName)
 	if err != nil {
@@ -166,7 +200,7 @@ func runBootstrapSite(out io.Writer, opts *bootstrapSiteOptions) (err error) {
 		// removed on every exit path, so this is the only moment the evidence
 		// still exists. Only on failure — a successful bootstrap has nothing
 		// to explain.
-		if err != nil && !errors.Is(err, errDispatchNotImplemented) {
+		if err != nil {
 			dir := opts.diagnosticsDir
 			logger.Info("bootstrap failed; collecting cluster diagnostics", "dir", dir)
 			cwedeploy.New(opts.cweRunner, logger).
@@ -185,29 +219,111 @@ func runBootstrapSite(out io.Writer, opts *bootstrapSiteOptions) (err error) {
 		}
 	}()
 
-	// Step 3: deploy Postgres, Temporal, SPIRE, and CWE onto the bootstrap
+	// Step 3: deploy Postgres, Temporal, SPIRE, Cluster API, and CWE onto the bootstrap
 	// cluster and wait for CWE to report healthy on /readyz before going any
 	// further — there is nothing to dispatch a workflow to otherwise.
 	if err := deployAndWaitForCWE(ctx, engine, cluster, cweCfg, opts.cweRunner, logger); err != nil {
 		return err
 	}
 
-	// Step 4+ (subsequent tickets): dispatch the init/join/untaint workflows
-	// against the now-healthy CWE. Stubbed for now so the command is runnable
-	// end-to-end while the rest of the bootstrap core is ported.
-	return errDispatchNotImplemented
+	// Step 4: create the cluster. CWE owns everything from here — it drives
+	// kubeadm on each host through nke-agent and reconciles the Cluster API
+	// objects that the provisioned infrastructure provider binds to the
+	// inventory's hosts.
+	return createSiteCluster(ctx, cluster, inv, opts, logger)
 }
 
-// errDispatchNotImplemented is how `bootstrap site` ends today: everything
-// before workflow dispatch runs, and then it stops.
+// createSiteCluster posts the cluster to CWE, waits for it to come up, and
+// writes out its kubeconfig.
 //
-// It is a sentinel rather than an inline error because the diagnostics path has
-// to tell it apart from a real failure. Every run returns an error right now,
-// so treating "returned an error" as "something went wrong" would dump the
-// cluster on every successful bootstrap. It goes away when dispatch lands, and
-// the check with it.
-var errDispatchNotImplemented = errors.New(
-	"bootstrap dispatch is not yet implemented; re-run with --dry-run to validate the inventory")
+// The CWE client is built here rather than being passed in because its address
+// is only settled once the bootstrap cluster exists: it is the host port the
+// NodePort Service was mapped to.
+func createSiteCluster(
+	ctx context.Context,
+	bootstrapCluster *bootstrapengine.Cluster,
+	inv *inventory.Inventory,
+	opts *bootstrapSiteOptions,
+	logger *slog.Logger,
+) error {
+	cweURL := fmt.Sprintf("http://127.0.0.1:%d", cweHostPort())
+	client, err := clients.New(config.SiteConfig{URL: cweURL})
+	if err != nil {
+		return fmt.Errorf("building the CWE client for %s: %w", cweURL, err)
+	}
+
+	created, err := sitecluster.Create(ctx, client, inv, logger)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("waiting for the cluster to finish provisioning",
+		"cluster", created.Name, "timeout", opts.clusterTimeout)
+	if _, err := sitecluster.WaitProvisioned(ctx, client, created.ID, opts.clusterTimeout, logger); err != nil {
+		return err
+	}
+	logger.Info("cluster provisioned", "cluster", created.Name, "id", created.ID)
+
+	return writeTenantKubeconfig(ctx, bootstrapCluster, created.Name, opts, logger)
+}
+
+// writeTenantKubeconfig saves the finished cluster's admin kubeconfig beside
+// the operator, so the first thing they can do is look at what was built.
+//
+// 0o600: it is an admin credential for the cluster that was just created.
+func writeTenantKubeconfig(
+	ctx context.Context,
+	bootstrapCluster *bootstrapengine.Cluster,
+	clusterName string,
+	opts *bootstrapSiteOptions,
+	logger *slog.Logger,
+) error {
+	path := opts.kubeconfigOut
+	if path == "" {
+		path = clusterName + ".kubeconfig"
+	}
+
+	kubeconfig, err := cwedeploy.New(opts.cweRunner, logger).
+		TenantKubeconfig(ctx, bootstrapCluster.KubeconfigPath, clusterName)
+	if err != nil {
+		return fmt.Errorf("reading the kubeconfig of cluster %q: %w", clusterName, err)
+	}
+	if err := os.WriteFile(path, kubeconfig, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+
+	logger.Info("wrote the cluster kubeconfig", "path", path)
+	fmt.Fprintf(os.Stdout, "\nCluster %q is ready. Talk to it with:\n  kubectl --kubeconfig %s get nodes\n",
+		clusterName, path)
+	return nil
+}
+
+// cweHostPort is the port on this host that the bootstrap cluster's CWE
+// NodePort is published on. One value, read in two places (the kind port
+// mapping and the client's URL), so they cannot disagree.
+func cweHostPort() int32 {
+	if v := os.Getenv("NKECTL_CWE_HOST_PORT"); v != "" {
+		if port, err := strconv.ParseInt(v, 10, 32); err == nil && port > 0 && port < 65536 {
+			return int32(port)
+		}
+	}
+	return defaultCWEHostPort
+}
+
+// envDurationOrDefault reads a duration from the environment, falling back to a
+// default. A malformed or non-positive value falls back rather than failing:
+// this is a flag default, and an explicit --timeout still overrides it.
+func envDurationOrDefault(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
+}
 
 // envOrDefault reads an environment variable, falling back to a default.
 func envOrDefault(key, fallback string) string {
@@ -238,6 +354,12 @@ func cweDeployConfig(inv *inventory.Inventory, clusterName string) (cwedeploy.Co
 		return cfg, errors.New("NKECTL_CWE_PROFILES_IMAGE is not set; it must name an image " +
 			"holding the OS profiles tree at /profiles")
 	}
+	if cfg.ProvisionedProviderImage == "" {
+		return cfg, errors.New("NKECTL_CAPI_PROVISIONED_IMAGE is not set; it must name the " +
+			"cluster-api-provider-provisioned image, which is the Cluster API infrastructure " +
+			"provider for hosts that already exist (build it with " +
+			"`docker build -f cluster-api-provider-provisioned/Dockerfile .`)")
+	}
 
 	// SPIRE is told the Kind cluster's own name. There is no separate variable
 	// for it: the bootstrap cluster has one name, and two ways to say it could
@@ -258,10 +380,14 @@ func cweDeployConfig(inv *inventory.Inventory, clusterName string) (cwedeploy.Co
 	// is the whole of it: no node listed, no node admitted.
 	cfg.TPMEKFingerprints = inv.Cluster.TPMEKThumbprints()
 
+	// How the hosts were configured when they were provisioned, which is why it
+	// is in the inventory and not in the environment.
+	cfg.NodeAgentPort = inv.Cluster.NodeAgentPort
+
 	return cfg, nil
 }
 
-// deployAndWaitForCWE installs Postgres, Temporal, SPIRE, and CWE onto cluster
+// deployAndWaitForCWE installs Postgres, Temporal, SPIRE, Cluster API, and CWE onto cluster
 // and polls CWE's /readyz until it reports healthy or a bounded timeout
 // elapses. What to install is decided by cweDeployConfig; this only carries it
 // out.
@@ -285,7 +411,7 @@ func deployAndWaitForCWE(
 	cweRunner cwedeploy.CommandRunner,
 	logger *slog.Logger,
 ) error {
-	for _, image := range []string{cweCfg.CWEImage, cweCfg.ProfilesImage} {
+	for _, image := range []string{cweCfg.CWEImage, cweCfg.ProfilesImage, cweCfg.ProvisionedProviderImage} {
 		if err := ensureImageAvailable(ctx, engine, cluster, image, logger); err != nil {
 			return fmt.Errorf("loading %s into bootstrap kind cluster: %w", image, err)
 		}
