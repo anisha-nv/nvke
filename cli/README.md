@@ -132,8 +132,9 @@ ever disagree.
 the time the error reaches you there is nothing left to ask. To keep the
 evidence, a failed run collects a `kubectl cluster-info dump` — every
 namespace's objects and pod logs — plus the events, object state and helm
-releases that explain a pod which never started, and writes it out *before* the
-teardown.
+releases that explain a pod which never started. It also exports the Temporal
+task queue, workflow descriptions, and workflow histories. It writes the data
+before the teardown.
 
 It lands in `cluster-diagnostics/`, overridable with `--diagnostics-dir` or
 `NKECTL_BOOTSTRAP_DIAGNOSTICS_DIR`. A successful run writes nothing. CI uploads

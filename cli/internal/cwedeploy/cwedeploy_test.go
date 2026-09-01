@@ -5,7 +5,9 @@ package cwedeploy
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +24,8 @@ type fakeCall struct {
 // fakeRunner is a scripted CommandRunner for unit tests: no real helm,
 // kubectl or cluster required.
 type fakeRunner struct {
-	calls []fakeCall
+	calls   []fakeCall
+	respond func(name string, args ...string) (string, error)
 
 	// outputs is consulted in call order; if shorter than the number of
 	// calls, the last entry is reused.
@@ -61,6 +64,9 @@ func (f *fakeRunner) captureApply(name string, args []string) {
 func (f *fakeRunner) Run(_ context.Context, name string, args ...string) (string, error) {
 	f.calls = append(f.calls, fakeCall{name: name, args: args})
 	f.captureApply(name, args)
+	if f.respond != nil {
+		return f.respond(name, args...)
+	}
 	idx := len(f.calls) - 1
 	if idx < len(f.outputs) {
 		return f.outputs[idx].output, f.outputs[idx].err
@@ -146,6 +152,131 @@ func TestDeploy_RequiresKubeconfigAndImage(t *testing.T) {
 	if err := e.Deploy(context.Background(), "/tmp/kubeconfig",
 		Config{CWEImage: "nvcr.io/org/controller:edge"}); err == nil {
 		t.Fatal("expected an error for a missing Config.ProfilesImage")
+	}
+	if err := e.Deploy(context.Background(), "/tmp/kubeconfig", Config{
+		CWEImage:      "nvcr.io/org/controller:edge",
+		ProfilesImage: "nvcr.io/org/cwe-profiles:v1",
+	}); err == nil {
+		t.Fatal("expected an error for a missing Config.ProvisionedProviderImage")
+	}
+}
+
+func TestNodeAgentPortArgs(t *testing.T) {
+	if got := nodeAgentPortArgs(Config{}); len(got) != 0 {
+		t.Errorf("nodeAgentPortArgs with no port = %v, want none", got)
+	}
+	got := joinArgs(nodeAgentPortArgs(Config{NodeAgentPort: "15005"}))
+	for _, want := range []string{"env[0].name=NODE_AGENT_PORT", "env[0].value=15005"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nodeAgentPortArgs = %q, want it to contain %q", got, want)
+		}
+	}
+}
+
+func TestDefaultConfig_CWEPort(t *testing.T) {
+	t.Setenv("NKECTL_CWE_PORT", "30181")
+
+	cfg := DefaultConfig()
+	if cfg.CWEPort != 30181 {
+		t.Errorf("DefaultConfig port = %d, want 30181", cfg.CWEPort)
+	}
+}
+
+func TestTenantKubeconfigRetriesUntilPublished(t *testing.T) {
+	oldInterval := tenantKubeconfigPollInterval
+	tenantKubeconfigPollInterval = time.Millisecond
+	t.Cleanup(func() { tenantKubeconfigPollInterval = oldInterval })
+
+	runner := &fakeRunner{outputs: []fakeOutput{
+		{output: "Error from server (NotFound)", err: errors.New("exit status 1")},
+		{output: "temporary API failure", err: errors.New("exit status 1")},
+		{output: base64.StdEncoding.EncodeToString([]byte("apiVersion: v1\nkind: Config\n"))},
+	}}
+	got, err := New(runner, nil).TenantKubeconfig(
+		context.Background(), "/tmp/kubeconfig", "nke-site", time.Second)
+	if err != nil {
+		t.Fatalf("TenantKubeconfig returned error: %v", err)
+	}
+	if !strings.Contains(string(got), "kind: Config") {
+		t.Errorf("TenantKubeconfig = %q, want a kubeconfig", got)
+	}
+	if len(runner.calls) != 3 {
+		t.Errorf("TenantKubeconfig made %d attempts, want 3", len(runner.calls))
+	}
+}
+
+func TestTenantKubeconfigTimesOutWithLastError(t *testing.T) {
+	oldInterval := tenantKubeconfigPollInterval
+	tenantKubeconfigPollInterval = time.Millisecond
+	t.Cleanup(func() { tenantKubeconfigPollInterval = oldInterval })
+
+	runner := &fakeRunner{outputs: []fakeOutput{{
+		output: "Error from server (NotFound): secrets \"nke-site-kubeconfig\" not found",
+		err:    errors.New("exit status 1"),
+	}}}
+	_, err := New(runner, nil).TenantKubeconfig(
+		context.Background(), "/tmp/kubeconfig", "nke-site", 5*time.Millisecond)
+	if err == nil {
+		t.Fatal("TenantKubeconfig did not time out")
+	}
+	for _, want := range []string{"not published within", "NotFound"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestDeploy_PublishesCWEAfterTheRelease(t *testing.T) {
+	runner := &fakeRunner{}
+	if err := New(runner, nil).Deploy(context.Background(), "/tmp/kubeconfig", testConfig(t)); err != nil {
+		t.Fatalf("Deploy returned error: %v", err)
+	}
+
+	cwe := callIndex(runner, "upgrade --install "+cweReleaseName)
+	nodePort := -1
+	for i, call := range runner.calls {
+		args := joinArgs(call.args)
+		if call.name == "kubectl" && strings.Contains(args, "apply") && !strings.Contains(args, "--server-side") {
+			nodePort = i
+		}
+	}
+	if nodePort < cwe {
+		t.Errorf("the CWE NodePort (%d) was applied before CWE itself (%d)", nodePort, cwe)
+	}
+	if want := fmt.Sprintf("nodePort: %d", DefaultCWEPort); !strings.Contains(runner.applied[len(runner.applied)-1], want) {
+		t.Errorf("the published Service does not carry %q:\n%s", want, runner.applied[len(runner.applied)-1])
+	}
+}
+
+func TestDeploy_ConfiguresCWEPort(t *testing.T) {
+	runner := &fakeRunner{}
+	cfg := testConfig(t)
+	cfg.CWEPort = 30181
+	if err := New(runner, nil).Deploy(context.Background(), "/tmp/kubeconfig", cfg); err != nil {
+		t.Fatalf("Deploy returned error: %v", err)
+	}
+
+	cwe := helmCalls(runner)[4]
+	if !strings.Contains(cwe, "service.port=30181") {
+		t.Errorf("CWE helm call = %q, want configured service port", cwe)
+	}
+	manifest := runner.applied[len(runner.applied)-1]
+	for _, want := range []string{"port: 30181", "nodePort: 30181"} {
+		if !strings.Contains(manifest, want) {
+			t.Errorf("the published Service does not carry %q:\n%s", want, manifest)
+		}
+	}
+}
+
+func TestDeploy_EnablesPostInitCNI(t *testing.T) {
+	runner := &fakeRunner{}
+	if err := New(runner, nil).Deploy(context.Background(), "/tmp/kubeconfig", testConfig(t)); err != nil {
+		t.Fatalf("Deploy returned error: %v", err)
+	}
+
+	cwe := helmCalls(runner)[4]
+	if !strings.Contains(cwe, "cni.installAfterInit=true") {
+		t.Errorf("CWE helm call = %q, want post-init CNI enabled", cwe)
 	}
 }
 
@@ -408,9 +539,60 @@ func TestDumpDiagnostics(t *testing.T) {
 	if !dumped {
 		t.Errorf("no cluster-info dump into %s; calls were %+v", dir, runner.calls)
 	}
-	for _, name := range []string{"all-resources.txt", "pods-described.txt", "helm-releases.txt"} {
+	for _, name := range []string{
+		"all-resources.txt",
+		"pods-described.txt",
+		"helm-releases.txt",
+		"temporal-workflows/task-queue.json",
+		"temporal-workflows/workflows.json",
+	} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("%s was not written: %v", name, err)
+		}
+	}
+}
+
+func TestDumpDiagnostics_CollectsTemporalWorkflowState(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "cluster-diagnostics")
+	runner := &fakeRunner{}
+	runner.respond = func(_ string, args ...string) (string, error) {
+		call := joinArgs(args)
+		switch {
+		case strings.Contains(call, "workflow list"):
+			return `[{"execution":{"workflowId":"provision-cluster/123","runId":"run-456"}}]`, nil
+		case strings.Contains(call, "workflow describe"):
+			return `{"pendingActivities":[{"activityType":{"name":"InstallKubeLocalDNS"},"attempt":1}]}`, nil
+		case strings.Contains(call, "workflow show"):
+			return `{"events":[{"eventType":"EVENT_TYPE_ACTIVITY_TASK_SCHEDULED"}]}`, nil
+		case strings.Contains(call, "task-queue describe"):
+			return `{"pollers":[{"identity":"cwe"}]}`, nil
+		default:
+			return "collected", nil
+		}
+	}
+
+	New(runner, nil).DumpDiagnostics(context.Background(), "/tmp/kubeconfig", dir)
+
+	executionDir := filepath.Join(dir, "temporal-workflows", "000-provision-cluster_123")
+	for _, name := range []string{"description.json", "history.json"} {
+		if _, err := os.Stat(filepath.Join(executionDir, name)); err != nil {
+			t.Errorf("%s was not written: %v", name, err)
+		}
+	}
+
+	calls := make([]string, 0, len(runner.calls))
+	for _, call := range runner.calls {
+		calls = append(calls, joinArgs(call.args))
+	}
+	allCalls := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"workflow list --limit 100 --output json",
+		"workflow describe --workflow-id provision-cluster/123 --run-id run-456 --output json",
+		"workflow show --workflow-id provision-cluster/123 --run-id run-456 --output json",
+		"task-queue describe --task-queue cloud-workflow-engine-tasks --output json",
+	} {
+		if !strings.Contains(allCalls, want) {
+			t.Errorf("Temporal diagnostics calls did not contain %q; calls were:\n%s", want, allCalls)
 		}
 	}
 }
@@ -430,6 +612,11 @@ func TestDumpDiagnostics_SurvivesAFailingCluster(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "exit status 1") {
 		t.Errorf("the file should record why the command failed, got %q", body)
+	}
+	for _, name := range []string{"task-queue.json", "workflows.json"} {
+		if _, err := os.Stat(filepath.Join(dir, "temporal-workflows", name)); err != nil {
+			t.Errorf("Temporal diagnostics did not survive a failed command: %v", err)
+		}
 	}
 }
 
