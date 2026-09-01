@@ -53,8 +53,9 @@
 # within the same required workflow -- see the matrix comment above.)
 #
 # Since cli/internal/cwedeploy, the job also deploys Postgres,
-# Temporal and CWE onto the ephemeral cluster and asserts CWE reports healthy
-# on /readyz -- see run.sh's Stage 2. The CWE image is pulled from GHCR with
+# Temporal, SPIRE, Cluster API and CWE onto the ephemeral cluster, creates a
+# site cluster on the fake nodes through the CWE API, and serves hello world
+# through Traefik on it -- see run.sh's stages. The CWE image is pulled from GHCR with
 # the built-in GITHUB_TOKEN.
 #
 # GHCR, not the nvcr.io `edge` tag this job first used: NGC_REGISTRY_TOKEN_NKE
@@ -114,7 +115,12 @@ jobs:
     # not yet been timed end to end in this CI lane. The nerdctl leg adds a
     # standalone containerd install on top of that, so it gets the same
     # budget rather than a tighter one.
-    timeout-minutes: 45
+    #
+    # Raised from 45 when the suite stopped stopping after the CWE deploy: it
+    # now builds a real Kubernetes cluster on the fake nodes (kubeadm init, two
+    # joins, a CNI install) and serves a page through Traefik on it, none of
+    # which the earlier budget covered.
+    timeout-minutes: 75
     permissions:
       contents: read
       packages: read

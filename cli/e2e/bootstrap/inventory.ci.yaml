@@ -43,12 +43,19 @@ cluster:
 
   # CNI plugin: "calico" or "ovn-kubernetes".
   cniName: "calico"
-  cniVersion: "3.31.4-1"
+  # A bare X.Y.Z. CWE now installs the CNI, and it takes this as a package/chart
+  # stream and rejects anything that is not a semver version core -- so not the
+  # "3.31.4-1" Debian package revision this fixture carried while the node-agent
+  # default was what mattered.
+  cniVersion: "3.31.4"
 
-  # Pod network CIDR. Multiple CIDRs may be given as a comma-separated string.
-  podCidr: "10.100.0.0/16"
-  # Service network CIDR.
-  serviceCidr: "10.200.0.0/16"
+  # Pod and service network CIDRs.
+  #
+  # CWE's own defaults, deliberately: it only accepts non-default CIDRs with the
+  # ovn-kubernetes CNI plugin, and this fixture runs calico. Neither overlaps
+  # the 172.26.0.0/24 the fake nodes are on.
+  podCidr: "192.168.0.0/16"
+  serviceCidr: "10.96.0.0/12"
 
   # Fake node containers run with limited memory; the kubelet default exceeds
   # their capacity and refuses to start without this override.

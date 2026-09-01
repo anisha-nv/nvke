@@ -33,6 +33,15 @@
 #      the agents got in. The nodes are Docker's whichever provider is under
 #      test, so under nerdctl there is no network they and the kind cluster can
 #      share -- see the stage itself for why that is not addressable.
+#   5. The cluster itself. `bootstrap site` posts the inventory to CWE as a
+#      Cluster API cluster whose infrastructure is the pre-provisioned hosts
+#      (a ProvisionedCluster and a ProvisionedMachineTemplate), waits for it to
+#      finish, and writes out its kubeconfig. The command now exits 0.
+#   6. Every node of that cluster reports Ready through that kubeconfig.
+#   7. Hello world. Traefik is installed on the new cluster and a whoami
+#      Deployment is served through it, and this suite asks for the page. That
+#      is the end-to-end statement the earlier stages only imply: a cluster
+#      built out of hosts that already existed serves traffic like any other.
 #
 # NKECTL_BOOTSTRAP_PROVIDER selects the container runtime front end the
 # ephemeral cluster runs on (see cli/internal/bootstrapengine).
@@ -73,6 +82,15 @@ BOOTSTRAP_KIND_CLUSTER="${NKECTL_BOOTSTRAP_CLUSTER_NAME:-nkectl-bootstrap}"
 export NKECTL_E2E_ATTESTATION_BASELINE="${CLI_DIR}/.local/attestation-baseline.json"
 # Where the node images' spire-agents were built to look for the SPIRE server.
 SPIRE_VIP="${NKECTL_E2E_SPIRE_SERVER_ADDRESS:-172.26.0.2}"
+# The init node, which is also where the finished cluster's API server ends up:
+# no controlPlaneVIP is set, so kubeadm uses the first control-plane node's IP.
+# It matches inventory.ci.yaml, and it is the address stages 6 and 7 use.
+INIT_NODE_IP="${NKECTL_E2E_INIT_NODE_IP:-172.26.0.10}"
+# Where Traefik is published on the new cluster, and where stage 7 asks for the
+# page. In the NodePort range, and clear of the SPIRE server's 30081.
+TRAEFIK_NODE_PORT="${NKECTL_E2E_TRAEFIK_NODE_PORT:-30082}"
+# Where `bootstrap site` writes the finished cluster's kubeconfig.
+TENANT_KUBECONFIG="${SCRIPT_DIR}/.tenant.kubeconfig"
 export NKECTL_BOOTSTRAP_PROVIDER="${NKECTL_BOOTSTRAP_PROVIDER:-docker}"
 : "${NKECTL_CWE_IMAGE:?NKECTL_CWE_IMAGE must name the CWE image to deploy, already pulled locally (see comment above)}"
 export NKECTL_CWE_IMAGE
@@ -81,6 +99,14 @@ export NKECTL_CWE_IMAGE
 # controller/test/fixtures rather than pulled: the fleet image lives in
 # nke-site-deploy, which this suite does not depend on.
 export NKECTL_CWE_PROFILES_IMAGE="${NKECTL_CWE_PROFILES_IMAGE:-cwe-profiles:local}"
+
+# The Cluster API infrastructure provider for hosts that already exist, built
+# below from this checkout. Without it the CAPI objects CWE writes have no
+# controller and the cluster never leaves provisioning. nkectl loads it into the
+# bootstrap cluster the same way it loads the CWE and profiles images, and finds
+# the kustomize base to render by walking up to go.work — so only the image has
+# to be named here.
+export NKECTL_CAPI_PROVISIONED_IMAGE="${NKECTL_CAPI_PROVISIONED_IMAGE:-cluster-api-provider-provisioned:local}"
 
 # Where a failed bootstrap writes its cluster dump. Set explicitly rather than
 # left to nkectl's default, which is relative to the working directory: CI runs
@@ -138,6 +164,7 @@ cleanup() {
     chown -R "${SUDO_UID}:${SUDO_GID:-${SUDO_UID}}" "${DIAGNOSTICS_DIR}" || true
   fi
 
+  rm -f "${TENANT_KUBECONFIG}" "${SCRIPT_DIR}/.bootstrap.log"
   rm -rf "${KUBECONFIG_DIR}"
 }
 trap cleanup EXIT
@@ -204,6 +231,10 @@ fi
 log "building the profiles image (${NKECTL_CWE_PROFILES_IMAGE})"
 make -C "${CLI_DIR}" ensure-profiles-image CWE_PROFILES_IMAGE="${NKECTL_CWE_PROFILES_IMAGE}"
 
+log "building the provisioned CAPI provider image (${NKECTL_CAPI_PROVISIONED_IMAGE})"
+make -C "${CLI_DIR}" ensure-provisioned-provider-image \
+  CAPI_PROVISIONED_IMAGE="${NKECTL_CAPI_PROVISIONED_IMAGE}"
+
 # ensure-profiles-image always builds through `docker` (see cli/Makefile):
 # `nerdctl build` needs a running buildkitd, which this suite does not stand
 # up (a second daemon alongside the containerd-nerdctl.service the nerdctl
@@ -214,8 +245,10 @@ make -C "${CLI_DIR}" ensure-profiles-image CWE_PROFILES_IMAGE="${NKECTL_CWE_PROF
 # instance -- so bridge it across once here, the same way `docker save` /
 # `nerdctl load` move any other locally built image between two runtimes.
 if [ "${NKECTL_BOOTSTRAP_PROVIDER}" = "nerdctl" ]; then
-  log "loading ${NKECTL_CWE_PROFILES_IMAGE} into nerdctl's containerd (built via docker above)"
-  docker save "${NKECTL_CWE_PROFILES_IMAGE}" | nerdctl load
+  for image in "${NKECTL_CWE_PROFILES_IMAGE}" "${NKECTL_CAPI_PROVISIONED_IMAGE}"; do
+    log "loading ${image} into nerdctl's containerd (built via docker above)"
+    docker save "${image}" | nerdctl load
+  done
 fi
 
 # The thumbprints and the bootstrap CA reach the command the way an operator's
@@ -238,64 +271,164 @@ log "allowlisting $(grep -c tpmEkThumbprint "${RENDERED_INVENTORY}") EK thumbpri
 # public hardened charts, needing no registry credential of their own.
 log "running: nkectl bootstrap site -i ${RENDERED_INVENTORY} --keep-bootstrap-cluster" \
   "(NKECTL_BOOTSTRAP_PROVIDER=${NKECTL_BOOTSTRAP_PROVIDER}, NKECTL_CWE_IMAGE=${NKECTL_CWE_IMAGE}," \
-  "NKECTL_CWE_PROFILES_IMAGE=${NKECTL_CWE_PROFILES_IMAGE})"
+  "NKECTL_CWE_PROFILES_IMAGE=${NKECTL_CWE_PROFILES_IMAGE}," \
+  "NKECTL_CAPI_PROVISIONED_IMAGE=${NKECTL_CAPI_PROVISIONED_IMAGE})"
+
+# In the background, because the run has to be joined while it is still going.
+#
+# The command no longer stops after deploying CWE: it creates the cluster and
+# waits for CWE to build it on the fake nodes. CWE reaches those nodes, and
+# their spire-agents reach SPIRE, over the node network — which the bootstrap
+# cluster is not on, because the nodes came up before it existed. So the attach
+# below has to happen *during* the run rather than after it, or nothing on
+# either side of that route ever completes.
+#
 # Set before the call, not after: the command can fail after creating the
 # cluster it was told to keep, and cleanup has to already know to remove it.
 bootstrap_cluster_cleanup_pending=true
+BOOTSTRAP_LOG="${SCRIPT_DIR}/.bootstrap.log"
+"${NKECTL}" bootstrap site -i "${RENDERED_INVENTORY}" --keep-bootstrap-cluster \
+  --kubeconfig-out "${TENANT_KUBECONFIG}" >"${BOOTSTRAP_LOG}" 2>&1 &
+bootstrap_pid=$!
+
+# Attach once CWE reports healthy, which is where the old script did it and is
+# the last quiet moment before the route is needed: kind has finished building
+# the cluster, so a second network cannot disturb that, and CWE has not yet been
+# asked for a cluster, so it has not yet tried to reach a node.
+#
+# Bounded separately from the command's own timeout, and abandoned if the
+# command exits first. The node containers are created through docker whatever
+# provider kind is driven with, so a bootstrap cluster living in nerdctl's
+# containerd cannot be joined to their network at all -- without a bound that
+# leg would sit out the whole cluster-provisioning timeout before saying so.
+log "waiting for CWE to report healthy, to attach the cluster to the node network at ${SPIRE_VIP}"
+attached=false
+attach_deadline=$((SECONDS + ${NKECTL_E2E_ATTACH_TIMEOUT:-1200}))
+while kill -0 "${bootstrap_pid}" 2>/dev/null && [ "${SECONDS}" -lt "${attach_deadline}" ]; do
+  if grep -q "cwe deployment healthy" "${BOOTSTRAP_LOG}" 2>/dev/null; then
+    if docker network connect --ip "${SPIRE_VIP}" \
+      "${NKECTL_E2E_NETWORK:-nkectl-e2e-nodes}" "${BOOTSTRAP_KIND_CLUSTER}-control-plane"; then
+      log "attached the bootstrap cluster at ${SPIRE_VIP}"
+      attached=true
+    else
+      log "WARN: could not attach the bootstrap cluster to the node network"
+    fi
+    break
+  fi
+  sleep 2
+done
+
+if [ "${attached}" != true ]; then
+  log "FAIL: the bootstrap cluster was never attached to the node network, so CWE"
+  log "  cannot reach the nodes and their agents cannot reach SPIRE. Not waiting"
+  log "  for a bootstrap that has no route to the hosts it is building on."
+  kill "${bootstrap_pid}" 2>/dev/null || true
+  wait "${bootstrap_pid}" 2>/dev/null || true
+  cat "${BOOTSTRAP_LOG}" || true
+  exit 1
+fi
 set +e
-output="$("${NKECTL}" bootstrap site -i "${RENDERED_INVENTORY}" --keep-bootstrap-cluster 2>&1)"
+wait "${bootstrap_pid}"
 status=$?
 set -e
-printf '%s\n' "${output}"
+cat "${BOOTSTRAP_LOG}"
+output="$(cat "${BOOTSTRAP_LOG}")"
 
-# Same contract as stage 2 — the command still stops at the dispatch stub.
-if [ "${status}" -eq 0 ]; then
-  log "FAIL: expected the bootstrap-dispatch stub to error, but the command exited 0"
+# ── Stage 5: the command builds the cluster and exits 0 ──────────────────
+
+if [ "${status}" -ne 0 ]; then
+  log "FAIL: nkectl bootstrap site exited ${status}"
   exit 1
 fi
 if ! grep -q "cwe deployment healthy" <<<"${output}"; then
   log "FAIL: CWE was never confirmed healthy on /readyz"
   exit 1
 fi
-
-# TPM attestation needs the agents and the SPIRE server to share a network, and
-# that is only arrangeable when one runtime owns both ends.
-#
-# The fake hosts are Docker's, unconditionally: the substrate shells out to
-# `docker` for every container, network and exec it does (see substrate.go), and
-# the node image is built through docker on both legs for the reasons the
-# profiles-image step above already explains. Under the nerdctl provider,
-# though, `bootstrap site` builds its kind cluster in nerdctl's own containerd,
-# which keeps its own networks. `docker network connect` cannot reach into that
-# -- it fails with "No such container" -- and no amount of addressing fixes it,
-# because the two ends are on different network stacks rather than different
-# networks.
-#
-# So this stage is docker-only, and says so rather than pretending to have run.
-# The nerdctl leg exists to prove bootstrapengine and cwedeploy drive that
-# provider correctly, and it still does all of that above: kind cluster, image
-# side-load, Postgres, Temporal, SPIRE, CWE healthy. Attestation is a property
-# of the SPIRE deployment, not of the container runtime that hosted it, so
-# proving it once on the docker leg is proving it.
-if [ "${NKECTL_BOOTSTRAP_PROVIDER}" != "nerdctl" ]; then
-  # The hosts and the bootstrap cluster are on different docker networks: the
-  # nodes come up before the cluster exists, so there is nothing for them to
-  # join. Attaching the cluster at the fixed address the agents were built to
-  # look for stands in for the VIP a real site controller has.
-  log "attaching the bootstrap cluster to the node network at ${SPIRE_VIP}"
-  docker network connect --ip "${SPIRE_VIP}" \
-    "${NKECTL_E2E_NETWORK:-nkectl-e2e-nodes}" "${BOOTSTRAP_KIND_CLUSTER}-control-plane"
-
-  log "waiting for every node's spire-agent to attest"
-  make -C "${CLI_DIR}" nodes-attested
-
-  log "PASS: bootstrap site deployed SPIRE and every node attested to it over TPM"
-else
-  log "SKIP: TPM attestation is docker-only. The fake hosts are Docker containers"
-  log "  and this leg's kind cluster lives in nerdctl's containerd, so there is no"
-  log "  network both ends can share. Everything up to and including CWE reporting"
-  log "  healthy has been checked above; the docker leg covers attestation."
+if ! grep -q "cluster provisioned" <<<"${output}"; then
+  log "FAIL: the command exited 0 without reporting the cluster provisioned"
+  exit 1
 fi
+if [ ! -s "${TENANT_KUBECONFIG}" ]; then
+  log "FAIL: no kubeconfig was written to ${TENANT_KUBECONFIG}"
+  exit 1
+fi
+log "PASS: bootstrap site created the site cluster through the CWE API"
+
+log "waiting for every node's spire-agent to attest"
+make -C "${CLI_DIR}" nodes-attested
+
+log "PASS: bootstrap site deployed SPIRE and every node attested to it over TPM"
+
+# ── Stage 6: every pre-provisioned host is a Ready node ──────────────────
+#
+# Through the kubeconfig the command wrote, not through the bootstrap cluster:
+# what is being checked is that an operator can now use the thing they asked
+# for. Every inventory node joins as a control-plane node, and CWE untaints
+# them, so all three must be Ready and schedulable.
+
+# One thumbprint per node, init node included -- the same count this suite
+# already asserted is non-zero before running the command.
+expected_nodes=$(grep -c tpmEkThumbprint "${RENDERED_INVENTORY}")
+
+log "waiting for ${expected_nodes} nodes to report Ready"
+if ! kubectl --kubeconfig "${TENANT_KUBECONFIG}" wait --for=condition=Ready nodes --all \
+  --timeout="${NKECTL_E2E_NODE_READY_TIMEOUT:-10m}"; then
+  log "FAIL: not every node reached Ready"
+  kubectl --kubeconfig "${TENANT_KUBECONFIG}" get nodes -o wide || true
+  exit 1
+fi
+
+ready_nodes=$(kubectl --kubeconfig "${TENANT_KUBECONFIG}" get nodes --no-headers | wc -l)
+if [ "${ready_nodes}" -ne "${expected_nodes}" ]; then
+  log "FAIL: the cluster has ${ready_nodes} nodes, but the inventory named ${expected_nodes}"
+  kubectl --kubeconfig "${TENANT_KUBECONFIG}" get nodes -o wide || true
+  exit 1
+fi
+log "PASS: all ${ready_nodes} pre-provisioned hosts are Ready nodes"
+
+# ── Stage 7: hello world ────────────────────────────────────────────────
+#
+# The point of the whole suite. Traefik is published on a NodePort because that
+# is a route the host has to these containers; the request carries the Ingress
+# host name so it has to match a rule Traefik read from the Ingress, rather
+# than falling through to a default backend.
+
+# `--repo` rather than `helm repo add`, for the same reason cli/internal/cwedeploy
+# uses it: this suite does not mutate the caller's global Helm repository list.
+# service.spec.type, not service.type: the chart puts the Service spec's own
+# fields under `spec`, and a value set at the wrong depth is silently ignored.
+log "installing traefik on the new cluster"
+helm --kubeconfig "${TENANT_KUBECONFIG}" upgrade --install traefik traefik \
+  --repo https://traefik.github.io/charts \
+  --version "${NKECTL_E2E_TRAEFIK_CHART_VERSION:-41.4.0}" \
+  --namespace traefik --create-namespace \
+  --set service.spec.type=NodePort \
+  --set "ports.web.nodePort=${TRAEFIK_NODE_PORT}" \
+  --wait --timeout 5m
+
+log "deploying the hello-world workload"
+kubectl --kubeconfig "${TENANT_KUBECONFIG}" apply -f "${SCRIPT_DIR}/manifests/hello-world.yaml"
+kubectl --kubeconfig "${TENANT_KUBECONFIG}" -n hello-world rollout status deployment/whoami --timeout=5m
+
+log "asking for the page at http://${INIT_NODE_IP}:${TRAEFIK_NODE_PORT}/ (Host: hello.nke.local)"
+served=false
+for _ in $(seq 1 60); do
+  # whoami answers with the request it received, so "Hostname:" in the body is
+  # the pod talking, not Traefik's own error page.
+  if curl -fsS --max-time 5 -H "Host: hello.nke.local" \
+    "http://${INIT_NODE_IP}:${TRAEFIK_NODE_PORT}/" | grep -q "Hostname:"; then
+    served=true
+    break
+  fi
+  sleep 5
+done
+if [ "${served}" != true ]; then
+  log "FAIL: hello world was never served through Traefik"
+  kubectl --kubeconfig "${TENANT_KUBECONFIG}" -n hello-world get all,ingress || true
+  kubectl --kubeconfig "${TENANT_KUBECONFIG}" -n traefik logs deployment/traefik --tail=100 || true
+  exit 1
+fi
+log "PASS: the cluster built from pre-provisioned hosts serves hello world through Traefik"
 
 log "tearing down the bootstrap kind cluster kept for attestation"
 KIND_EXPERIMENTAL_PROVIDER="${NKECTL_BOOTSTRAP_PROVIDER}" \
@@ -307,7 +440,7 @@ bootstrap_cluster_cleanup_pending=false
 # running and this suite owns tearing it down. What it earns is the next run --
 # a cluster left registered here makes stage 1 trip over it. That `bootstrap
 # site` removes its own cluster when it is not told to keep one is checked in
-# TestRunBootstrapSiteValidReachesStub, which can assert on the kind call
+# TestRunBootstrapSiteCreatesTheCluster, which can assert on the kind call
 # itself rather than inferring it from what is left behind.
 #
 # kind resolves a cluster through its provider, so ask the same one bootstrap
