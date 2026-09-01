@@ -1,8 +1,8 @@
 # Using Pre-Provisioned Nodes
 
-If you already have nodes provisioned and running, you can manually prepare them for tier-0 bootstrap.
+If you already have nodes provisioned and running, you can manually prepare them for site bootstrap.
 
-> **Tested platforms:** Tier-0 bootstrap on pre-provisioned nodes is tested on **Ubuntu 24.04 (Noble) and 26.04 (Resolute)** with **Kubernetes up to 1.34**. Kubernetes 1.35 and 1.36 are experimental. Ubuntu 22.04 (Jammy) is no longer supported.
+> **Tested platforms:** Site bootstrap on pre-provisioned nodes is tested on **Ubuntu 24.04 (Noble) and 26.04 (Resolute)** with **Kubernetes up to 1.34**. Kubernetes 1.35 and 1.36 are experimental. Ubuntu 22.04 (Jammy) is no longer supported.
 
 ## Self-Bootstrap Models: Managed vs Unmanaged
 
@@ -23,6 +23,8 @@ What you get after bootstrap depends on whether your environment includes a [NVI
 
 `nkectl bootstrap site` has one job on pre-provisioned nodes: turn your prepared nodes into a **Kubernetes cluster**. It does not install your site stack, GitOps controller, or application workloads.
 
+It does this by asking CWE for the cluster rather than driving the nodes itself. The ephemeral Kind cluster runs CWE, Cluster API, and [`cluster-api-provider-provisioned`](https://github.com/NVIDIA/nke/tree/main/cluster-api-provider-provisioned) — the infrastructure provider that presents your existing hosts to Cluster API. CWE then drives `kubeadm` on each host through `nke-agent`. The command returns when the cluster is up.
+
 After bootstrap completes:
 
 1. **Verify the cluster** is healthy (see [Step 3](#step-3-verify-the-cluster)).
@@ -37,9 +39,13 @@ After bootstrap completes:
 - Network connectivity between all nodes
 - Each node has an available NVMe device for local storage (non-root, unpartitioned, not in use)
 - NGC API key (required for pulling NKE container images)
-- On the **init node**: `kind` binary and either `nerdctl` (default) or `docker` installed — `nkectl` uses these to create the ephemeral bootstrap Kind cluster
+- On the **init node**: `kind`, `helm`, `kubectl`, `clusterctl` and either `nerdctl` (default) or `docker` — `nkectl` uses these to create the ephemeral bootstrap Kind cluster and to install Cluster API and CWE onto it
 - `NKECTL_CWE_IMAGE` — full image reference for the CWE controller (e.g. `nvcr.io/<org>/controller:edge`)
 - `NKECTL_CWE_PROFILES_IMAGE` — image holding the OS profiles tree at `/profiles`
+- `NKECTL_CAPI_PROVISIONED_IMAGE` — image for `cluster-api-provider-provisioned`, the Cluster API infrastructure provider for hosts that already exist
+
+`clusterctl init` downloads cert-manager and the Cluster API components, so the
+init node needs internet access for the bootstrap itself, not only for packages.
 
 If you are targeting a self-managed cluster, prepare your environment SBOM and [deploy repository](deploy-repository.md) ahead of time.
 
@@ -130,6 +136,15 @@ Use `--bootstrap-provider docker` if Docker is your container runtime instead of
 > **Do NOT run bootstrap on join nodes** — they are joined automatically via gRPC from the init node.
 
 ## Step 3: Verify the Cluster
+
+`bootstrap site` writes the new cluster's admin kubeconfig when it finishes, to
+`<clusterName>.kubeconfig` unless you pass `--kubeconfig-out`:
+
+```bash
+kubectl get nodes --kubeconfig ./<clusterName>.kubeconfig
+```
+
+The same file is on each control-plane node at `/etc/kubernetes/admin.conf`:
 
 ```bash
 sudo kubectl get nodes --kubeconfig /etc/kubernetes/admin.conf

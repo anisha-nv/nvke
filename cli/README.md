@@ -8,7 +8,7 @@ NKE control-plane CLI. Bootstraps site controllers and manages tenant cluster li
 
 ## What it does
 
-- **Site bootstrap** — `nkectl bootstrap site` creates an ephemeral Kind cluster, deploys CWE onto it, then drives kubeadm init/join across pre-provisioned nodes via `nke-agent` gRPC; no SSH required
+- **Site bootstrap** — `nkectl bootstrap site` creates an ephemeral Kind cluster, deploys CWE onto it, and asks CWE for a cluster built on the inventory's hosts; CWE drives kubeadm init/join across them via `nke-agent` gRPC, no SSH required
 - **Cluster lifecycle** — `nkectl get/create/delete/describe clusters` manages tenant clusters through the CWE API
 - **Config** — `nkectl config set-site` points the CLI at a site controller; `nkectl config validate` validates a bootstrap inventory file
 
@@ -45,6 +45,8 @@ NKECTL_CWE_PROFILES_IMAGE=nvcr.io/<org>/profiles:edge \
 nkectl bootstrap site -i inventory.yaml --dry-run              # validate only
 nkectl bootstrap site -i inventory.yaml --bootstrap-provider docker  # use Docker instead of nerdctl
 nkectl bootstrap site -i inventory.yaml --keep-bootstrap-cluster     # leave Kind cluster for debugging
+nkectl bootstrap site -i inventory.yaml --timeout 45m                # bound the wait for the cluster
+nkectl bootstrap site -i inventory.yaml --kubeconfig-out ./site.kubeconfig
 
 # Point the CLI at a site controller
 nkectl config set-site --url https://cwe.example.com --name default
@@ -121,10 +123,37 @@ ever disagree.
 | `NKECTL_BOOTSTRAP_CLUSTER_NAME` | `nkectl-bootstrap` | Name of the ephemeral cluster |
 | `NKECTL_CWE_IMAGE` | required | CWE image to deploy. Side-loaded from the local image store, so it must already be pulled. |
 | `NKECTL_CWE_PROFILES_IMAGE` | required | Image holding the OS profiles tree at `/profiles` |
+| `NKECTL_CAPI_PROVISIONED_IMAGE` | required | `cluster-api-provider-provisioned` image. Side-loaded like the CWE image, so it must already exist locally. |
+| `NKECTL_CAPI_PROVISIONED_PATH` | discovered | Path to `cluster-api-provider-provisioned/config/default` |
 | `NKECTL_CWE_CHART_PATH` | discovered | Path to the CWE chart |
+| `NKECTL_CWE_HOST_PORT` | `8080` | Host port the ephemeral cluster's CWE API is published on, which `nkectl` then calls |
 | `NKECTL_CWE_HELM_TIMEOUT` | `5m` | Bounds each `helm upgrade --install --wait` |
 | `NKECTL_CWE_READY_TIMEOUT` | `5m` | Bounds the wait for CWE's `/readyz` |
+| `NKECTL_BOOTSTRAP_CLUSTER_TIMEOUT` | `30m` | Bounds the wait for the cluster to finish provisioning (`--timeout`) |
 | `NKECTL_BOOTSTRAP_DIAGNOSTICS_DIR` | `cluster-diagnostics` | Where a failed bootstrap writes a cluster dump before tearing the cluster down (`--diagnostics-dir`) |
+
+### Creating the cluster
+
+Once CWE is healthy, `bootstrap site` turns the inventory into a `POST /api/clusters`
+request and waits for the answer. The requested cluster is a Cluster
+API cluster whose infrastructure is the hosts that already exist:
+
+| Request field | What it carries |
+|---|---|
+| `siteID` | The nil UUID, which is how CWE selects CAPI mode rather than Forge mode |
+| `capiInfraCluster` | A `ProvisionedCluster` whose `spec.hosts` is the inventory, init node first |
+| `nodePools[0].capiInfraMachineTemplate` | A `ProvisionedMachineTemplate` with an empty spec — a machine of this provider is a claim on a host, so there is nothing to configure per machine |
+
+Those kinds belong to
+[`cluster-api-provider-provisioned`](../cluster-api-provider-provisioned), which
+`bootstrap site` installs onto the ephemeral cluster along with Cluster API core
+and the kubeadm providers. Cluster API goes in through `clusterctl`, so that
+binary has to be on `PATH`; the provisioned provider goes in through `kubectl`,
+because it is this repository's own kustomize output and its image is
+side-loaded rather than pulled.
+
+The command returns when CWE reports the cluster provisioned, and writes its
+admin kubeconfig to `<clusterName>.kubeconfig` (`--kubeconfig-out`).
 
 ## When a bootstrap fails
 

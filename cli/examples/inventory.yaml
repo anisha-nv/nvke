@@ -44,9 +44,13 @@ cluster:
   cniVersion: "3.31.4"
 
   # Pod network CIDR. Multiple CIDRs may be given as a comma-separated string.
-  podCidr: "10.100.0.0/16"
+  #
+  # These are CWE's defaults. It accepts other values only with the
+  # ovn-kubernetes CNI plugin, and rejects the cluster at creation time
+  # otherwise, so change them together with cniName.
+  podCidr: "192.168.0.0/16"
   # Service network CIDR.
-  serviceCidr: "10.200.0.0/16"
+  serviceCidr: "10.96.0.0/12"
 
   # Optional: gRPC port nke-agent listens on. Defaults to "50051".
   # nodeAgentPort: "15005"

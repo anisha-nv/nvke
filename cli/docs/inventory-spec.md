@@ -23,9 +23,9 @@ A ready-to-copy example is in [`examples/inventory.yaml`](../examples/inventory.
 | `cluster.joinNodes[].tpmEkThumbprint` | string | no | As above, per entry. |
 | `cluster.k8sVersion` | string | yes | Plain semantic version, e.g. `1.32.0` (no leading `v`). |
 | `cluster.cniName` | string | yes | One of `calico`, `ovn-kubernetes`. |
-| `cluster.cniVersion` | string | no | CNI plugin version. Empty uses the node-agent default. |
-| `cluster.podCidr` | string | yes | Valid CIDR. A comma-separated list of CIDRs is allowed. |
-| `cluster.serviceCidr` | string | yes | Valid CIDR. |
+| `cluster.cniVersion` | string | no | CNI plugin version. Empty uses CWE's default for the plugin. CWE takes it as a semver version core (`X.Y.Z`, no leading `v` and no package revision) and rejects anything else. |
+| `cluster.podCidr` | string | yes | Valid CIDR. A comma-separated list of CIDRs is allowed. CWE accepts a value other than `192.168.0.0/16` only with the `ovn-kubernetes` CNI plugin. |
+| `cluster.serviceCidr` | string | yes | Valid CIDR. CWE accepts a value other than `10.96.0.0/12` only with the `ovn-kubernetes` CNI plugin. |
 | `cluster.nodeAgentPort` | string | no | Port number 1–65535. Defaults to `50051`. |
 | `cluster.kubeletConfig.systemReservedMemory` | string | no | e.g. `16Gi`. |
 | `registry.bootstrapRepo` | string | yes | OCI repository holding the bootstrap engine image and chart. |
@@ -48,10 +48,32 @@ being silently ignored.
 - `podCidr` / `serviceCidr` are parsed as CIDRs; `podCidr` also accepts a
   comma-separated list and validates each entry.
 
+Some rules belong to CWE rather than to this file, and are reported when the
+cluster is created rather than when the inventory is loaded — the CIDR/CNI pair
+above is one. They are not restated in the loader, because a second copy of a
+rule is a second copy to keep in step.
+
+## What reaches CWE
+
+`bootstrap site` turns the inventory into a `POST /api/clusters`. Which field
+becomes what is in
+[`internal/sitecluster`](../internal/sitecluster/sitecluster.go); in outline:
+
+| Inventory | CWE request |
+|---|---|
+| `clusterName` | `name`, and the `ProvisionedCluster`'s name |
+| `cluster.initNode` + `cluster.joinNodes` | the `ProvisionedCluster`'s `spec.hosts`, init node first, and the control-plane pool's node count |
+| `cluster.k8sVersion` | `controlPlaneKubernetesVersion` |
+| `cluster.cniName` / `cniVersion` | `cniPlugin` / `cniVersion` |
+| `cluster.podCidr` / `serviceCidr` | `network.podCIDR` / `network.serviceCIDR` |
+| `cluster.kubeletConfig.systemReservedMemory` | the control-plane pool's `systemReservedMemory` |
+| `cluster.nodeAgentPort` | CWE's `NODE_AGENT_PORT`, so it dials the port these hosts were configured with |
+| `cluster.*.tpmEkThumbprint` | the SPIRE server's TPM allowlist (not part of the cluster request) |
+
 ## Environment variable overrides
 
 Any field can be supplied — or overridden — through an environment variable, so
-existing tier-0 / DS9 scripts can drive the inventory without editing the file.
+existing site-bootstrap and DS9 scripts can drive the inventory without editing the file.
 A set variable takes precedence over the file value.
 
 | Environment variable | Field |
@@ -118,15 +140,15 @@ trust anchor in advance. Both files are checked for existence at load, while
 nothing has been touched yet: otherwise a wrong path surfaces minutes later as a
 helm failure naming a temporary file rather than the field that was wrong.
 
-## Relationship to the tier-0 bootstrap template
+## Relationship to the site bootstrap template
 
-The field names mirror the tier-0 bootstrap template
+The field names mirror the site bootstrap template
 so operators do not need to relearn them. The subset of settings our main user
-(DSX) configures today is rendered by their Ansible role using the DSX tier-0 bootstrap template.
+(DSX) configures today is rendered by their Ansible role using the DSX site bootstrap template.
 
-The differences from tier-0 are deliberate and make the file open-sourceable:
+The differences from the old bootstrap template are deliberate and make the file open-sourceable:
 
-- **Generic registry fields.** tier-0's NVIDIA-specific `registry.ngcApiKey` /
+- **Generic registry fields.** The old template's NVIDIA-specific `registry.ngcApiKey` /
   `registry.sweImageTag` become the registry-agnostic `registry.apiKey`,
   `registry.bootstrapRepo`, and `registry.bootstrapChart`. The image/chart tag
   is baked into the `nkectl` build rather than set in the file.
