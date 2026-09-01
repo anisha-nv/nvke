@@ -1,11 +1,3 @@
-## Flox Environment Manifest -----------------------------------------
-##
-##   _Everything_ you need to know about the _manifest_ is here:
-##
-##               https://flox.dev/docs/concepts/manifest
-##
-## -------------------------------------------------------------------
-# Flox manifest version managed by Flox CLI
 schema-version = "1.11.0"
 
 
@@ -64,6 +56,7 @@ jq.pkg-path = "jq"
 kubeconform = { pkg-path = "kubeconform", version = "0.7.0", pkg-group = "kubeconform" }
 python3 = { pkg-path = "python313", pkg-group = "python" }
 pyyaml = { pkg-path = "python313Packages.pyyaml", pkg-group = "python" }
+packer.pkg-path = "packer"
 
 
 ## Environment Variables ---------------------------------------------

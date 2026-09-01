@@ -52,6 +52,9 @@
         "pkg-group": "oapi-codegen",
         "version": "2.4.1"
       },
+      "packer": {
+        "pkg-path": "packer"
+      },
       "python3": {
         "pkg-path": "python313",
         "pkg-group": "python"
@@ -1114,6 +1117,7 @@
       "version": "4.4.1",
       "outputs_to_install": [
         "man",
+        "out",
         "out"
       ],
       "outputs": {
@@ -1148,6 +1152,7 @@
       "version": "4.4.1",
       "outputs_to_install": [
         "man",
+        "out",
         "out"
       ],
       "outputs": {
@@ -1350,6 +1355,93 @@
       ],
       "outputs": {
         "out": "/nix/store/2809nqqmnz6525g0glhxi324b67dkl5m-ko-0.19.1"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "packer",
+      "broken": false,
+      "derivation": "/nix/store/cbpc98jcd8q5nwbjdhg7a58p2ijn6n1l-packer-1.15.4.drv",
+      "description": "Tool for creating identical machine images for multiple platforms from a single source configuration",
+      "install_id": "packer",
+      "license": "BUSL-1.1",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "name": "packer-1.15.4",
+      "pname": "packer",
+      "rev": "56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "rev_count": 1060451,
+      "rev_date": "2026-08-23T15:22:48Z",
+      "scrape_date": "2026-08-25T04:57:07.743582Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": true,
+      "version": "1.15.4",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/3lkwkc2fs1hfzbpnrly45dhsk8n3aqpr-packer-1.15.4"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "packer",
+      "broken": false,
+      "derivation": "/nix/store/1gkh70kz7gdv085jr46qz86mlsasyj09-packer-1.15.4.drv",
+      "description": "Tool for creating identical machine images for multiple platforms from a single source configuration",
+      "install_id": "packer",
+      "license": "BUSL-1.1",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "name": "packer-1.15.4",
+      "pname": "packer",
+      "rev": "56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "rev_count": 1060451,
+      "rev_date": "2026-08-23T15:22:48Z",
+      "scrape_date": "2026-08-25T05:28:08.409865Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": true,
+      "version": "1.15.4",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/r4jqhpkfk5bv1lajdw8mdy16f2kkfnjp-packer-1.15.4"
+      },
+      "system": "aarch64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "packer",
+      "broken": false,
+      "derivation": "/nix/store/5am3s6gx9ghj69wy9dh45jhlmmbpadah-packer-1.15.4.drv",
+      "description": "Tool for creating identical machine images for multiple platforms from a single source configuration",
+      "install_id": "packer",
+      "license": "BUSL-1.1",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "name": "packer-1.15.4",
+      "pname": "packer",
+      "rev": "56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "rev_count": 1060451,
+      "rev_date": "2026-08-23T15:22:48Z",
+      "scrape_date": "2026-08-25T06:01:26.144515Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": true,
+      "version": "1.15.4",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/s277bklc22x9xs91wfpak1w2y9mx76cv-packer-1.15.4"
       },
       "system": "x86_64-linux",
       "group": "toplevel",
