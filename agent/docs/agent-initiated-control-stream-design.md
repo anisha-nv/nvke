@@ -147,9 +147,10 @@ sequenceDiagram
     Agent->>Enroll: Request one-time challenge with JWT-SVID
     Enroll->>Enroll: Verify JWT and resolve matching node UUID
     Enroll-->>Agent: Return nonce and next enrollment generation
-    Agent->>NodeSPIRE: Fetch JWT-SVID bound to nonce and SPKI digest
-    Agent->>Enroll: Register endpoint, certificate, and bound JWT-SVID
-    Enroll->>Enroll: Recompute SPKI digest and verify exact audience
+    Agent->>NodeSPIRE: Fetch JWT-SVID for audience with nonce and SPKI digest
+    Agent->>Agent: Sign enrollment audience with local TLS private key
+    Agent->>Enroll: Register endpoint, certificate, proof, and JWT-SVID
+    Enroll->>Enroll: Verify exact audience and private-key proof
     Enroll->>Pins: Store current and next authorized SPKI pins
     Enroll-->>Agent: Accept enrollment generation
 
@@ -179,12 +180,14 @@ The direct design intentionally combines three different proofs:
 | --- | --- |
 | CWE authenticates the node | The TLS handshake proves possession of the node's private key. CWE accepts the presented public key only when its SPKI SHA-256 digest matches the node's enrolled current or next pin. |
 | Node authenticates CWE | CWE presents its existing X.509-SVID as its TLS client certificate. The node validates it against a bootstrapped CWE X.509 trust bundle and one exact configured CWE SPIFFE ID. |
-| CWE authorizes enrollment | CWE verifies the node's JWT-SVID and binds its authenticated `/host/<node-uuid>` subject to the submitted SPKI digest and the same database node. |
+| CWE authorizes enrollment | CWE verifies the node's JWT-SVID, reconstructs its exact challenge audience, and verifies a signature made by the submitted certificate's private key. It binds the authenticated `/host/<node-uuid>` subject, database node, and proven key. |
 | Confidentiality and integrity | TLS 1.2 or newer protects enrollment and every direct NodeAgent RPC. |
 
 The node's self-signed certificate is not an identity assertion by itself. It
-provides a public key and proves that the TLS peer possesses the corresponding
-private key. The JWT-SVID-authorized enrollment gives that key its node identity.
+provides a public key. A challenge signature proves that the enrolling agent
+currently possesses the corresponding private key, and the JWT-SVID-authorized
+enrollment gives that proven key its node identity. The later direct TLS
+handshake proves possession again for each connection.
 
 This is mutually authenticated TLS with asymmetric credentials, not SPIFFE
 X.509 mTLS on both sides. The node does not need an X.509-SVID to validate CWE's
@@ -195,10 +198,11 @@ that the bundle is allowed to authenticate.
 
 For first enrollment, `nke-agent`:
 
-1. Generates a TLS private key and a self-signed serving certificate locally.
-   The key is written atomically with root-only permissions and never leaves the
-   node. The certificate is valid for server authentication; a URI placed in
-   this self-signed certificate is not treated as a SPIFFE identity.
+1. Generates an ECDSA P-256 TLS private key and a self-signed serving certificate
+   locally. The key is written atomically with root-only permissions and never
+   leaves the node. The certificate is valid for server authentication, is not a
+   CA, and has a bounded lifetime; a URI placed in this self-signed certificate
+   is not treated as a SPIFFE identity.
 2. Loads a bootstrapped CWE X.509 trust bundle and exact expected CWE SPIFFE ID,
    then opens the CWE enrollment endpoint with server-authenticated TLS. CWE
    presents its X.509-SVID as the server certificate. The node does not present
@@ -214,14 +218,35 @@ For first enrollment, `nke-agent`:
    nke-agent-enrollment:<node-uuid>:<generation>:<nonce>:<spki-sha256>
    ```
 
-5. Sends its listener endpoint, certificate, generation, nonce, and bound
-   JWT-SVID to CWE. CWE verifies the JWT issuer, permitted algorithm, signature,
-   time claims, exact audience, admitted trust domain, and exact
+5. Signs a versioned proof input containing that exact audience using the same
+   private key as the certificate. Version 1 uses an ECDSA P-256 key and an
+   ECDSA-SHA256 signature:
+
+   ```text
+   audience = nke-agent-enrollment:<node-uuid>:<generation>:<nonce>:<spki-sha256>
+   proof-input = "nke-agent-enrollment-proof-v1\n" || audience
+   proof-signature = ECDSA-P256-SHA256(proof-input)
+   ```
+
+   The nonce and SPKI digest use unpadded base64url encoding so CWE reconstructs
+   one canonical byte sequence. New key or signature algorithms require a new
+   proof version and an explicit CWE allowlist; the request cannot select an
+   arbitrary verification algorithm.
+6. Sends its listener endpoint, certificate, generation, nonce, proof signature,
+   and JWT-SVID to CWE. CWE verifies the JWT issuer, permitted JWT algorithm,
+   JWT signature, time claims, exact audience, admitted trust domain, and exact
    `/host/<node-uuid>` subject. It independently derives the node UUID and SPKI
-   digest instead of trusting request fields.
-6. CWE consumes the one-time nonce and stores the node UUID, generation, SPKI
-   SHA-256 digest, and enrollment time. Initial enrollment creates the current
-   pin. Renewal adds only the next pin until a direct connection proves it.
+   digest instead of trusting request fields. It also requires one self-signed,
+   currently valid, non-CA ECDSA P-256 certificate usable for TLS server
+   authentication.
+7. CWE reconstructs the versioned proof input and verifies the proof signature
+   with the public key in the submitted certificate. Only then has CWE proved
+   that the JWT-authenticated workload participated in enrolling a key it
+   possesses.
+8. CWE atomically consumes the one-time nonce and stores the node UUID,
+   generation, SPKI SHA-256 digest, and enrollment time. Initial enrollment
+   creates the current pin. Renewal adds only the next pin until a direct
+   connection proves it.
 
 The conceptual enrollment API is separate from the `NodeAgent` service:
 
@@ -237,14 +262,25 @@ service AgentEnrollment {
 Both methods require a JWT-SVID. `GetEnrollmentChallenge` requires the fixed
 bootstrap audience. `RegisterAgentEndpoint` requires the exact dynamic audience
 and consumes the corresponding challenge. The registration request carries the
-certificate so CWE can derive its SPKI digest; sending a caller-computed digest
-alone would not prove what certificate the agent intends to serve.
+certificate and private-key proof so CWE can derive its SPKI digest and verify
+current possession; sending a caller-computed digest alone would prove neither
+what certificate the agent intends to serve nor possession of its private key.
+
+"Fetch a JWT-SVID for the audience" is a standard Workload API operation. The
+nonce and SPKI digest are an NKE enrollment convention encoded into the `aud`
+claim, not special fields that SPIRE understands or validates. SPIRE identifies
+the entitled workload and signs the exact requested audience. CWE is responsible
+for validating the nonce, generation, node relationship, SPKI digest, and proof
+signature. The JWT remains a bearer token; the one-time challenge and proof
+signature make this enrollment exchange proof-of-possession-bound.
 
 The nonce and monotonically increasing generation prevent replay and rollback.
 Binding the exact SPKI digest into the signed JWT audience prevents a JWT stolen
-from one enrollment exchange from authorizing a different public key. The
-enrollment verifier can reuse CWE's core JWT issuer, key, algorithm, and time
-validation, but it needs a dedicated exact-audience check for each challenge.
+from one enrollment exchange from authorizing a different public key. Signing
+the same audience with the TLS key proves that the enrolling peer possesses that
+key before CWE changes the pin. The enrollment verifier can reuse CWE's core JWT
+issuer, key, algorithm, and time validation, but it needs dedicated exact-
+audience and proof-signature checks for each challenge.
 
 The endpoint is not an arbitrary address supplied by the agent. CWE derives the
 dial address from the existing database node record and the configured agent
@@ -319,8 +355,9 @@ Renewal overlaps the keys so an interrupted rotation does not strand the node:
 
 1. Before expiry, the agent generates a next private key and self-signed
    certificate while continuing to serve the current certificate.
-2. It obtains a new challenge and fresh JWT-SVID bound to the next generation,
-   nonce, and next SPKI digest.
+2. It obtains a new challenge and fresh JWT-SVID whose audience contains the
+   next generation, nonce, and SPKI digest, then signs that exact audience with
+   the next private key.
 3. CWE stores the next pin alongside the current pin. At most one current and
    one next pin are accepted, and generations can only increase.
 4. After enrollment is acknowledged, the agent atomically switches its listener
@@ -383,8 +420,10 @@ fails.
 
 Unit, integration, and backend coverage must prove:
 
-- enrollment rejects a wrong issuer, algorithm, signature, time claim, subject,
-  trust domain, audience, nonce, generation, or SPKI digest
+- enrollment rejects a wrong issuer, JWT algorithm, JWT signature, time claim,
+  subject, trust domain, audience, nonce, generation, or SPKI digest
+- enrollment rejects a missing or malformed proof signature, a signature made
+  by a different key, and any change to the versioned proof input
 - an expired or consumed challenge and a rollback generation cannot change pins
 - CWE rejects a node certificate whose SPKI digest is not the current or next
   pin, even when the certificate is otherwise well formed
