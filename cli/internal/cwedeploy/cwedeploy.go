@@ -922,6 +922,27 @@ func (e *Engine) PublishBootstrapSpireRoute(
 	return nil
 }
 
+// DeleteBootstrapSpireRoute removes the temporary tenant-cluster route after
+// every control-plane node has obtained its SPIRE identity and joined. The
+// Service is deleted first so kube-proxy stops forwarding new VIP connections
+// before the bootstrap Kind cluster is removed by the caller.
+func (e *Engine) DeleteBootstrapSpireRoute(ctx context.Context, kubeconfigPath string) error {
+	e.log.Info("removing the bootstrap SPIRE route")
+	if out, err := e.Runner.Run(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", tenantSpireRouteNamespace,
+		"delete", "service", tenantSpireRouteService,
+		"--ignore-not-found=true"); err != nil {
+		return fmt.Errorf("cwedeploy: deleting bootstrap SPIRE service: %w\n%s", err, out)
+	}
+	if out, err := e.Runner.Run(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", tenantSpireRouteNamespace,
+		"delete", "endpointslice", tenantSpireRouteService,
+		"--ignore-not-found=true"); err != nil {
+		return fmt.Errorf("cwedeploy: deleting bootstrap SPIRE endpoint slice: %w\n%s", err, out)
+	}
+	return nil
+}
+
 // TenantKubeconfig waits up to timeout for the asynchronously published admin
 // kubeconfig for clusterName and returns it. A non-positive timeout uses the
 // package default.

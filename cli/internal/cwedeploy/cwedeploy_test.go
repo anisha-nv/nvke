@@ -249,6 +249,28 @@ func TestPublishBootstrapSpireRoute(t *testing.T) {
 	}
 }
 
+func TestDeleteBootstrapSpireRouteDeletesServiceBeforeEndpointSlice(t *testing.T) {
+	runner := &fakeRunner{}
+	if err := New(runner, nil).DeleteBootstrapSpireRoute(
+		context.Background(), "/tmp/tenant.kubeconfig",
+	); err != nil {
+		t.Fatalf("DeleteBootstrapSpireRoute returned error: %v", err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("DeleteBootstrapSpireRoute made %d calls, want 2", len(runner.calls))
+	}
+	serviceDelete := joinArgs(runner.calls[0].args)
+	endpointDelete := joinArgs(runner.calls[1].args)
+	for got, want := range map[string]string{
+		serviceDelete:  "delete service nke-bootstrap-spire --ignore-not-found=true",
+		endpointDelete: "delete endpointslice nke-bootstrap-spire --ignore-not-found=true",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("call %q does not contain %q", got, want)
+		}
+	}
+}
+
 func TestTenantKubeconfigRetriesUntilPublished(t *testing.T) {
 	oldInterval := tenantKubeconfigPollInterval
 	tenantKubeconfigPollInterval = time.Millisecond

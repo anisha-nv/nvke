@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -63,8 +64,15 @@ func (fakeCWERunner) Run(_ context.Context, name string, args ...string) (string
 // A real server rather than an injected client: the address is the thing under
 // test on this path. nkectl builds it from the host port the CWE NodePort was
 // mapped to, and a client handed in by a test would prove nothing about that.
-func startFakeCWEAPI(t *testing.T, provisioned bool) {
+type fakeCWEState struct {
+	mu             sync.Mutex
+	clusterRequest *api.CreateClusterJSONRequestBody
+	nodePool       *api.NodePool
+}
+
+func startFakeCWEAPI(t *testing.T, provisioned bool) *fakeCWEState {
 	t.Helper()
+	state := &fakeCWEState{}
 
 	id := uuid.New()
 	status := api.ConditionStatusTrue
@@ -82,10 +90,68 @@ func startFakeCWEAPI(t *testing.T, provisioned bool) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/clusters", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST /api/clusters", func(w http.ResponseWriter, r *http.Request) {
+		var request api.CreateClusterJSONRequestBody
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		state.mu.Lock()
+		state.clusterRequest = &request
+		state.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(cluster)
+	})
+	mux.HandleFunc("GET /api/nodePools", func(w http.ResponseWriter, _ *http.Request) {
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		response := api.ListNodePoolsResponse{}
+		if state.nodePool != nil {
+			response.NodePools = []api.NodePool{*state.nodePool}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	})
+	mux.HandleFunc("POST /api/nodePools", func(w http.ResponseWriter, r *http.Request) {
+		var request api.CreateNodePoolJSONRequestBody
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		pool := api.NodePool{
+			ID:               uuid.New(),
+			ClusterID:        request.ClusterID,
+			Name:             request.Name,
+			ControlPlane:     request.ControlPlane,
+			DesiredNodeCount: request.DesiredNodeCount,
+		}
+		state.mu.Lock()
+		state.nodePool = &pool
+		state.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(pool)
+	})
+	mux.HandleFunc("GET /api/nodes", func(w http.ResponseWriter, _ *http.Request) {
+		state.mu.Lock()
+		count := 1
+		if state.nodePool != nil {
+			count += state.nodePool.DesiredNodeCount
+		}
+		state.mu.Unlock()
+		nodes := make([]api.Node, count)
+		for i := range nodes {
+			nodes[i] = api.Node{
+				Name:         fmt.Sprintf("node%d", i+1),
+				ControlPlane: true,
+				Conditions: api.NodeConditions{
+					KubernetesReady: api.Condition{Status: api.ConditionStatusTrue},
+				},
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.ListNodesResponse{Nodes: nodes})
 	})
 	mux.HandleFunc("GET /api/clusters/{id}", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -113,6 +179,7 @@ func startFakeCWEAPI(t *testing.T, provisioned bool) {
 		t.Fatalf("parsing the test server address %q: %v", srv.URL, err)
 	}
 	t.Setenv("NKECTL_CWE_PORT", port)
+	return state
 }
 
 // fakeBootstrapRunner is a scripted bootstrapengine.CommandRunner so
@@ -145,6 +212,11 @@ cluster:
   initNode:
     name: node1
     ip: 10.0.0.1
+  joinNodes:
+    - name: node2
+      ip: 10.0.0.2
+    - name: node3
+      ip: 10.0.0.3
   k8sVersion: "1.32.0"
   cniName: calico
   podCidr: "10.100.0.0/16"
@@ -215,7 +287,7 @@ registry:
 // cluster; the CWE API is a real HTTP server on the port nkectl dials.
 func TestRunBootstrapSiteCreatesTheCluster(t *testing.T) {
 	setBootstrapEnv(t)
-	startFakeCWEAPI(t, true)
+	state := startFakeCWEAPI(t, true)
 
 	kubeconfigOut := filepath.Join(t.TempDir(), "nke-site.kubeconfig")
 	runner := &recordingRunner{next: fakeBootstrapRunner{}}
@@ -241,6 +313,15 @@ func TestRunBootstrapSiteCreatesTheCluster(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "kind: Config") {
 		t.Errorf("the written kubeconfig is not one: %q", body)
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.clusterRequest == nil || state.clusterRequest.NodePools == nil ||
+		len(*state.clusterRequest.NodePools) != 1 || (*state.clusterRequest.NodePools)[0].DesiredNodeCount != 1 {
+		t.Errorf("initial cluster request did not contain exactly one init-node Machine: %#v", state.clusterRequest)
+	}
+	if state.nodePool == nil || !state.nodePool.ControlPlane || state.nodePool.DesiredNodeCount != 2 {
+		t.Errorf("remaining control-plane pool = %#v, want two nodes", state.nodePool)
 	}
 }
 

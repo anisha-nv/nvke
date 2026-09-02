@@ -310,25 +310,31 @@ func createSiteCluster(
 	if err != nil {
 		return false, fmt.Errorf("building the CWE client for %s: %w", cweURL, err)
 	}
+	totalTimeout := opts.clusterTimeout
+	if totalTimeout <= 0 {
+		totalTimeout = 30 * time.Minute
+	}
+	provisionCtx, cancel := context.WithTimeout(ctx, totalTimeout)
+	defer cancel()
 
-	created, err := sitecluster.Create(ctx, client, inv, logger)
+	created, err := sitecluster.Create(provisionCtx, client, inv, logger)
 	if err != nil {
 		return errors.Is(err, sitecluster.ErrCreateAmbiguous), err
 	}
 
 	logger.Info("waiting for the cluster to finish provisioning",
 		"cluster", created.Name, "timeout", opts.clusterTimeout)
-	if _, err := sitecluster.WaitProvisioned(ctx, client, created.ID, opts.clusterTimeout, logger); err != nil {
+	if _, err := sitecluster.WaitProvisioned(provisionCtx, client, created.ID, totalTimeout, logger); err != nil {
 		return true, err
 	}
 	logger.Info("cluster provisioned", "cluster", created.Name, "id", created.ID)
 
-	kubeconfigPath, err := writeTenantKubeconfig(ctx, bootstrapCluster, created.Name, opts, logger)
+	kubeconfigPath, err := writeTenantKubeconfig(provisionCtx, bootstrapCluster, created.Name, opts, logger)
 	if err != nil {
 		return true, err
 	}
 	if err := cwedeploy.New(opts.cweRunner, logger).PublishBootstrapSpireRoute(
-		ctx,
+		provisionCtx,
 		kubeconfigPath,
 		inv.Cluster.ControlPlaneVIP,
 		inv.Cluster.InitNode.IP,
@@ -336,9 +342,25 @@ func createSiteCluster(
 	); err != nil {
 		return true, err
 	}
+	if _, err := sitecluster.EnsureRemainingControlPlanePool(
+		provisionCtx, client, created.ID, inv, logger,
+	); err != nil {
+		return true, err
+	}
+	expectedNodes := 1 + len(inv.Cluster.JoinNodes)
+	if err := sitecluster.WaitControlPlaneReady(
+		provisionCtx, client, created.ID, expectedNodes, totalTimeout, logger,
+	); err != nil {
+		return true, err
+	}
+	if err := cwedeploy.New(opts.cweRunner, logger).DeleteBootstrapSpireRoute(
+		provisionCtx, kubeconfigPath,
+	); err != nil {
+		return true, err
+	}
 
-	fmt.Fprintf(os.Stdout, "\nCluster %q has an initial control-plane node. "+
-		"Bootstrap SPIRE is reachable through its control-plane VIP.\n", created.Name)
+	fmt.Fprintf(os.Stdout, "\nCluster %q is ready with %d control-plane nodes. Talk to it with:\n"+
+		"  kubectl --kubeconfig %s get nodes\n", created.Name, expectedNodes, kubeconfigPath)
 	return true, nil
 }
 
