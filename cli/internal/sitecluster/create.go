@@ -4,7 +4,9 @@
 package sitecluster
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -31,6 +33,7 @@ var pollInterval = 10 * time.Second
 // one that never finishes.
 type ClusterAPI interface {
 	CreateCluster(ctx context.Context, req api.CreateClusterJSONRequestBody) (*api.Cluster, error)
+	FindClusterByName(ctx context.Context, name string) (*api.Cluster, error)
 	GetCluster(ctx context.Context, id openapi_types.UUID) (*api.Cluster, error)
 }
 
@@ -38,6 +41,11 @@ type ClusterAPI interface {
 // back from on its own. Callers tell it apart from a timeout so they can say
 // which happened.
 var ErrClusterFailed = errors.New("cluster provisioning failed")
+
+// ErrCreateAmbiguous marks a create whose result could not be reconciled.
+// Callers must preserve the bootstrap cluster because CWE might have committed
+// the request before the response or lookup failed.
+var ErrCreateAmbiguous = errors.New("cluster creation result is ambiguous")
 
 // Create submits the cluster described by inv and returns what CWE recorded.
 // Provisioning is asynchronous; see WaitProvisioned.
@@ -55,10 +63,68 @@ func Create(ctx context.Context, client ClusterAPI, inv *inventory.Inventory, lo
 
 	cluster, err := client.CreateCluster(ctx, req)
 	if err != nil {
+		// CWE can commit the create and lose the HTTP response. The cluster name
+		// is globally unique, so look it up before reporting an ambiguous create
+		// error. Validate the durable fields to avoid adopting an unrelated
+		// cluster from an earlier invocation that happened to use the same name.
+		existing, findErr := client.FindClusterByName(ctx, req.Name)
+		if findErr != nil {
+			return nil, fmt.Errorf("%w: sitecluster: creating cluster %q: %w; reconciling by name: %w",
+				ErrCreateAmbiguous, req.Name, err, findErr)
+		}
+		if validateReconciledCluster(existing, req) == nil {
+			log.Warn("cluster-create response failed, but CWE recorded the requested cluster",
+				"cluster", existing.Name, "id", existing.ID, "error", err)
+			return existing, nil
+		}
 		return nil, fmt.Errorf("sitecluster: creating cluster %q: %w", req.Name, err)
 	}
 	log.Info("cluster created", "cluster", cluster.Name, "id", cluster.ID)
 	return cluster, nil
+}
+
+func validateReconciledCluster(cluster *api.Cluster, req api.CreateClusterJSONRequestBody) error {
+	if cluster == nil {
+		return errors.New("sitecluster: reconciled cluster is nil")
+	}
+	if cluster.Name != req.Name ||
+		cluster.SiteID != req.SiteID ||
+		cluster.ControlPlaneKubernetesVersion != req.ControlPlaneKubernetesVersion ||
+		cluster.CniPlugin != req.CniPlugin ||
+		cluster.EtcdEncrypted != req.EtcdEncrypted {
+		return fmt.Errorf("sitecluster: cluster %q does not match the requested cluster", req.Name)
+	}
+	if req.CniVersion != nil && cluster.CniVersion != *req.CniVersion {
+		return fmt.Errorf("sitecluster: cluster %q has CNI version %q, want %q",
+			req.Name, cluster.CniVersion, *req.CniVersion)
+	}
+	if cluster.ControlPlaneVIP == nil || *cluster.ControlPlaneVIP != req.ControlPlaneVIP {
+		return fmt.Errorf("sitecluster: cluster %q has a different control-plane VIP", req.Name)
+	}
+	if req.Network != nil && (cluster.Network.PodCIDR != req.Network.PodCIDR ||
+		cluster.Network.ServiceCIDR != req.Network.ServiceCIDR) {
+		return fmt.Errorf("sitecluster: cluster %q has a different network configuration", req.Name)
+	}
+	matches, err := equalJSON(cluster.CapiInfraCluster, req.CapiInfraCluster)
+	if err != nil {
+		return fmt.Errorf("sitecluster: comparing cluster %q infrastructure: %w", req.Name, err)
+	}
+	if !matches {
+		return fmt.Errorf("sitecluster: cluster %q has a different infrastructure cluster", req.Name)
+	}
+	return nil
+}
+
+func equalJSON(left, right any) (bool, error) {
+	leftJSON, err := json.Marshal(left)
+	if err != nil {
+		return false, fmt.Errorf("encoding recorded value: %w", err)
+	}
+	rightJSON, err := json.Marshal(right)
+	if err != nil {
+		return false, fmt.Errorf("encoding requested value: %w", err)
+	}
+	return bytes.Equal(leftJSON, rightJSON), nil
 }
 
 // WaitProvisioned polls CWE until the cluster reports Provisioned, reports a

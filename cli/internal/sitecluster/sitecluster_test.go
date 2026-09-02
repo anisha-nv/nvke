@@ -18,7 +18,8 @@ func testInventory() *inventory.Inventory {
 	return &inventory.Inventory{
 		ClusterName: "nke-site",
 		Cluster: inventory.Cluster{
-			InitNode: inventory.Node{Name: "node1", IP: "172.26.0.10"},
+			InitNode:        inventory.Node{Name: "node1", IP: "172.26.0.10"},
+			ControlPlaneVIP: "172.26.0.100",
 			JoinNodes: []inventory.Node{
 				{Name: "node2", IP: "172.26.0.11"},
 				{Name: "node3", IP: "172.26.0.12"},
@@ -55,12 +56,14 @@ func TestClusterRequest_IsACAPICluster(t *testing.T) {
 	if len(req.CapiInfraCluster) == 0 {
 		t.Fatal("capiInfraCluster is empty; CWE requires it when siteID is the nil UUID")
 	}
+	if req.ControlPlaneVIP != "172.26.0.100" {
+		t.Errorf("controlPlaneVIP = %q, want the inventory VIP", req.ControlPlaneVIP)
+	}
 }
 
 // TestClusterRequest_CarriesTheInventoryAsProvisionedHosts is the heart of the
-// mapping: the hosts an operator listed become the provider's inventory, in
-// order, with the init node first because kubeadm init runs on the first
-// control-plane node CWE provisions.
+// mapping: the hosts an operator listed become the provider's inventory, and
+// the configured init node identifies the host reserved for kubeadm init.
 func TestClusterRequest_CarriesTheInventoryAsProvisionedHosts(t *testing.T) {
 	req, err := ClusterRequest(testInventory())
 	if err != nil {
@@ -77,6 +80,9 @@ func TestClusterRequest_CarriesTheInventoryAsProvisionedHosts(t *testing.T) {
 	spec, ok := req.CapiInfraCluster["spec"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("capiInfraCluster has no spec: %#v", req.CapiInfraCluster)
+	}
+	if got := spec["initNode"]; got != "node1" {
+		t.Errorf("capiInfraCluster initNode = %v, want the inventory init node %q", got, "node1")
 	}
 	hosts, ok := spec["hosts"].([]map[string]interface{})
 	if !ok {
@@ -97,10 +103,10 @@ func TestClusterRequest_CarriesTheInventoryAsProvisionedHosts(t *testing.T) {
 	}
 }
 
-// TestClusterRequest_OneControlPlanePoolSizedToTheInventory: every inventory
-// node joins as a control-plane node, so a pool that does not count them all
-// leaves hosts unused and the cluster smaller than the file asked for.
-func TestClusterRequest_OneControlPlanePoolSizedToTheInventory(t *testing.T) {
+// TestClusterRequest_StartsWithOneControlPlaneMachine: the initial request
+// creates only the machine reserved for kubeadm init. Remaining control-plane
+// machines are created after the bootstrap identity endpoint is reachable.
+func TestClusterRequest_StartsWithOneControlPlaneMachine(t *testing.T) {
 	req, err := ClusterRequest(testInventory())
 	if err != nil {
 		t.Fatalf("ClusterRequest returned error: %v", err)
@@ -113,8 +119,8 @@ func TestClusterRequest_OneControlPlanePoolSizedToTheInventory(t *testing.T) {
 	if !pool.ControlPlane {
 		t.Error("the pool is not a control-plane pool")
 	}
-	if pool.DesiredNodeCount != 3 {
-		t.Errorf("desiredNodeCount = %d, want 3 (init node plus two join nodes)", pool.DesiredNodeCount)
+	if pool.DesiredNodeCount != 1 {
+		t.Errorf("desiredNodeCount = %d, want 1 for the init node", pool.DesiredNodeCount)
 	}
 	if pool.SystemReservedMemory != "512Mi" {
 		t.Errorf("systemReservedMemory = %q, want the inventory's kubelet reservation", pool.SystemReservedMemory)
@@ -187,6 +193,7 @@ func TestClusterRequest_SerialisesToTheAPIShape(t *testing.T) {
 	for _, want := range []string{
 		`"kind":"ProvisionedCluster"`,
 		`"kind":"ProvisionedMachineTemplate"`,
+		`"initNode":"node1"`,
 		`"hostname":"node1"`,
 		`"ipAddress":"172.26.0.10"`,
 		`"template":{"spec":{}}`,

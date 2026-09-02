@@ -28,10 +28,10 @@ const (
 	provisionedClusterKind         = "ProvisionedCluster"
 	provisionedMachineTemplateKind = "ProvisionedMachineTemplate"
 
-	// controlPlanePoolName/controlPlaneNodeNamePrefix name the single node pool
-	// a site cluster has. Every inventory node joins as a control-plane node,
-	// which is what the inventory itself describes (see inventory.Cluster's
-	// JoinNodes) — so there is one pool and it is the control plane.
+	// controlPlanePoolName/controlPlaneNodeNamePrefix name the initial
+	// one-machine control-plane pool. Remaining control-plane machines are
+	// created only after the cluster is provisioned and its bootstrap SPIRE
+	// endpoint is reachable through the control-plane VIP.
 	//
 	// The prefix is short because CWE builds node names as
 	// <cluster>-<prefix>-<4 digits> and holds the result to 63 characters.
@@ -53,9 +53,8 @@ const (
 //     with an empty spec. Everything a machine needs is already in the
 //     ProvisionedCluster's inventory, so there is nothing to say per machine.
 //
-// The init node is first in the host list because kubeadm init runs on the
-// first control-plane node CWE provisions, and the inventory names which host
-// that is.
+// The ProvisionedCluster initNode field binds the initial machine to the host
+// selected by the customer. Host-list order is not used for allocation.
 func ClusterRequest(inv *inventory.Inventory) (api.CreateClusterJSONRequestBody, error) {
 	if inv == nil {
 		return api.CreateClusterJSONRequestBody{}, fmt.Errorf("sitecluster: inventory is nil")
@@ -71,12 +70,13 @@ func ClusterRequest(inv *inventory.Inventory) (api.CreateClusterJSONRequestBody,
 		// The nil UUID default site: CAPI-backed, not Forge-backed.
 		SiteID:                        uuid.Nil,
 		ControlPlaneKubernetesVersion: inv.Cluster.K8sVersion,
+		ControlPlaneVIP:               inv.Cluster.ControlPlaneVIP,
 		CniPlugin:                     inv.Cluster.CniName,
 		EtcdEncrypted:                 false,
 		NodePools: &[]api.NodePoolCreateConfig{{
 			Name:             controlPlanePoolName,
 			NodeNamePrefix:   controlPlaneNodeNamePrefix,
-			DesiredNodeCount: len(hosts),
+			DesiredNodeCount: 1,
 			ControlPlane:     true,
 			// joinToken, not tpm: CWE only derives a node's TPM EK pubhash from
 			// a NicoMachine (see controller/internal/controllers/nodetpmekpub),
@@ -89,7 +89,7 @@ func ClusterRequest(inv *inventory.Inventory) (api.CreateClusterJSONRequestBody,
 			SystemReservedMemory:       inv.Cluster.KubeletConfig.SystemReservedMemory,
 			CapiInfraMachineTemplate:   provisionedMachineTemplate(),
 		}},
-		CapiInfraCluster: provisionedCluster(inv.ClusterName, hosts),
+		CapiInfraCluster: provisionedCluster(inv.ClusterName, inv.Cluster.InitNode.Name, hosts),
 	}
 
 	if inv.Cluster.CniVersion != "" {
@@ -101,8 +101,7 @@ func ClusterRequest(inv *inventory.Inventory) (api.CreateClusterJSONRequestBody,
 	return req, nil
 }
 
-// provisionedHosts renders the inventory's nodes as ProvisionedCluster hosts,
-// init node first.
+// provisionedHosts renders the inventory's nodes as ProvisionedCluster hosts.
 //
 // A duplicate hostname or IP is rejected here rather than left to the provider.
 // The provider keys an allocation on the host's IP address, so two entries
@@ -133,7 +132,7 @@ func provisionedHosts(inv *inventory.Inventory) ([]map[string]interface{}, error
 // provisionedCluster is the infrastructure side of the CAPI Cluster: the
 // inventory, and nothing else. The provider owns no endpoint — CWE owns the
 // control-plane VIP through its own API.
-func provisionedCluster(name string, hosts []map[string]interface{}) map[string]interface{} {
+func provisionedCluster(name, initNode string, hosts []map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{
 		"apiVersion": provisionedAPIVersion,
 		"kind":       provisionedClusterKind,
@@ -141,7 +140,8 @@ func provisionedCluster(name string, hosts []map[string]interface{}) map[string]
 			"name": name,
 		},
 		"spec": map[string]interface{}{
-			"hosts": hosts,
+			"initNode": initNode,
+			"hosts":    hosts,
 		},
 	}
 }

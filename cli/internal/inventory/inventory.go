@@ -35,13 +35,14 @@ import (
 const (
 	// DefaultNodeAgentPort is the gRPC port nke-agent listens on when the
 	// inventory does not set cluster.nodeAgentPort.
-	DefaultNodeAgentPort = "50051"
+	DefaultNodeAgentPort = "15005"
 
 	// Inventory field paths — the single source of truth for the dotted paths
 	// shared by the environment bindings and the validator messages.
 	pathClusterName          = "clusterName"
 	pathInitNodeIP           = "cluster.initNode.ip"
 	pathInitNodeName         = "cluster.initNode.name"
+	pathControlPlaneVIP      = "cluster.controlPlaneVIP"
 	pathK8sVersion           = "cluster.k8sVersion"
 	pathCniName              = "cluster.cniName"
 	pathCniVersion           = "cluster.cniVersion"
@@ -113,6 +114,9 @@ type Spire struct {
 type Cluster struct {
 	// InitNode is the first control-plane node (kubeadm init runs here).
 	InitNode Node `yaml:"initNode"`
+	// ControlPlaneVIP is the stable IPv4 address used for both the Kubernetes
+	// API and the bootstrap SPIRE route. It defaults to InitNode.IP.
+	ControlPlaneVIP string `yaml:"controlPlaneVIP"`
 	// JoinNodes are the remaining nodes. In M0 every node joins as a
 	// control-plane node, matching tier-0's behavior.
 	JoinNodes []Node `yaml:"joinNodes"`
@@ -198,6 +202,7 @@ func envBindings() map[string]string {
 		"CLUSTER_NAME":                   pathClusterName,
 		"INIT_NODE_IP":                   pathInitNodeIP,
 		"INIT_NODE_NAME":                 pathInitNodeName,
+		"CLUSTER_CONTROL_PLANE_VIP":      pathControlPlaneVIP,
 		"CLUSTER_K8S_VERSION":            pathK8sVersion,
 		"CLUSTER_CNI_NAME":               pathCniName,
 		"CLUSTER_CNI_VERSION":            pathCniVersion,
@@ -293,6 +298,9 @@ func parseJoinNodesEnv(s string) ([]map[string]string, error) {
 // it can be supplied explicitly (flag or environment variable) rather than
 // silently falling back to a shared default.
 func (inv *Inventory) SetDefaults() {
+	if inv.Cluster.ControlPlaneVIP == "" {
+		inv.Cluster.ControlPlaneVIP = inv.Cluster.InitNode.IP
+	}
 	if inv.Cluster.NodeAgentPort == "" {
 		inv.Cluster.NodeAgentPort = DefaultNodeAgentPort
 	}
@@ -306,6 +314,7 @@ func (inv *Inventory) Validate() error {
 
 	v.checkClusterName(inv.ClusterName)
 	v.checkNodes(inv.Cluster)
+	v.checkControlPlaneVIP(inv.Cluster.ControlPlaneVIP)
 	v.checkK8sVersion(inv.Cluster.K8sVersion)
 	v.checkCNI(inv.Cluster.CniName)
 	v.checkCIDR(pathPodCidr, inv.Cluster.PodCidr, true)
@@ -340,6 +349,18 @@ func (v *validator) checkClusterName(name string) {
 		v.addf("clusterName is required")
 	case !dnsLabelRE.MatchString(name):
 		v.addf("clusterName %q must be a lowercase RFC 1123 label (letters, digits, hyphens)", name)
+	}
+}
+
+func (v *validator) checkControlPlaneVIP(value string) {
+	ip := net.ParseIP(value)
+	switch {
+	case value == "":
+		v.addf("%s is required", pathControlPlaneVIP)
+	case ip == nil:
+		v.addf("%s %q is not a valid IP address", pathControlPlaneVIP, value)
+	case ip.To4() == nil:
+		v.addf("%s %q must be an IPv4 address", pathControlPlaneVIP, value)
 	}
 }
 

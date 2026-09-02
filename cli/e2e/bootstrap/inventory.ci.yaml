@@ -10,16 +10,14 @@
 # file lands ahead of dispatch actually dialing them because the
 # walking-skeleton e2e run does not reach the nodes yet.
 #
-# nodeAgentPort is set explicitly rather than left to
-# inventory.DefaultNodeAgentPort ("50051"): the agent/ module's nke-agent
-# actually defaults its gRPC port to 15005 (`-secure-server-port`), confirmed
-# by running it in this fixture's node image. DefaultNodeAgentPort appears to
-# be stale, inherited from a GitLab-side spike that fetched a different
-# node-agent build — worth a separate look, not fixed here.
+# nodeAgentPort is explicit to pin the fixture contract. It matches both
+# inventory.DefaultNodeAgentPort and nke-agent's `-secure-server-port` default.
 
 clusterName: "nke-e2e"
 
 cluster:
+  controlPlaneVIP: "172.26.0.2"
+
   # First control-plane node — kubeadm init runs here.
   initNode:
     name: "node1"

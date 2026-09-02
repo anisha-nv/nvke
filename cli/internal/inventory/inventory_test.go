@@ -14,6 +14,7 @@ import (
 const validYAML = `
 clusterName: nke-site
 cluster:
+  controlPlaneVIP: 10.0.0.100
   initNode:
     name: node1
     ip: 10.0.0.1
@@ -85,6 +86,9 @@ registry:
 	if len(inv.Cluster.JoinNodes) != 0 {
 		t.Errorf("JoinNodes count = %d, want 0", len(inv.Cluster.JoinNodes))
 	}
+	if inv.Cluster.ControlPlaneVIP != inv.Cluster.InitNode.IP {
+		t.Errorf("ControlPlaneVIP = %q, want init node IP %q", inv.Cluster.ControlPlaneVIP, inv.Cluster.InitNode.IP)
+	}
 }
 
 func TestSetDefaultsNeverInjectsAPIKey(t *testing.T) {
@@ -105,6 +109,7 @@ func TestLoadRejectsUnknownField(t *testing.T) {
 	const typo = `
 clusterName: nke-site
 cluster:
+  controlPlaneVIP: 10.0.0.100
   initNode:
     name: node1
     ip: 10.0.0.1
@@ -142,12 +147,13 @@ func TestValidateInvalidInputs(t *testing.T) {
 		return &Inventory{
 			ClusterName: "nke-site",
 			Cluster: Cluster{
-				InitNode:      Node{Name: "node1", IP: "10.0.0.1"},
-				K8sVersion:    "1.32.0",
-				CniName:       "calico",
-				PodCidr:       "10.100.0.0/16",
-				ServiceCidr:   "10.200.0.0/16",
-				NodeAgentPort: DefaultNodeAgentPort,
+				InitNode:        Node{Name: "node1", IP: "10.0.0.1"},
+				ControlPlaneVIP: "10.0.0.100",
+				K8sVersion:      "1.32.0",
+				CniName:         "calico",
+				PodCidr:         "10.100.0.0/16",
+				ServiceCidr:     "10.200.0.0/16",
+				NodeAgentPort:   DefaultNodeAgentPort,
 			},
 			Registry: Registry{
 				BootstrapRepo:  "nvcr.io/org/cloud-workflow-engine",
@@ -163,6 +169,8 @@ func TestValidateInvalidInputs(t *testing.T) {
 	}{
 		{"missing clusterName", func(i *Inventory) { i.ClusterName = "" }, pathClusterName},
 		{"bad clusterName", func(i *Inventory) { i.ClusterName = "Nke_Site" }, pathClusterName},
+		{"bad control plane vip", func(i *Inventory) { i.Cluster.ControlPlaneVIP = "not-an-ip" }, pathControlPlaneVIP},
+		{"IPv6 control plane vip", func(i *Inventory) { i.Cluster.ControlPlaneVIP = "2001:db8::1" }, pathControlPlaneVIP},
 		{"missing init ip", func(i *Inventory) { i.Cluster.InitNode.IP = "" }, pathInitNodeIP},
 		{"bad init ip", func(i *Inventory) { i.Cluster.InitNode.IP = "999.0.0.1" }, pathInitNodeIP},
 		{"missing init name", func(i *Inventory) { i.Cluster.InitNode.Name = "" }, pathInitNodeName},
@@ -215,7 +223,7 @@ func TestValidateAggregatesErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("Validate accepted an empty inventory; want error")
 	}
-	for _, want := range []string{pathClusterName, pathInitNodeIP, pathK8sVersion, pathBootstrapRepo} {
+	for _, want := range []string{pathClusterName, pathInitNodeIP, pathControlPlaneVIP, pathK8sVersion, pathBootstrapRepo} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("aggregated error missing %q; got:\n%s", want, err.Error())
 		}
@@ -226,13 +234,14 @@ func TestValidValidatesClean(t *testing.T) {
 	inv := &Inventory{
 		ClusterName: "nke-site",
 		Cluster: Cluster{
-			InitNode:      Node{Name: "node1", IP: "10.0.0.1"},
-			JoinNodes:     []Node{{Name: "node2", IP: "10.0.0.2"}},
-			K8sVersion:    "1.32.0",
-			CniName:       "ovn-kubernetes",
-			PodCidr:       "10.100.0.0/16,10.101.0.0/16",
-			ServiceCidr:   "10.200.0.0/16",
-			NodeAgentPort: "15005",
+			InitNode:        Node{Name: "node1", IP: "10.0.0.1"},
+			ControlPlaneVIP: "10.0.0.100",
+			JoinNodes:       []Node{{Name: "node2", IP: "10.0.0.2"}},
+			K8sVersion:      "1.32.0",
+			CniName:         "ovn-kubernetes",
+			PodCidr:         "10.100.0.0/16,10.101.0.0/16",
+			ServiceCidr:     "10.200.0.0/16",
+			NodeAgentPort:   "15005",
 		},
 		Registry: Registry{
 			BootstrapRepo:  "nvcr.io/org/cloud-workflow-engine",
@@ -249,6 +258,7 @@ func TestValidValidatesClean(t *testing.T) {
 const noJoinYAML = `
 clusterName: nke-site
 cluster:
+  controlPlaneVIP: 10.0.0.100
   initNode:
     name: node1
     ip: 10.0.0.1

@@ -5,6 +5,7 @@ package sitecluster
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -28,10 +29,22 @@ func quietLogger() *slog.Logger {
 type fakeClusterAPI struct {
 	created   *api.CreateClusterJSONRequestBody
 	createErr error
+	found     *api.Cluster
+	findErr   error
 
 	states  []api.Cluster
 	getErrs []error
 	gets    int
+}
+
+func (f *fakeClusterAPI) FindClusterByName(_ context.Context, _ string) (*api.Cluster, error) {
+	if f.findErr != nil {
+		return nil, f.findErr
+	}
+	if f.found == nil {
+		return nil, errors.New("cluster not found")
+	}
+	return f.found, nil
 }
 
 func (f *fakeClusterAPI) CreateCluster(
@@ -104,6 +117,88 @@ func TestCreate_PropagatesTheAPIError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "orgID must be omitted") {
 		t.Errorf("error %q does not carry what CWE said", err)
+	}
+}
+
+func TestCreate_MarksAnUnreconciledResultAmbiguous(t *testing.T) {
+	client := &fakeClusterAPI{
+		createErr: errors.New("unexpected EOF"),
+		findErr:   errors.New("connection reset"),
+	}
+
+	_, err := Create(context.Background(), client, testInventory(), quietLogger())
+	if !errors.Is(err, ErrCreateAmbiguous) {
+		t.Fatalf("Create error = %v, want ErrCreateAmbiguous", err)
+	}
+}
+
+func TestCreate_ReconcilesALostCreateResponse(t *testing.T) {
+	inv := testInventory()
+	req, err := ClusterRequest(inv)
+	if err != nil {
+		t.Fatalf("ClusterRequest returned error: %v", err)
+	}
+	vip := req.ControlPlaneVIP
+	serializedInfra, err := json.Marshal(req.CapiInfraCluster)
+	if err != nil {
+		t.Fatalf("marshal infrastructure cluster: %v", err)
+	}
+	var recordedInfra map[string]interface{}
+	if err := json.Unmarshal(serializedInfra, &recordedInfra); err != nil {
+		t.Fatalf("unmarshal infrastructure cluster: %v", err)
+	}
+	client := &fakeClusterAPI{
+		createErr: errors.New("unexpected EOF"),
+		found: &api.Cluster{
+			ID:                            uuid.New(),
+			Name:                          req.Name,
+			SiteID:                        req.SiteID,
+			ControlPlaneKubernetesVersion: req.ControlPlaneKubernetesVersion,
+			CniPlugin:                     req.CniPlugin,
+			CniVersion:                    *req.CniVersion,
+			EtcdEncrypted:                 req.EtcdEncrypted,
+			ControlPlaneVIP:               &vip,
+			CapiInfraCluster:              recordedInfra,
+			Network: api.ClusterNetwork{
+				PodCIDR:     req.Network.PodCIDR,
+				ServiceCIDR: req.Network.ServiceCIDR,
+			},
+		},
+	}
+
+	cluster, err := Create(context.Background(), client, inv, quietLogger())
+	if err != nil {
+		t.Fatalf("Create returned error after CWE recorded the cluster: %v", err)
+	}
+	if cluster.ID != client.found.ID {
+		t.Errorf("Create returned cluster %s, want reconciled cluster %s", cluster.ID, client.found.ID)
+	}
+}
+
+func TestCreate_DoesNotAdoptAnIncompatibleCluster(t *testing.T) {
+	inv := testInventory()
+	req, err := ClusterRequest(inv)
+	if err != nil {
+		t.Fatalf("ClusterRequest returned error: %v", err)
+	}
+	vip := req.ControlPlaneVIP
+	client := &fakeClusterAPI{
+		createErr: errors.New("409 Conflict"),
+		found: &api.Cluster{
+			ID:                            uuid.New(),
+			Name:                          req.Name,
+			SiteID:                        req.SiteID,
+			ControlPlaneKubernetesVersion: "1.31.0",
+			CniPlugin:                     req.CniPlugin,
+			CniVersion:                    *req.CniVersion,
+			ControlPlaneVIP:               &vip,
+			CapiInfraCluster:              req.CapiInfraCluster,
+		},
+	}
+
+	_, err = Create(context.Background(), client, inv, quietLogger())
+	if err == nil || !strings.Contains(err.Error(), "409 Conflict") {
+		t.Fatalf("Create error = %v, want the original create failure", err)
 	}
 }
 

@@ -83,6 +83,10 @@ export NKECTL_CWE_IMAGE
 # nke-site-deploy, which this suite does not depend on.
 export NKECTL_CWE_PROFILES_IMAGE="${NKECTL_CWE_PROFILES_IMAGE:-cwe-profiles:local}"
 
+# cluster-api-provider-provisioned reconciles the inventory's existing hosts.
+# It is built from this checkout because no published image exists yet.
+export NKECTL_CAPI_PROVISIONED_IMAGE="${NKECTL_CAPI_PROVISIONED_IMAGE:-cluster-api-provider-provisioned:local}"
+
 # Where a failed bootstrap writes its cluster dump. Set explicitly rather than
 # left to nkectl's default, which is relative to the working directory: CI runs
 # this from cli/, but a developer running it from the repo root would otherwise
@@ -219,6 +223,17 @@ if [ "${NKECTL_BOOTSTRAP_PROVIDER}" = "nerdctl" ]; then
   docker save "${NKECTL_CWE_PROFILES_IMAGE}" | nerdctl load
 fi
 
+log "building the provisioned-provider image (${NKECTL_CAPI_PROVISIONED_IMAGE})"
+make -C "${CLI_DIR}" ensure-provisioned-provider-image \
+  CAPI_PROVISIONED_IMAGE="${NKECTL_CAPI_PROVISIONED_IMAGE}"
+
+# The Make target builds through Docker for the same reason as the profiles
+# target. Import the local image into nerdctl's separate containerd store.
+if [ "${NKECTL_BOOTSTRAP_PROVIDER}" = "nerdctl" ]; then
+  log "loading ${NKECTL_CAPI_PROVISIONED_IMAGE} into nerdctl's containerd (built via docker above)"
+  docker save "${NKECTL_CAPI_PROVISIONED_IMAGE}" | nerdctl load
+fi
+
 # The thumbprints and the bootstrap CA reach the command the way an operator's
 # would: named in the inventory. Neither can be committed to the fixture — a
 # TPM's endorsement key is created along with the container, and a private key
@@ -239,7 +254,8 @@ log "allowlisting $(grep -c tpmEkThumbprint "${RENDERED_INVENTORY}") EK thumbpri
 # public hardened charts, needing no registry credential of their own.
 log "running: nkectl bootstrap site -i ${RENDERED_INVENTORY} --keep-bootstrap-cluster" \
   "(NKECTL_BOOTSTRAP_PROVIDER=${NKECTL_BOOTSTRAP_PROVIDER}, NKECTL_CWE_IMAGE=${NKECTL_CWE_IMAGE}," \
-  "NKECTL_CWE_PROFILES_IMAGE=${NKECTL_CWE_PROFILES_IMAGE})"
+  "NKECTL_CWE_PROFILES_IMAGE=${NKECTL_CWE_PROFILES_IMAGE}," \
+  "NKECTL_CAPI_PROVISIONED_IMAGE=${NKECTL_CAPI_PROVISIONED_IMAGE})"
 # Set before the call, not after: the command can fail after creating the
 # cluster it was told to keep, and cleanup has to already know to remove it.
 bootstrap_cluster_cleanup_pending=true
