@@ -19,6 +19,10 @@ const (
 	temporalValuesFile = "manifests/temporal-values.yaml"
 	spireValuesFile    = "manifests/spire-values.yaml"
 	spireNodePortFile  = "manifests/spire-server-nodeport.yaml"
+	spireRouteFile     = "manifests/spire-bootstrap-route.yaml"
 	cweValuesFile      = "manifests/cwe-values.yaml"
 	cweNodePortFile    = "manifests/cwe-nodeport.yaml"
+
+	tenantSpireRouteNamespace = "kube-system"
+	tenantSpireRouteService   = "nke-bootstrap-spire"
 )

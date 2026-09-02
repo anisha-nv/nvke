@@ -34,6 +34,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/NVIDIA/nke/cli/internal/cwedeploy"
 )
 
 // Logf is a minimal logging sink so the substrate can report progress without
@@ -103,7 +105,7 @@ func DefaultConfig() Config {
 		AgentPort: envOr("NKECTL_E2E_AGENT_PORT", "15005"),
 
 		SpireServerAddress: envOr("NKECTL_E2E_SPIRE_SERVER_ADDRESS", DefaultSpireServerAddress),
-		SpireServerPort:    envOr("NKECTL_E2E_SPIRE_SERVER_PORT", DefaultSpireServerPort),
+		SpireServerPort:    envOr("NKECTL_SPIRE_PORT", strconv.Itoa(int(cwedeploy.DefaultSpirePort))),
 		SpireTrustDomain:   envOr("NKECTL_E2E_SPIRE_TRUST_DOMAIN", "nkectl-bootstrap.nke.local"),
 		CacheDir:           envOr("NKECTL_E2E_CACHE_DIR", defaultCacheDir()),
 		CADir:              envOr("NKECTL_E2E_CA_DIR", defaultCADir()),

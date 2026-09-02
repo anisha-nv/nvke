@@ -178,6 +178,77 @@ func TestDefaultConfig_CWEPort(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_SpirePort(t *testing.T) {
+	t.Setenv("NKECTL_SPIRE_PORT", "30182")
+
+	cfg := DefaultConfig()
+	if cfg.SpirePort != 30182 {
+		t.Errorf("DefaultConfig SPIRE port = %d, want 30182", cfg.SpirePort)
+	}
+}
+
+func TestDeploy_ConfiguresExternalSpirePortOnce(t *testing.T) {
+	runner := &fakeRunner{}
+	cfg := testConfig(t)
+	cfg.SpirePort = 30182
+	if err := New(runner, nil).Deploy(context.Background(), "/tmp/kubeconfig", cfg); err != nil {
+		t.Fatalf("Deploy returned error: %v", err)
+	}
+
+	found := false
+	for _, manifest := range runner.applied {
+		if !strings.Contains(manifest, "name: spire-server-external") {
+			continue
+		}
+		found = true
+		for _, want := range []string{"port: 8081", "nodePort: 30182"} {
+			if !strings.Contains(manifest, want) {
+				t.Errorf("the published SPIRE Service does not carry %q:\n%s", want, manifest)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("Deploy did not publish the external SPIRE Service")
+	}
+}
+
+func TestPublishBootstrapSpireRoute(t *testing.T) {
+	runner := &fakeRunner{}
+	err := New(runner, nil).PublishBootstrapSpireRoute(
+		context.Background(), "/tmp/tenant.kubeconfig", "172.26.0.100", "172.26.0.10", 30182,
+	)
+	if err != nil {
+		t.Fatalf("PublishBootstrapSpireRoute returned error: %v", err)
+	}
+	if len(runner.applied) != 1 {
+		t.Fatalf("applied %d manifests, want 1", len(runner.applied))
+	}
+	manifest := runner.applied[0]
+	for _, want := range []string{
+		"kind: Service",
+		"type: LoadBalancer",
+		"allocateLoadBalancerNodePorts: false",
+		"kind: EndpointSlice",
+		"port: 30182",
+		`- "172.26.0.10"`,
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Errorf("route manifest does not contain %q:\n%s", want, manifest)
+		}
+	}
+
+	patch := joinArgs(runner.calls[len(runner.calls)-1].args)
+	for _, want := range []string{
+		"--subresource=status",
+		`"ip":"172.26.0.100"`,
+		`"ipMode":"VIP"`,
+	} {
+		if !strings.Contains(patch, want) {
+			t.Errorf("status patch %q does not contain %q", patch, want)
+		}
+	}
+}
+
 func TestTenantKubeconfigRetriesUntilPublished(t *testing.T) {
 	oldInterval := tenantKubeconfigPollInterval
 	tenantKubeconfigPollInterval = time.Millisecond

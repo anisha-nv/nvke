@@ -18,9 +18,8 @@
 # Two values have to agree with things outside this file:
 #
 #   selector   the labels the SPIFFE hardened chart puts on its server pods.
-#   nodePort   the port the nodes' spire-agent config was built with. In the
-#              E2E that is NKECTL_E2E_SPIRE_SERVER_PORT; on real hardware it is
-#              whatever provisioned the machine.
+#   nodePort   Config.SpirePort, also used by the Kind host mapping and the
+#              tenant cluster's LoadBalancer Service and EndpointSlice.
 #
 # The namespace is deliberately absent: it is applied into the namespace
 # cwedeploy installs SPIRE in.
@@ -44,4 +43,4 @@ spec:
       # rather than number means this keeps working if the chart moves it.
       targetPort: grpc
       port: 8081
-      nodePort: 30081
+      nodePort: {{ .Port }}

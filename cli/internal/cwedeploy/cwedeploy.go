@@ -29,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -147,6 +148,12 @@ const (
 	// on Docker or nerdctl, on Linux or macOS.
 	//
 	DefaultCWEPort int32 = 30080
+	// DefaultSpirePort is the single external SPIRE port used by the bootstrap
+	// NodePort, Kind host mapping, tenant LoadBalancer Service, and external
+	// EndpointSlice. NKECTL_SPIRE_PORT overrides it once for every layer.
+	DefaultSpirePort int32 = 30081
+	minSpireNodePort int32 = 30000
+	maxSpireNodePort int32 = 32767
 
 	// readyzPath is polled through the API server's service proxy rather
 	// than a port-forward, so no local port has to be reserved or cleaned
@@ -249,6 +256,10 @@ type Config struct {
 	// NodePort, Kind host mapping, and host client. Zero uses DefaultCWEPort.
 	CWEPort int32
 
+	// SpirePort is the external port used at every layer of the SPIRE bootstrap
+	// route. Zero uses DefaultSpirePort.
+	SpirePort int32
+
 	// PostgresPassword is the Postgres superuser password shared by the
 	// Postgres, Temporal, and CWE releases. Generated if empty.
 	PostgresPassword string
@@ -276,6 +287,7 @@ func DefaultConfig() Config {
 		ProvisionedProviderImage: os.Getenv("NKECTL_CAPI_PROVISIONED_IMAGE"),
 		ProvisionedProviderPath:  os.Getenv("NKECTL_CAPI_PROVISIONED_PATH"),
 		CWEPort:                  envPort("NKECTL_CWE_PORT", DefaultCWEPort),
+		SpirePort:                envPort("NKECTL_SPIRE_PORT", DefaultSpirePort),
 
 		HelmTimeout:  envDuration("NKECTL_CWE_HELM_TIMEOUT", 5*time.Minute),
 		ReadyTimeout: envDuration("NKECTL_CWE_READY_TIMEOUT", 5*time.Minute),
@@ -376,6 +388,7 @@ func (e *Engine) Deploy(ctx context.Context, kubeconfigPath string, cfg Config) 
 		spireTrustDomain = spireClusterName + ".nke.local"
 	}
 	cwePort := effectiveCWEPort(cfg)
+	spirePort := effectiveSpirePort(cfg)
 
 	postgresValues, cleanup, err := writeEmbeddedFile(postgresValuesFile)
 	if err != nil {
@@ -443,12 +456,10 @@ func (e *Engine) Deploy(ctx context.Context, kubeconfigPath string, cfg Config) 
 		return fmt.Errorf("cwedeploy: installing SPIRE: %w", err)
 	}
 
-	// Only external TPM nodes need the NodePort. CWE and the in-cluster agents
-	// use SPIRE's ClusterIP service.
-	if len(cfg.TPMEKFingerprints) > 0 {
-		if err := e.publishSpireExternally(ctx, kubeconfigPath); err != nil {
-			return err
-		}
+	// Every site node runs outside this bootstrap cluster and needs this stable
+	// port, regardless of whether it attests with TPM or a join token.
+	if err := e.publishSpireExternally(ctx, kubeconfigPath, spirePort); err != nil {
+		return err
 	}
 
 	// Before CWE, not after: CWE starts writing CAPI objects as soon as a
@@ -750,6 +761,13 @@ func effectiveCWEPort(cfg Config) int32 {
 	return cfg.CWEPort
 }
 
+func effectiveSpirePort(cfg Config) int32 {
+	if cfg.SpirePort == 0 {
+		return DefaultSpirePort
+	}
+	return cfg.SpirePort
+}
+
 // spireServiceHost is the in-cluster address CWE dials the SPIRE server on.
 // The Service is named after the release.
 func spireServiceHost() string {
@@ -833,17 +851,73 @@ func upstreamCAArgs(cfg Config, prefix string) []string {
 // the nodes that attest were configured with an address and a port when they
 // were provisioned — long before this cluster existed. Applying a manifest
 // keeps that a declaration rather than surgery on somebody else's release.
-func (e *Engine) publishSpireExternally(ctx context.Context, kubeconfigPath string) error {
-	manifest, cleanup, err := writeEmbeddedFile(spireNodePortFile)
+func (e *Engine) publishSpireExternally(ctx context.Context, kubeconfigPath string, port int32) error {
+	manifest, cleanup, err := writeEmbeddedTemplate(spireNodePortFile, struct {
+		Port int32
+	}{port})
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	e.log.Info("publishing SPIRE for out-of-cluster hosts", "namespace", spireNamespace)
+	e.log.Info("publishing SPIRE for out-of-cluster hosts", "namespace", spireNamespace, "port", port)
 	if out, err := e.Runner.Run(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
 		"-n", spireNamespace, "apply", "-f", manifest); err != nil {
 		return fmt.Errorf("cwedeploy: publishing SPIRE with %s: %w\n%s", spireNodePortFile, err, out)
+	}
+	return nil
+}
+
+// PublishBootstrapSpireRoute makes the bootstrap SPIRE server reachable at the
+// tenant cluster's control-plane VIP. kube-vip already advertises the VIP; the
+// LoadBalancer status makes kube-proxy intercept this port, and the manually
+// managed EndpointSlice sends it to the init node's Kind host-port mapping.
+func (e *Engine) PublishBootstrapSpireRoute(
+	ctx context.Context,
+	kubeconfigPath, vip, initNodeIP string,
+	port int32,
+) error {
+	if ip := net.ParseIP(vip); ip == nil || ip.To4() == nil {
+		return fmt.Errorf("cwedeploy: control-plane VIP %q is not a valid IPv4 address", vip)
+	}
+	if ip := net.ParseIP(initNodeIP); ip == nil || ip.To4() == nil {
+		return fmt.Errorf("cwedeploy: init-node IP %q is not a valid IPv4 address", initNodeIP)
+	}
+	if port == 0 {
+		port = DefaultSpirePort
+	}
+	if port < minSpireNodePort || port > maxSpireNodePort {
+		return fmt.Errorf("cwedeploy: SPIRE port %d is outside the Kubernetes NodePort range %d-%d",
+			port, minSpireNodePort, maxSpireNodePort)
+	}
+
+	manifest, cleanup, err := writeEmbeddedTemplate(spireRouteFile, struct {
+		BackendIP string
+		Port      int32
+	}{initNodeIP, port})
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	e.log.Info("routing the control-plane VIP to bootstrap SPIRE",
+		"vip", vip, "backend", initNodeIP, "port", port)
+	if out, err := e.Runner.Run(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"apply", "-f", manifest); err != nil {
+		return fmt.Errorf("cwedeploy: applying the bootstrap SPIRE route with %s: %w\n%s",
+			spireRouteFile, err, out)
+	}
+
+	status := fmt.Sprintf(
+		`{"status":{"loadBalancer":{"ingress":[{"ip":%q,"ipMode":"VIP"}]}}}`,
+		vip,
+	)
+	if out, err := e.Runner.Run(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", tenantSpireRouteNamespace,
+		"patch", "service", tenantSpireRouteService,
+		"--subresource=status", "--type=merge", "--patch", status); err != nil {
+		return fmt.Errorf("cwedeploy: publishing %s as the bootstrap SPIRE load-balancer VIP: %w\n%s",
+			vip, err, out)
 	}
 	return nil
 }

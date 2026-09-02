@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: nke-bootstrap-spire
+  namespace: kube-system
+  annotations:
+    kube-vip.io/ignore: "true"
+  labels:
+    app.kubernetes.io/managed-by: nkectl
+spec:
+  type: LoadBalancer
+  loadBalancerClass: nke.nvidia.com/pre-advertised-vip
+  allocateLoadBalancerNodePorts: false
+  externalTrafficPolicy: Cluster
+  ports:
+    - name: spire
+      protocol: TCP
+      port: {{ .Port }}
+      targetPort: {{ .Port }}
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: nke-bootstrap-spire
+  namespace: kube-system
+  labels:
+    kubernetes.io/service-name: nke-bootstrap-spire
+    endpointslice.kubernetes.io/managed-by: nkectl
+addressType: IPv4
+ports:
+  - name: spire
+    protocol: TCP
+    port: {{ .Port }}
+endpoints:
+  - addresses:
+      - {{ .BackendIP | printf "%q" }}
+    conditions:
+      ready: true

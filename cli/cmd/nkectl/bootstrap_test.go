@@ -253,7 +253,7 @@ func TestWriteTenantKubeconfigRestrictsAnExistingFile(t *testing.T) {
 		t.Fatalf("set existing kubeconfig mode: %v", err)
 	}
 
-	err := writeTenantKubeconfig(
+	_, err := writeTenantKubeconfig(
 		context.Background(),
 		&bootstrapengine.Cluster{KubeconfigPath: "/tmp/bootstrap.kubeconfig"},
 		"nke-site",

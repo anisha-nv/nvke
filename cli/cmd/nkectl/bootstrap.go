@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"time"
 
@@ -78,10 +79,15 @@ type bootstrapSiteOptions struct {
 	// Nil in production; tests set it to a fake for the same reason as
 	// bootstrapRunner above.
 	cweRunner cwedeploy.CommandRunner
+
+	// initNodeAddressChecker verifies that the bootstrap runs on the configured
+	// init node. The EndpointSlice routes back to that address, so a jump host
+	// would publish an endpoint where Kind is not listening.
+	initNodeAddressChecker func(string) error
 }
 
 func newBootstrapSiteCmd() *cobra.Command {
-	opts := &bootstrapSiteOptions{}
+	opts := &bootstrapSiteOptions{initNodeAddressChecker: requireLocalAddress}
 
 	cmd := &cobra.Command{
 		Use:   siteSubcommand,
@@ -163,6 +169,12 @@ func runBootstrapSite(out io.Writer, opts *bootstrapSiteOptions) (err error) {
 		fmt.Fprintln(out, "\nDry run: inventory is valid. No workflow dispatched.")
 		return nil
 	}
+	if opts.initNodeAddressChecker != nil {
+		if err := opts.initNodeAddressChecker(inv.Cluster.InitNode.IP); err != nil {
+			return fmt.Errorf("the bootstrap host must be cluster.initNode %q (%s): %w",
+				inv.Cluster.InitNode.Name, inv.Cluster.InitNode.IP, err)
+		}
+	}
 
 	// Step 2: stand up the ephemeral bootstrap Kind cluster CWE will run on.
 	// It is normally torn down on exit. After site-cluster creation starts, a
@@ -177,6 +189,10 @@ func runBootstrapSite(out io.Writer, opts *bootstrapSiteOptions) (err error) {
 	if err != nil {
 		return err
 	}
+	if cweCfg.CWEPort == cweCfg.SpirePort {
+		return fmt.Errorf("CWE and SPIRE cannot both use host port %d; set NKECTL_CWE_PORT or NKECTL_SPIRE_PORT",
+			cweCfg.CWEPort)
+	}
 
 	// The CWE API has to be reachable from this host: this command deploys it
 	// and then calls it. A host port mapping rather than the node container's
@@ -185,6 +201,9 @@ func runBootstrapSite(out io.Writer, opts *bootstrapSiteOptions) (err error) {
 	cfg.ExtraPortMappings = append(cfg.ExtraPortMappings, bootstrapengine.PortMapping{
 		ContainerPort: cweCfg.CWEPort,
 		HostPort:      cweCfg.CWEPort,
+	}, bootstrapengine.PortMapping{
+		ContainerPort: cweCfg.SpirePort,
+		HostPort:      cweCfg.SpirePort,
 	})
 
 	engine := bootstrapengine.New(opts.bootstrapRunner, logger)
@@ -237,7 +256,9 @@ func runBootstrapSite(out io.Writer, opts *bootstrapSiteOptions) (err error) {
 	// kubeadm on each host through nke-agent and reconciles the Cluster API
 	// objects that the provisioned infrastructure provider binds to the
 	// inventory's hosts.
-	siteClusterCreated, err = createSiteCluster(ctx, cluster, inv, opts, cweCfg.CWEPort, logger)
+	siteClusterCreated, err = createSiteCluster(
+		ctx, cluster, inv, opts, cweCfg.CWEPort, cweCfg.SpirePort, logger,
+	)
 	if err != nil && siteClusterCreated {
 		deleteCommand := fmt.Sprintf("kind delete cluster --name %s", cluster.Name)
 		if cluster.Provider != bootstrapengine.ProviderDocker {
@@ -248,6 +269,24 @@ func runBootstrapSite(out io.Writer, opts *bootstrapSiteOptions) (err error) {
 			err, cluster.Name, cluster.KubeconfigPath, deleteCommand)
 	}
 	return err
+}
+
+func requireLocalAddress(want string) error {
+	wantIP := net.ParseIP(want)
+	if wantIP == nil {
+		return fmt.Errorf("invalid IP address %q", want)
+	}
+	addresses, err := net.InterfaceAddrs()
+	if err != nil {
+		return fmt.Errorf("listing local addresses: %w", err)
+	}
+	for _, address := range addresses {
+		ip, _, err := net.ParseCIDR(address.String())
+		if err == nil && ip.Equal(wantIP) {
+			return nil
+		}
+	}
+	return fmt.Errorf("IP is not assigned to a local network interface; run nkectl on the init node")
 }
 
 // createSiteCluster posts the cluster to CWE, waits for it to come up, and
@@ -263,7 +302,7 @@ func createSiteCluster(
 	bootstrapCluster *bootstrapengine.Cluster,
 	inv *inventory.Inventory,
 	opts *bootstrapSiteOptions,
-	cwePort int32,
+	cwePort, spirePort int32,
 	logger *slog.Logger,
 ) (bool, error) {
 	cweURL := fmt.Sprintf("http://127.0.0.1:%d", cwePort)
@@ -284,7 +323,23 @@ func createSiteCluster(
 	}
 	logger.Info("cluster provisioned", "cluster", created.Name, "id", created.ID)
 
-	return true, writeTenantKubeconfig(ctx, bootstrapCluster, created.Name, opts, logger)
+	kubeconfigPath, err := writeTenantKubeconfig(ctx, bootstrapCluster, created.Name, opts, logger)
+	if err != nil {
+		return true, err
+	}
+	if err := cwedeploy.New(opts.cweRunner, logger).PublishBootstrapSpireRoute(
+		ctx,
+		kubeconfigPath,
+		inv.Cluster.ControlPlaneVIP,
+		inv.Cluster.InitNode.IP,
+		spirePort,
+	); err != nil {
+		return true, err
+	}
+
+	fmt.Fprintf(os.Stdout, "\nCluster %q has an initial control-plane node. "+
+		"Bootstrap SPIRE is reachable through its control-plane VIP.\n", created.Name)
+	return true, nil
 }
 
 // writeTenantKubeconfig saves the finished cluster's admin kubeconfig beside
@@ -297,7 +352,7 @@ func writeTenantKubeconfig(
 	clusterName string,
 	opts *bootstrapSiteOptions,
 	logger *slog.Logger,
-) error {
+) (string, error) {
 	path := opts.kubeconfigOut
 	if path == "" {
 		path = clusterName + ".kubeconfig"
@@ -306,28 +361,26 @@ func writeTenantKubeconfig(
 	kubeconfig, err := cwedeploy.New(opts.cweRunner, logger).
 		TenantKubeconfig(ctx, bootstrapCluster.KubeconfigPath, clusterName, opts.kubeconfigTimeout)
 	if err != nil {
-		return fmt.Errorf("reading the kubeconfig of cluster %q: %w", clusterName, err)
+		return "", fmt.Errorf("reading the kubeconfig of cluster %q: %w", clusterName, err)
 	}
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
+		return "", fmt.Errorf("writing %s: %w", path, err)
 	}
 	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
-		return fmt.Errorf("securing %s: %w", path, err)
+		return "", fmt.Errorf("securing %s: %w", path, err)
 	}
 	if _, err := file.Write(kubeconfig); err != nil {
 		_ = file.Close()
-		return fmt.Errorf("writing %s: %w", path, err)
+		return "", fmt.Errorf("writing %s: %w", path, err)
 	}
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("closing %s: %w", path, err)
+		return "", fmt.Errorf("closing %s: %w", path, err)
 	}
 
 	logger.Info("wrote the cluster kubeconfig", "path", path)
-	fmt.Fprintf(os.Stdout, "\nCluster %q is ready. Talk to it with:\n  kubectl --kubeconfig %s get nodes\n",
-		clusterName, path)
-	return nil
+	return path, nil
 }
 
 // envDurationOrDefault reads a duration from the environment, falling back to a
