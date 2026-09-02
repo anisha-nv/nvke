@@ -65,6 +65,7 @@ inventory file rather than from flags or the environment. See
 
 | Field | |
 |---|---|
+| `cluster.controlPlaneVIP` | Stable VIP for the Kubernetes API and the temporary SPIRE route used while nodes join. |
 | `cluster.*.tpmEkThumbprint` | Which nodes may attest to SPIRE. No node listed, no node admitted; an inventory with none deploys no TPM attestor at all. |
 | `spire.caCertFile` / `caKeyFile` | A CA for SPIRE to chain its own to, so a node given that certificate when it was provisioned verifies the server on first contact. Without it SPIRE is self-signed. |
 
@@ -102,7 +103,9 @@ both sides, so both halves are set from one constant in
   publish, which a ClusterIP blackholes rather than refuses — so it surfaces as
   a node-attestation `i/o timeout` that names nothing useful.
 
-Note that the spire server is not yet accessible outside the kind cluster. We will wire that in as the final PR.
+The external SPIRE port is configured once. `NKECTL_SPIRE_PORT` flows to the
+Kind host mapping, bootstrap NodePort, tenant LoadBalancer Service, and
+EndpointSlice. The default is `30081`.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -122,18 +125,35 @@ ever disagree.
 | `NKECTL_CWE_IMAGE` | required | CWE image to deploy. Side-loaded from the local image store, so it must already be pulled. |
 | `NKECTL_CWE_PROFILES_IMAGE` | required | Image holding the OS profiles tree at `/profiles` |
 | `NKECTL_CWE_CHART_PATH` | discovered | Path to the CWE chart |
+| `NKECTL_CWE_PORT` | `30080` | CWE Service, NodePort, Kind mapping, and local client port |
+| `NKECTL_SPIRE_PORT` | `30081` | SPIRE NodePort, Kind mapping, LoadBalancer Service, and EndpointSlice port |
 | `NKECTL_CWE_HELM_TIMEOUT` | `5m` | Bounds each `helm upgrade --install --wait` |
 | `NKECTL_CWE_READY_TIMEOUT` | `5m` | Bounds the wait for CWE's `/readyz` |
 | `NKECTL_BOOTSTRAP_DIAGNOSTICS_DIR` | `cluster-diagnostics` | Where a failed bootstrap writes a cluster dump before tearing the cluster down (`--diagnostics-dir`) |
 
+### Staged control-plane creation
+
+`bootstrap site` creates the control plane in this order:
+
+1. Send the complete host inventory to the provisioned infrastructure provider.
+2. Create one control-plane Machine. The provider binds it to `cluster.initNode`.
+3. Wait for the cluster to report `Provisioned`.
+4. Route the control-plane VIP and SPIRE port to the init node with a
+   selectorless LoadBalancer Service and EndpointSlice.
+5. Create a second control-plane node pool for all `cluster.joinNodes`.
+6. Wait until every requested control-plane node is Kubernetes-ready.
+7. Delete the temporary SPIRE Service and EndpointSlice.
+8. Delete the bootstrap Kind cluster.
+
+Run `nkectl` on the init node. The command checks that `cluster.initNode.ip` is
+assigned to a local interface before it creates the bootstrap Kind cluster.
+
 ## When a bootstrap fails
 
-`bootstrap site` removes the ephemeral Kind cluster on every exit path, so by
-the time the error reaches you there is nothing left to ask. To keep the
-evidence, a failed run collects a `kubectl cluster-info dump` — every
-namespace's objects and pod logs — plus the events, object state and helm
-releases that explain a pod which never started, and writes it out *before* the
-teardown.
+If bootstrap fails before site-cluster creation starts, `bootstrap site`
+collects diagnostics and removes the ephemeral Kind cluster. If bootstrap
+fails after site-cluster creation starts, it collects diagnostics and retains
+the Kind cluster for recovery. The error shows the cleanup command.
 
 It lands in `cluster-diagnostics/`, overridable with `--diagnostics-dir` or
 `NKECTL_BOOTSTRAP_DIAGNOSTICS_DIR`. A successful run writes nothing. CI uploads

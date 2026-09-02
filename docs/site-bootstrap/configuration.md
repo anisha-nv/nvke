@@ -40,6 +40,7 @@ registry:
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `clusterName` | string | yes | Lowercase RFC 1123 label. |
+| `cluster.controlPlaneVIP` | string | no | Stable IPv4 address used for the Kubernetes API and bootstrap SPIRE route. Defaults to `cluster.initNode.ip`. |
 | `cluster.initNode.name` | string | yes | Lowercase RFC 1123 label. |
 | `cluster.initNode.ip` | string | yes | Valid IPv4 or IPv6 address. |
 | `cluster.joinNodes[].name` | string | yes, per entry | Must be unique across all nodes. |
@@ -49,7 +50,7 @@ registry:
 | `cluster.cniVersion` | string | no | CNI plugin version. Empty uses the agent's built-in default. |
 | `cluster.podCidr` | string | yes | Valid CIDR. Comma-separated list allowed for dual-stack. |
 | `cluster.serviceCidr` | string | yes | Valid CIDR. |
-| `cluster.nodeAgentPort` | string | no | gRPC port nke-agent listens on. nkectl defaults to `50051`; the nke-agent binary defaults to `15005`. Set this to match the agent's configured `--secure-server-port`. |
+| `cluster.nodeAgentPort` | string | no | gRPC port nke-agent listens on. Defaults to `15005`. Set this to match the agent's configured `--secure-server-port`. |
 | `cluster.kubeletConfig.systemReservedMemory` | string | no | e.g. `16Gi`. |
 | `registry.bootstrapRepo` | string | yes | OCI repository holding the bootstrap engine image and chart. |
 | `registry.bootstrapChart` | string | yes | Bootstrap engine chart name within `bootstrapRepo`. |
@@ -66,6 +67,7 @@ Any field can be supplied or overridden via an environment variable. A set varia
 | `CLUSTER_NAME` | `clusterName` |
 | `INIT_NODE_IP` | `cluster.initNode.ip` |
 | `INIT_NODE_NAME` | `cluster.initNode.name` |
+| `CLUSTER_CONTROL_PLANE_VIP` | `cluster.controlPlaneVIP` |
 | `CLUSTER_K8S_VERSION` | `cluster.k8sVersion` |
 | `CLUSTER_CNI_NAME` | `cluster.cniName` |
 | `CLUSTER_CNI_VERSION` | `cluster.cniVersion` |

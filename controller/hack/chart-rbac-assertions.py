@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Assert that the rendered tenant ClusterRole grants required permissions."""
+"""Assert that rendered tenant and CAPI ClusterRoles grant required permissions."""
 
 import argparse
 import subprocess
@@ -42,6 +42,8 @@ def main():
         "nkeOIDCAuth.enabled=true",
         "--set",
         "tenantAccess.enabled=true",
+        "--set",
+        "capi.rbac.create=true",
     ]
     rendered = subprocess.run(command, check=False, capture_output=True, text=True)
     if rendered.returncode != 0:
@@ -131,7 +133,34 @@ def main():
             print(f"ERROR: nke:cwe ClusterRole is missing {permission}", file=sys.stderr)
         return 1
 
+    capi_roles = [
+        document
+        for document in documents
+        if document.get("kind") == "ClusterRole"
+        and document.get("metadata", {}).get("name", "").endswith("-capi")
+    ]
+    if len(capi_roles) != 1:
+        print(
+            f"ERROR: expected one rendered CAPI ClusterRole, found {len(capi_roles)}",
+            file=sys.stderr,
+        )
+        return 1
+    capi_rules = capi_roles[0].get("rules") or []
+    if not granted(capi_rules, "", "secrets", "update"):
+        print(
+            "ERROR: CAPI ClusterRole cannot update tenant kubeconfig Secrets",
+            file=sys.stderr,
+        )
+        return 1
+    if granted(capi_rules, "", "namespaces", "update"):
+        print(
+            "ERROR: CAPI ClusterRole unnecessarily grants Namespace update",
+            file=sys.stderr,
+        )
+        return 1
+
     print(f"nke:cwe ClusterRole grants all {len(required)} required permissions")
+    print("CAPI ClusterRole grants Secret update without Namespace update")
     return 0
 
 

@@ -12,6 +12,10 @@
 clusterName: "nke-site"
 
 cluster:
+  # Stable VIP for the Kubernetes API and the temporary SPIRE route used while
+  # the remaining control-plane nodes join.
+  controlPlaneVIP: "10.0.0.100"
+
   # First control-plane node — kubeadm init runs here.
   #
   # tpmEkThumbprint is optional: the SHA-256 of the node's TPM endorsement key,
@@ -50,7 +54,7 @@ cluster:
   # Service network CIDR.
   serviceCidr: "10.96.0.0/12"
 
-  # Optional: gRPC port nke-agent listens on. Defaults to "50051".
+  # Optional: gRPC port nke-agent listens on. Defaults to "15005".
   # nodeAgentPort: "15005"
 
   # Optional kubelet reservations applied before kubeadm init/join.

@@ -15,6 +15,7 @@ A ready-to-copy example is in [`examples/inventory.yaml`](../examples/inventory.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `clusterName` | string | yes | Lowercase RFC 1123 label. |
+| `cluster.controlPlaneVIP` | string | no | Stable IPv4 address used by kube-vip for the Kubernetes API and bootstrap SPIRE route. Defaults to `cluster.initNode.ip`. |
 | `cluster.initNode.name` | string | yes | Lowercase RFC 1123 label. |
 | `cluster.initNode.ip` | string | yes | Valid IPv4 or IPv6 address. |
 | `cluster.joinNodes[].name` | string | yes, per entry | Lowercase RFC 1123 label. Unique across all nodes. |
@@ -26,7 +27,7 @@ A ready-to-copy example is in [`examples/inventory.yaml`](../examples/inventory.
 | `cluster.cniVersion` | string | no | CNI plugin version. Empty uses the node-agent default. |
 | `cluster.podCidr` | string | yes | Valid CIDR. A comma-separated list of CIDRs is allowed. |
 | `cluster.serviceCidr` | string | yes | Valid CIDR. |
-| `cluster.nodeAgentPort` | string | no | Port number 1–65535. Defaults to `50051`. |
+| `cluster.nodeAgentPort` | string | no | Port number 1–65535. Defaults to `15005`. |
 | `cluster.kubeletConfig.systemReservedMemory` | string | no | e.g. `16Gi`. |
 | `registry.bootstrapRepo` | string | yes | OCI repository holding the bootstrap engine image and chart. |
 | `registry.bootstrapChart` | string | yes | Bootstrap engine chart name within `bootstrapRepo`. |
@@ -59,6 +60,7 @@ A set variable takes precedence over the file value.
 | `CLUSTER_NAME` | `clusterName` |
 | `INIT_NODE_IP` | `cluster.initNode.ip` |
 | `INIT_NODE_NAME` | `cluster.initNode.name` |
+| `CLUSTER_CONTROL_PLANE_VIP` | `cluster.controlPlaneVIP` |
 | `CLUSTER_K8S_VERSION` | `cluster.k8sVersion` |
 | `CLUSTER_CNI_NAME` | `cluster.cniName` |
 | `CLUSTER_CNI_VERSION` | `cluster.cniVersion` |
@@ -75,6 +77,24 @@ A set variable takes precedence over the file value.
 
 A malformed `JOIN_NODES` entry fails the load rather than being silently
 discarded.
+
+`NKECTL_SPIRE_PORT` is not an inventory-field override. It sets the one
+external SPIRE port used by the bootstrap Kind mapping, SPIRE NodePort,
+LoadBalancer Service, and EndpointSlice. It defaults to `30081`.
+
+## Staged control-plane creation
+
+The initial cluster request contains the complete `ProvisionedCluster` host
+inventory. Its `spec.initNode` is `cluster.initNode.name`, but its initial
+control-plane node pool contains only one Machine.
+
+After the cluster reports `Provisioned`, `nkectl` creates a selectorless
+LoadBalancer Service and EndpointSlice. They route
+`<controlPlaneVIP>:<SPIRE port>` to `<initNode.ip>:<SPIRE port>`. `nkectl` then
+creates a second control-plane node pool with one Machine for each
+`cluster.joinNodes` entry and waits until every requested node is ready. It then
+deletes the temporary SPIRE Service and EndpointSlice before it deletes the
+bootstrap Kind cluster.
 
 ## TPM endorsement-key thumbprints
 
