@@ -8,7 +8,7 @@ related node-local operations — without interactive SSH.
 |-----|---------|
 | [AGENTS.md](AGENTS.md) | Build, test, proto, versioning, and contributor conventions |
 | [docs/DESIGN.md](docs/DESIGN.md) | Architecture and API surface |
-| [docs/agent-initiated-control-stream-design.md](docs/agent-initiated-control-stream-design.md) | Draft design for agent-initiated reverse gRPC control |
+| [docs/agent-initiated-control-stream-design.md](docs/agent-initiated-control-stream-design.md) | Draft JWT-SVID designs for direct and reverse gRPC control |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security context (reporting: repo-root `SECURITY.md`) |
 | [pkg/agent/proto/node_agent.proto](pkg/agent/proto/node_agent.proto) | Canonical RPC definitions |
 | [config.env.example](config.env.example) | Build/runtime artifact endpoint knobs |
@@ -196,4 +196,3 @@ The intake destination comes from the GitHub `apt-intake` environment
 (`APT_INTAKE_S3_URI`, `APT_INTAKE_AWS_ROLE_ARN`, …) — nothing bucket-specific
 is committed here. Once apt-publisher is pointed at that intake, cut over from
 the previous GitLab package source.
-
