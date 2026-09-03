@@ -108,6 +108,9 @@ func provisionedHosts(inv *inventory.Inventory) ([]map[string]interface{}, error
 	seenIP := make(map[string]bool, len(nodes))
 
 	for _, node := range nodes {
+		if node.TPMEKThumbprint == "" {
+			return nil, fmt.Errorf("sitecluster: node %q must have a TPM EK thumbprint", node.Name)
+		}
 		if seenName[node.Name] {
 			return nil, fmt.Errorf("sitecluster: node name %q appears more than once in the inventory", node.Name)
 		}
@@ -116,11 +119,9 @@ func provisionedHosts(inv *inventory.Inventory) ([]map[string]interface{}, error
 		}
 		seenName[node.Name], seenIP[node.IP] = true, true
 		host := map[string]interface{}{
-			"hostname":  node.Name,
-			"ipAddress": node.IP,
-		}
-		if node.TPMEKThumbprint != "" {
-			host["tpmEkPubHash"] = node.TPMEKThumbprint
+			"hostname":     node.Name,
+			"ipAddress":    node.IP,
+			"tpmEkPubHash": node.TPMEKThumbprint,
 		}
 		hosts = append(hosts, host)
 	}

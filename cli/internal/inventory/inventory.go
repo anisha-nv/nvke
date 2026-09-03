@@ -145,22 +145,18 @@ type Node struct {
 	// out-of-band step before the bootstrap — for DSX, the ansible runbook
 	// collects it from each host over SSH.
 	//
-	// Optional. A node without one is not admitted by TPM attestation, and a
-	// bootstrap where no node has one deploys SPIRE with no TPM attestor at
-	// all. It is not a secret: it is a public key hash, so it belongs in the
-	// inventory rather than beside the credentials.
-	TPMEKThumbprint string `yaml:"tpmEkThumbprint,omitempty"`
+	// Required. Site bootstrap uses TPM attestation for every node. It is not a
+	// secret: it is a public key hash, so it belongs in the inventory rather
+	// than beside the credentials.
+	TPMEKThumbprint string `yaml:"tpmEkThumbprint"`
 }
 
-// TPMEKThumbprints returns every node's EK thumbprint, in inventory order,
-// skipping nodes that have none. This is the allowlist the SPIRE server is
-// installed with.
+// TPMEKThumbprints returns every node's EK thumbprint in inventory order. This
+// is the allowlist the SPIRE server is installed with.
 func (c Cluster) TPMEKThumbprints() []string {
 	thumbprints := make([]string, 0, len(c.Nodes))
 	for _, node := range c.Nodes {
-		if node.TPMEKThumbprint != "" {
-			thumbprints = append(thumbprints, node.TPMEKThumbprint)
-		}
+		thumbprints = append(thumbprints, node.TPMEKThumbprint)
 	}
 	return thumbprints
 }
@@ -231,9 +227,9 @@ func Load(path string) (*Inventory, error) {
 		return nil, fmt.Errorf("read inventory file %s: %w", path, err)
 	}
 
-	// NKECTL_CLUSTER_NODES="name:ip,name:ip" supplies the flat node list when
-	// the file lists none. A malformed entry fails loudly rather than being
-	// silently dropped.
+	// NKECTL_CLUSTER_NODES="name:ip:tpm-ek-hash,..." supplies the flat node list
+	// when the file lists none. A malformed entry fails loudly rather than
+	// being silently dropped.
 	if nodesEnv := os.Getenv("NKECTL_CLUSTER_NODES"); nodesEnv != "" && !v.IsSet(pathNodes) {
 		nodes, err := parseNodesEnv(nodesEnv)
 		if err != nil {
@@ -267,8 +263,8 @@ func useYAMLTags(dc *mapstructure.DecoderConfig) { dc.TagName = "yaml" }
 // field name surfaces immediately instead of being silently ignored.
 func rejectUnknownFields(dc *mapstructure.DecoderConfig) { dc.ErrorUnused = true }
 
-// parseNodesEnv parses NKECTL_CLUSTER_NODES="name:ip,name:ip" into node maps,
-// returning an error on any malformed entry.
+// parseNodesEnv parses NKECTL_CLUSTER_NODES="name:ip:tpm-ek-hash,..." into
+// node maps, returning an error on any malformed entry.
 func parseNodesEnv(s string) ([]map[string]string, error) {
 	var nodes []map[string]string
 	for _, entry := range strings.Split(s, ",") {
@@ -276,12 +272,22 @@ func parseNodesEnv(s string) ([]map[string]string, error) {
 		if entry == "" {
 			continue
 		}
-		name, ip, ok := strings.Cut(entry, ":")
-		name, ip = strings.TrimSpace(name), strings.TrimSpace(ip)
-		if !ok || name == "" || ip == "" {
-			return nil, fmt.Errorf("NKECTL_CLUSTER_NODES entry %q: expected \"name:ip\"", entry)
+		name, rest, ok := strings.Cut(entry, ":")
+		lastSeparator := strings.LastIndex(rest, ":")
+		if !ok || lastSeparator < 0 {
+			return nil, fmt.Errorf("NKECTL_CLUSTER_NODES entry %q: expected \"name:ip:tpm-ek-hash\"", entry)
 		}
-		nodes = append(nodes, map[string]string{"name": name, "ip": ip})
+		name = strings.TrimSpace(name)
+		ip := strings.TrimSpace(rest[:lastSeparator])
+		thumbprint := strings.TrimSpace(rest[lastSeparator+1:])
+		if name == "" || ip == "" || thumbprint == "" {
+			return nil, fmt.Errorf("NKECTL_CLUSTER_NODES entry %q: expected \"name:ip:tpm-ek-hash\"", entry)
+		}
+		nodes = append(nodes, map[string]string{
+			"name":            name,
+			"ip":              ip,
+			"tpmEkThumbprint": thumbprint,
+		})
 	}
 	return nodes, nil
 }
@@ -419,10 +425,10 @@ func (v *validator) checkNode(path string, n Node, names, ips map[string]int) {
 		ips[n.IP]++
 	}
 
-	// Optional, but a malformed one is worth catching here: it would otherwise
-	// be seeded into the SPIRE allowlist, match nothing, and surface much later
-	// as that node failing attestation for no visible reason.
-	if n.TPMEKThumbprint != "" && !tpmEKThumbprintRE.MatchString(n.TPMEKThumbprint) {
+	switch {
+	case n.TPMEKThumbprint == "":
+		v.addf("%s.tpmEkThumbprint is required for TPM attestation", path)
+	case !tpmEKThumbprintRE.MatchString(n.TPMEKThumbprint):
 		v.addf("%s.tpmEkThumbprint %q must be 64 lowercase hex digits (the SHA-256 of the node's TPM endorsement key)",
 			path, n.TPMEKThumbprint)
 	}

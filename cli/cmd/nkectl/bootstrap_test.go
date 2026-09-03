@@ -153,6 +153,7 @@ cluster:
   nodes:
     - name: node1
       ip: 10.0.0.1
+      tpmEkThumbprint: "0000000000000000000000000000000000000000000000000000000000000000"
   k8sVersion: "1.32.0"
   cniName: calico
   podCidr: "10.100.0.0/16"
@@ -193,6 +194,7 @@ cluster:
   nodes:
     - name: node1
       ip: not-an-ip
+      tpmEkThumbprint: "0000000000000000000000000000000000000000000000000000000000000000"
   k8sVersion: "1.32.0"
   cniName: calico
   podCidr: "10.100.0.0/16"

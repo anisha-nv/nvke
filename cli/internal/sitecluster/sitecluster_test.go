@@ -209,3 +209,31 @@ func TestClusterRequest_RejectsNoNodes(t *testing.T) {
 		t.Error("expected an error for an inventory with no nodes")
 	}
 }
+
+func TestClusterRequest_RequiresEveryNodeTPMEKThumbprint(t *testing.T) {
+	tests := []struct {
+		name       string
+		clearNodes []int
+		wantNode   string
+	}{
+		{name: "no thumbprints", clearNodes: []int{0, 1, 2}, wantNode: "node1"},
+		{name: "mixed thumbprints", clearNodes: []int{1}, wantNode: "node2"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			inv := testInventory()
+			for _, i := range tc.clearNodes {
+				inv.Cluster.Nodes[i].TPMEKThumbprint = ""
+			}
+
+			_, err := ClusterRequest(inv)
+			if err == nil {
+				t.Fatal("ClusterRequest accepted a node without a TPM EK thumbprint")
+			}
+			if !strings.Contains(err.Error(), tc.wantNode) || !strings.Contains(err.Error(), "TPM EK thumbprint") {
+				t.Errorf("error = %q, want it to identify %s's missing TPM EK thumbprint", err, tc.wantNode)
+			}
+		})
+	}
+}

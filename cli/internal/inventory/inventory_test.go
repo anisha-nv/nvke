@@ -10,6 +10,8 @@ import (
 	"testing"
 )
 
+const testTPMEKThumbprint = "0000000000000000000000000000000000000000000000000000000000000000"
+
 // validYAML is a minimal well-formed inventory used as the happy-path baseline.
 const validYAML = `
 clusterName: nke-site
@@ -17,10 +19,13 @@ cluster:
   nodes:
     - name: node1
       ip: 10.0.0.1
+      tpmEkThumbprint: "0000000000000000000000000000000000000000000000000000000000000000"
     - name: node2
       ip: 10.0.0.2
+      tpmEkThumbprint: "1111111111111111111111111111111111111111111111111111111111111111"
     - name: node3
       ip: 10.0.0.3
+      tpmEkThumbprint: "2222222222222222222222222222222222222222222222222222222222222222"
   k8sVersion: "1.32.0"
   cniName: calico
   cniVersion: "3.31.4"
@@ -69,6 +74,7 @@ cluster:
   nodes:
     - name: node1
       ip: 10.0.0.1
+      tpmEkThumbprint: "0000000000000000000000000000000000000000000000000000000000000000"
   k8sVersion: "1.32.0"
   cniName: ovn-kubernetes
   podCidr: "10.100.0.0/16"
@@ -118,6 +124,7 @@ cluster:
   nodes:
     - name: node1
       ip: 10.0.0.1
+      tpmEkThumbprint: "0000000000000000000000000000000000000000000000000000000000000000"
   k8sVersion: "1.32.0"
   cniName: calico
   podCidr: "10.100.0.0/16"
@@ -152,7 +159,9 @@ func TestValidateInvalidInputs(t *testing.T) {
 		return &Inventory{
 			ClusterName: "nke-site",
 			Cluster: Cluster{
-				Nodes:         []Node{{Name: "node1", IP: "10.0.0.1"}},
+				Nodes: []Node{{
+					Name: "node1", IP: "10.0.0.1", TPMEKThumbprint: testTPMEKThumbprint,
+				}},
 				K8sVersion:    "1.32.0",
 				CniName:       "calico",
 				PodCidr:       "10.100.0.0/16",
@@ -175,16 +184,25 @@ func TestValidateInvalidInputs(t *testing.T) {
 		{"bad clusterName", func(i *Inventory) { i.ClusterName = "Nke_Site" }, pathClusterName},
 		{"missing nodes", func(i *Inventory) { i.Cluster.Nodes = nil }, pathNodes},
 		{"even node count", func(i *Inventory) {
-			i.Cluster.Nodes = append(i.Cluster.Nodes, Node{Name: "node2", IP: "10.0.0.2"})
+			i.Cluster.Nodes = append(i.Cluster.Nodes, Node{
+				Name: "node2", IP: "10.0.0.2", TPMEKThumbprint: strings.Repeat("1", 64),
+			})
 		}, "cluster.nodes must contain an odd number"},
 		{"missing node ip", func(i *Inventory) { i.Cluster.Nodes[0].IP = "" }, "cluster.nodes[0].ip"},
 		{"bad node ip", func(i *Inventory) { i.Cluster.Nodes[0].IP = "999.0.0.1" }, "cluster.nodes[0].ip"},
 		{"missing node name", func(i *Inventory) { i.Cluster.Nodes[0].Name = "" }, "cluster.nodes[0].name"},
+		{"missing TPM EK thumbprint", func(i *Inventory) {
+			i.Cluster.Nodes[0].TPMEKThumbprint = ""
+		}, "cluster.nodes[0].tpmEkThumbprint is required"},
 		{"duplicate node name", func(i *Inventory) {
-			i.Cluster.Nodes = append(i.Cluster.Nodes, Node{Name: "node1", IP: "10.0.0.2"})
+			i.Cluster.Nodes = append(i.Cluster.Nodes, Node{
+				Name: "node1", IP: "10.0.0.2", TPMEKThumbprint: strings.Repeat("1", 64),
+			})
 		}, "name \"node1\" is used"},
 		{"duplicate node ip", func(i *Inventory) {
-			i.Cluster.Nodes = append(i.Cluster.Nodes, Node{Name: "node2", IP: "10.0.0.1"})
+			i.Cluster.Nodes = append(i.Cluster.Nodes, Node{
+				Name: "node2", IP: "10.0.0.1", TPMEKThumbprint: strings.Repeat("1", 64),
+			})
 		}, "ip \"10.0.0.1\" is used"},
 		{"missing k8sVersion", func(i *Inventory) { i.Cluster.K8sVersion = "" }, pathK8sVersion},
 		{"bad k8sVersion", func(i *Inventory) { i.Cluster.K8sVersion = "v1.32" }, pathK8sVersion},
@@ -235,9 +253,9 @@ func TestValidValidatesClean(t *testing.T) {
 		ClusterName: "nke-site",
 		Cluster: Cluster{
 			Nodes: []Node{
-				{Name: "node1", IP: "10.0.0.1"},
-				{Name: "node2", IP: "10.0.0.2"},
-				{Name: "node3", IP: "10.0.0.3"},
+				{Name: "node1", IP: "10.0.0.1", TPMEKThumbprint: strings.Repeat("1", 64)},
+				{Name: "node2", IP: "10.0.0.2", TPMEKThumbprint: strings.Repeat("2", 64)},
+				{Name: "node3", IP: "10.0.0.3", TPMEKThumbprint: strings.Repeat("3", 64)},
 			},
 			K8sVersion:    "1.32.0",
 			CniName:       "ovn-kubernetes",
@@ -303,7 +321,11 @@ func TestLoadEnvFillsField(t *testing.T) {
 }
 
 func TestLoadNodesFromEnv(t *testing.T) {
-	t.Setenv("NKECTL_CLUSTER_NODES", "node1:10.0.0.1,node2:10.0.0.2,node3:10.0.0.3")
+	t.Setenv("NKECTL_CLUSTER_NODES", strings.Join([]string{
+		"node1:10.0.0.1:" + strings.Repeat("1", 64),
+		"node2:10.0.0.2:" + strings.Repeat("2", 64),
+		"node3:10.0.0.3:" + strings.Repeat("3", 64),
+	}, ","))
 
 	inv, err := Load(writeTemp(t, noNodesYAML))
 	if err != nil {
@@ -312,8 +334,21 @@ func TestLoadNodesFromEnv(t *testing.T) {
 	if len(inv.Cluster.Nodes) != 3 {
 		t.Fatalf("Nodes count = %d, want 3", len(inv.Cluster.Nodes))
 	}
-	if inv.Cluster.Nodes[0].Name != "node1" || inv.Cluster.Nodes[0].IP != "10.0.0.1" {
-		t.Errorf("Nodes[0] = %+v, want {node1 10.0.0.1}", inv.Cluster.Nodes[0])
+	if inv.Cluster.Nodes[0].Name != "node1" || inv.Cluster.Nodes[0].IP != "10.0.0.1" ||
+		inv.Cluster.Nodes[0].TPMEKThumbprint != strings.Repeat("1", 64) {
+		t.Errorf("Nodes[0] = %+v, want node1 with its IP and TPM EK thumbprint", inv.Cluster.Nodes[0])
+	}
+}
+
+func TestLoadIPv6NodeFromEnv(t *testing.T) {
+	t.Setenv("NKECTL_CLUSTER_NODES", "node1:2001:db8::1:"+strings.Repeat("1", 64))
+
+	inv, err := Load(writeTemp(t, noNodesYAML))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if inv.Cluster.Nodes[0].IP != "2001:db8::1" {
+		t.Errorf("Nodes[0].IP = %q, want the complete IPv6 address", inv.Cluster.Nodes[0].IP)
 	}
 }
 
@@ -336,7 +371,7 @@ func writeTemp(t *testing.T, content string) string {
 }
 
 // TestTPMEKThumbprints covers how the SPIRE allowlist is read off the
-// inventory: in node order, and skipping nodes that declare none.
+// inventory in node order.
 func TestTPMEKThumbprints(t *testing.T) {
 	const (
 		initThumb = "1111111111111111111111111111111111111111111111111111111111111111"
@@ -345,7 +380,6 @@ func TestTPMEKThumbprints(t *testing.T) {
 	cluster := Cluster{
 		Nodes: []Node{
 			{Name: "node1", IP: "10.0.0.1", TPMEKThumbprint: initThumb},
-			{Name: "node2", IP: "10.0.0.2"},
 			{Name: "node3", IP: "10.0.0.3", TPMEKThumbprint: joinThumb},
 		},
 	}
@@ -354,9 +388,6 @@ func TestTPMEKThumbprints(t *testing.T) {
 	if len(got) != 2 || got[0] != initThumb || got[1] != joinThumb {
 		t.Errorf("TPMEKThumbprints() = %v, want node1's then node3's", got)
 	}
-	if len((Cluster{}).TPMEKThumbprints()) != 0 {
-		t.Error("a cluster with no thumbprints should yield none, so no TPM attestor is configured")
-	}
 }
 
 // TestValidate_TPMEKThumbprint rejects a malformed thumbprint at load time. It
@@ -364,6 +395,7 @@ func TestTPMEKThumbprints(t *testing.T) {
 // that node silently failing attestation.
 func TestValidate_TPMEKThumbprint(t *testing.T) {
 	for name, thumbprint := range map[string]string{
+		"missing":     "",
 		"too short":   "abc123",
 		"uppercase":   "AAAA111111111111111111111111111111111111111111111111111111111111",
 		"non-hex":     "zzzz111111111111111111111111111111111111111111111111111111111111",
@@ -403,9 +435,9 @@ func minimalValid() *Inventory {
 		ClusterName: "nke-site",
 		Cluster: Cluster{
 			Nodes: []Node{
-				{Name: "node1", IP: "10.0.0.1"},
-				{Name: "node2", IP: "10.0.0.2"},
-				{Name: "node3", IP: "10.0.0.3"},
+				{Name: "node1", IP: "10.0.0.1", TPMEKThumbprint: testTPMEKThumbprint},
+				{Name: "node2", IP: "10.0.0.2", TPMEKThumbprint: strings.Repeat("1", 64)},
+				{Name: "node3", IP: "10.0.0.3", TPMEKThumbprint: strings.Repeat("2", 64)},
 			},
 			K8sVersion:    "1.32.0",
 			CniName:       "ovn-kubernetes",

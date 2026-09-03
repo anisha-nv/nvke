@@ -65,7 +65,7 @@ inventory file rather than from flags or the environment. See
 
 | Field | |
 |---|---|
-| `cluster.*.tpmEkThumbprint` | Which nodes may attest to SPIRE. No node listed, no node admitted; an inventory with none deploys no TPM attestor at all. |
+| `cluster.nodes[].tpmEkThumbprint` | Required TPM EK hash for each node admitted to SPIRE. |
 | `spire.caCertFile` / `caKeyFile` | A CA for SPIRE to chain its own to, so a node given that certificate when it was provisioned verifies the server on first contact. Without it SPIRE is self-signed. |
 
 ### What gets installed

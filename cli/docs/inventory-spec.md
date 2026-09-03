@@ -18,7 +18,7 @@ A ready-to-copy example is in [`examples/inventory.yaml`](../examples/inventory.
 | `cluster.nodes` | list | yes | Must contain an odd number of control-plane nodes and at least one node. |
 | `cluster.nodes[].name` | string | yes, per entry | Lowercase RFC 1123 label. Unique across all nodes. |
 | `cluster.nodes[].ip` | string | yes, per entry | Valid IPv4 or IPv6 address. Unique across all nodes. |
-| `cluster.nodes[].tpmEkThumbprint` | string | no | SHA-256 of the node's TPM endorsement key: 64 lowercase hex digits. See below. |
+| `cluster.nodes[].tpmEkThumbprint` | string | yes, per entry | SHA-256 of the node's TPM endorsement key: 64 lowercase hex digits. See below. |
 | `cluster.k8sVersion` | string | yes | Plain semantic version, e.g. `1.32.0` (no leading `v`). |
 | `cluster.cniName` | string | yes | One of `calico`, `ovn-kubernetes`. |
 | `cluster.cniVersion` | string | no | CNI plugin version. Empty uses the node-agent default. |
@@ -44,6 +44,7 @@ being silently ignored.
   field, so a bad file can be fixed in one pass.
 - The inventory must contain an odd number of nodes and at least one node.
 - Node names and IPs must be unique across all nodes.
+- Every node must have a TPM EK thumbprint.
 - `podCidr` / `serviceCidr` are parsed as CIDRs; `podCidr` also accepts a
   comma-separated list and validates each entry.
 
@@ -68,7 +69,7 @@ A set variable takes precedence over the file value.
 | `REGISTRY_API_KEY` | `registry.apiKey` |
 | `SPIRE_CA_CERT_FILE` | `spire.caCertFile` |
 | `SPIRE_CA_KEY_FILE` | `spire.caKeyFile` |
-| `NKECTL_CLUSTER_NODES` | `cluster.nodes` — format `name:ip,name:ip`, applied only when the file lists no nodes |
+| `NKECTL_CLUSTER_NODES` | `cluster.nodes` — format `name:ip:tpm-ek-hash,...`, applied only when the file lists no nodes |
 
 A malformed `NKECTL_CLUSTER_NODES` entry fails the load rather than being
 silently discarded.
@@ -86,19 +87,15 @@ software: an EK is burned into the TPM and cannot be moved or changed.
 Reading it is an out-of-band step before the bootstrap. For DSX, the ansible
 runbook collects it from each host over SSH and writes it into the inventory.
 
-Every thumbprint in the file is seeded into the allowlist of the SPIRE server
-`bootstrap site` deploys, and it is the whole of that allowlist:
-
-- a node with a thumbprint can attest and be issued an identity
-- a node without one cannot
-- an inventory where no node has one deploys SPIRE with no TPM attestor at all
+Every node must have a thumbprint. The thumbprints form the allowlist of the
+SPIRE server that `bootstrap site` deploys. A missing thumbprint fails inventory
+validation before bootstrap starts.
 
 It is a public key hash, not a secret, so it belongs in the inventory rather
 than beside the credentials, and a file carrying them stays safe to commit.
 
-A malformed thumbprint fails the load. Left to reach the allowlist it would
-match nothing and surface much later as that one node failing attestation for no
-visible reason.
+A malformed thumbprint also fails the load. Left to reach the allowlist it
+would match nothing and surface much later as that node failing attestation.
 
 ## The SPIRE CA
 
