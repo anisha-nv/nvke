@@ -267,6 +267,7 @@ def register(ctx):
     # Convenience button: create a sample nico-vms-backed NKE cluster.
     # Defaults to 1 control-plane + 1 worker node using the seed resources.
     # -----------------------------------------------------------------------
+    _cwe_port = os.getenv("CWE_HTTP_PORT", "8080")
     cmd_button(
         "5-create-sample-nico-vms-cluster",
         argv=["bash", "-c", """
