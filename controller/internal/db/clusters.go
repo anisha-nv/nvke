@@ -80,6 +80,18 @@ type Cluster struct {
 	UpdatedAt  time.Time         `bun:"type:timestamptz,notnull,default:current_timestamp"`
 }
 
+// UsesControlPlaneController reports whether this cluster's control plane is
+// provisioned by the control-plane controller from its cluster-level
+// ControlPlaneConfig rather than from a control-plane node pool. It is the
+// per-cluster replacement for the CWE-wide feature flag: a cluster runs in
+// controller mode iff it carries a cluster-level control plane configuration,
+// which is stamped at create time when the request supplies controlPlaneConfig.
+// The configuration_id column is loaded with every cluster row, so this is safe
+// to call on any read path.
+func (c Cluster) UsesControlPlaneController() bool {
+	return c.ControlPlaneConfig.ConfigurationID != uuid.Nil
+}
+
 func (c *Cluster) NicoProvider() (NicoClusterProvider, error) {
 	if c.ProviderType != ProviderTypeNico {
 		return NicoClusterProvider{}, fmt.Errorf("cluster %s provider type is %q, not %q", c.ID, c.ProviderType, ProviderTypeNico)

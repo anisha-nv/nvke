@@ -13,17 +13,16 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/NVIDIA/nke/controller/internal/config"
 	"github.com/NVIDIA/nke/controller/internal/db"
 	"github.com/NVIDIA/nke/controller/internal/testutil"
 )
 
-// cpControllerReconciler returns a reconciler with the control-plane-controller
-// feature flag ON. The snapshot-based helpers are pure and read from cp.nodePinnedControlPlaneConfigs,
-// so no DB is needed.
+// cpControllerReconciler returns a reconciler for the control-plane-controller
+// path. Controller mode is a per-cluster property now (clusters here carry a
+// ControlPlaneConfig with a ConfigurationID). The snapshot-based helpers are pure
+// and read from cp.nodePinnedControlPlaneConfigs, so no DB is needed.
 func cpControllerReconciler() *reconciler {
 	return &reconciler{
-		cfg:    config.Config{ProvisionControlPlaneWithControlPlaneController: true},
 		logger: slog.New(slog.DiscardHandler),
 	}
 }

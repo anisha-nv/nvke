@@ -165,7 +165,7 @@ func TestReconcile_SkipsClusterBeingDeleted(t *testing.T) {
 
 	mockTx := &testutil.MockTx{}
 	r := &reconciler{
-		cfg:    config.Config{ProvisionControlPlaneWithControlPlaneController: true},
+		cfg:    config.Config{},
 		db:     mockTx,
 		logger: slog.Default(),
 	}
@@ -184,22 +184,21 @@ func TestReconcile_SkipsClusterBeingDeleted(t *testing.T) {
 	mockTx.AssertNotCalled(t, "CreateNode", mock.Anything, mock.Anything)
 }
 
-func TestReconcileControlPlaneScaleUp_FeatureFlagDisabled(t *testing.T) {
+func TestReconcileControlPlaneScaleUp_LegacyClusterSkipped(t *testing.T) {
 	t.Parallel()
 
 	mockTx := &testutil.MockTx{}
 	r := &reconciler{
-		cfg:    config.Config{ProvisionControlPlaneWithControlPlaneController: false},
+		cfg:    config.Config{},
 		db:     mockTx,
 		logger: slog.Default(),
 	}
 
+	// Legacy cluster: no cluster-level control-plane config (nil ConfigurationID),
+	// so UsesControlPlaneController is false and the controller must not scale it.
 	cluster := db.Cluster{
-		ID: uuid.New(),
-		ControlPlaneConfig: db.ControlPlaneConfig{
-			ConfigurationID: uuid.New(),
-			DesiredCount:    3,
-		},
+		ID:                 uuid.New(),
+		ControlPlaneConfig: db.ControlPlaneConfig{DesiredCount: 3},
 	}
 	cp := &controlPlane{}
 
@@ -229,9 +228,6 @@ func TestReconcileControlPlaneScaleUp_FeatureFlagEnabled(t *testing.T) {
 	})).Return(db.Node{}, nil).Twice()
 
 	r := &reconciler{
-		cfg: config.Config{
-			ProvisionControlPlaneWithControlPlaneController: true,
-		},
 		db:     mockTx,
 		logger: slog.Default(),
 	}
@@ -291,7 +287,7 @@ func TestReconcileControlPlaneScaleUp_Deficit(t *testing.T) {
 			}
 
 			r := &reconciler{
-				cfg:    config.Config{ProvisionControlPlaneWithControlPlaneController: true},
+				cfg:    config.Config{},
 				db:     mockTx,
 				logger: slog.Default(),
 			}

@@ -288,7 +288,7 @@ func isHealthyControlPlaneNode(node db.Node) bool {
 func (r *reconciler) getTotalDesiredControlPlaneNodes(ctx context.Context, cluster db.Cluster, cp *controlPlane, withSurge bool) (int, error) {
 	// Control-plane-controller path: desired count comes from the cluster config;
 	// no control-plane nodepools are involved.
-	if r.cfg.UseControlPlaneControllerForControlPlane() {
+	if cluster.UsesControlPlaneController() {
 		totalDesired := cluster.ControlPlaneConfig.DesiredCount
 		if withSurge && cluster.ControlPlaneConfig.MaxSurge > 0 {
 			totalDesired += cp.surgeBudget()
@@ -390,7 +390,7 @@ func (r *reconciler) getClusterNodesNeedingRollout(
 ) ([]db.Node, error) {
 	// Control-plane-controller path: derive rollout from each node's pinned
 	// snapshot vs the cluster's current snapshot (preloaded by readControlPlane).
-	if r.cfg.UseControlPlaneControllerForControlPlane() {
+	if cluster.UsesControlPlaneController() {
 		return cp.nodesNeedingRollout(cluster.ControlPlaneConfig.ControlPlaneConfigSpec), nil
 	}
 

@@ -63,20 +63,20 @@ func validForgeNodePoolCreateConfig(name string) api.NodePoolCreateConfig {
 	}
 }
 
-func TestValidateCreateClusterRequestFields_ControlPlaneControllerFlag(t *testing.T) {
-	t.Run("flag OFF rejects cluster-level controlPlaneConfig", func(t *testing.T) {
-		svc := clusterService{useControlPlaneController: false}
+func TestValidateCreateClusterRequestFields_ControlPlaneConfig(t *testing.T) {
+	t.Run("feature disabled rejects cluster-level controlPlaneConfig", func(t *testing.T) {
+		// Allow-gate off (default): the API refuses controlPlaneConfig outright, so
+		// the whole feature stays dark and existing behavior is preserved.
+		svc := clusterService{}
 		req := validForgeCreateClusterRequest()
 		req.ControlPlaneConfig = validForgeControlPlaneConfig()
-		// Provide a control-plane node pool so the legacy "must have a CP node" rule passes.
-		req.NodePools = &[]api.NodePoolCreateConfig{validForgeNodePoolCreateConfig("cp")}
 
 		err := svc.ValidateCreateClusterRequestFields(req)
 		require.ErrorIs(t, err, errControlPlaneConfigNotEnabled)
 	})
 
-	t.Run("flag ON rejects control-plane node pools", func(t *testing.T) {
-		svc := clusterService{useControlPlaneController: true}
+	t.Run("controlPlaneConfig alongside a control-plane node pool is rejected", func(t *testing.T) {
+		svc := clusterService{controlPlaneControllerAllowed: true}
 		req := validForgeCreateClusterRequest()
 		req.ControlPlaneConfig = validForgeControlPlaneConfig()
 		req.NodePools = &[]api.NodePoolCreateConfig{validForgeNodePoolCreateConfig("control-plane")}
@@ -85,17 +85,30 @@ func TestValidateCreateClusterRequestFields_ControlPlaneControllerFlag(t *testin
 		require.ErrorIs(t, err, errControlPlaneNodePoolNotAllowed)
 	})
 
-	t.Run("flag ON requires controlPlaneConfig", func(t *testing.T) {
-		svc := clusterService{useControlPlaneController: true}
+	t.Run("no controlPlaneConfig falls back to legacy (requires a CP node pool)", func(t *testing.T) {
+		// The mode is per-cluster: omitting controlPlaneConfig keeps the legacy
+		// control-plane node pool.
+		svc := clusterService{}
 		req := validForgeCreateClusterRequest()
 
 		err := svc.ValidateCreateClusterRequestFields(req)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "controlPlaneConfig is required")
+		require.Contains(t, err.Error(), "at least one control plane node")
 	})
 
-	t.Run("flag ON rejects desiredCount below 1", func(t *testing.T) {
-		svc := clusterService{useControlPlaneController: true}
+	t.Run("legacy control-plane node pool cluster is accepted", func(t *testing.T) {
+		// A cluster opts out of the controller per-cluster by supplying a
+		// control-plane node pool instead of controlPlaneConfig.
+		svc := clusterService{}
+		req := validForgeCreateClusterRequest()
+		req.NodePools = &[]api.NodePoolCreateConfig{validForgeNodePoolCreateConfig("cp")}
+
+		err := svc.ValidateCreateClusterRequestFields(req)
+		require.NoError(t, err)
+	})
+
+	t.Run("rejects desiredCount below 1", func(t *testing.T) {
+		svc := clusterService{controlPlaneControllerAllowed: true}
 		req := validForgeCreateClusterRequest()
 		cp := validForgeControlPlaneConfig()
 		cp.DesiredCount = 0
@@ -106,8 +119,8 @@ func TestValidateCreateClusterRequestFields_ControlPlaneControllerFlag(t *testin
 		require.Contains(t, err.Error(), "desiredCount must be at least 1")
 	})
 
-	t.Run("flag ON accepts a valid Forge cluster-level control plane with no node pools", func(t *testing.T) {
-		svc := clusterService{useControlPlaneController: true}
+	t.Run("accepts a valid Forge cluster-level control plane with no node pools", func(t *testing.T) {
+		svc := clusterService{controlPlaneControllerAllowed: true}
 		req := validForgeCreateClusterRequest()
 		req.ControlPlaneConfig = validForgeControlPlaneConfig()
 
@@ -115,8 +128,8 @@ func TestValidateCreateClusterRequestFields_ControlPlaneControllerFlag(t *testin
 		require.NoError(t, err)
 	})
 
-	t.Run("flag ON rejects a nil instance type ID in instanceTypePreference", func(t *testing.T) {
-		svc := clusterService{useControlPlaneController: true}
+	t.Run("rejects a nil instance type ID in instanceTypePreference", func(t *testing.T) {
+		svc := clusterService{controlPlaneControllerAllowed: true}
 		req := validForgeCreateClusterRequest()
 		cp := validForgeControlPlaneConfig()
 		// A nil UUID passes the length check but would be silently dropped by
@@ -129,8 +142,8 @@ func TestValidateCreateClusterRequestFields_ControlPlaneControllerFlag(t *testin
 		require.Contains(t, err.Error(), "invalid nil instance type ID")
 	})
 
-	t.Run("flag ON rejects a Forge control plane payload on a CAPI cluster", func(t *testing.T) {
-		svc := clusterService{useControlPlaneController: true}
+	t.Run("rejects Forge-only field on a CAPI cluster control plane", func(t *testing.T) {
+		svc := clusterService{controlPlaneControllerAllowed: true}
 		req := &api.CreateClusterRequest{
 			Name:                          "capi-cluster",
 			CniPlugin:                     "calico",
@@ -154,7 +167,7 @@ func TestValidateCreateClusterRequestFields_ControlPlaneControllerFlag(t *testin
 }
 
 func TestApplyClusterLevelControlPlaneSpecUpdate_ScaleDown(t *testing.T) {
-	svc := clusterService{useControlPlaneController: true}
+	svc := clusterService{}
 	ctx := context.Background()
 
 	newCAPICluster := func(current int) *db.Cluster {
@@ -219,9 +232,12 @@ func TestCreateNodePool_RejectsControlPlanePoolWhenControllerEnabled(t *testing.
 		ID:     clusterID,
 		OrgID:  "test-org",
 		SiteID: uuid.New(),
+		// Controller-managed cluster: control-plane node pools are rejected because
+		// the control plane is described by the cluster-level controlPlaneConfig.
+		ControlPlaneConfig: db.ControlPlaneConfig{ConfigurationID: uuid.New()},
 	}, nil)
 
-	service := NewNodePoolService(slog.Default(), mockDB, nil, config.TeleportConfig{}, true)
+	service := NewNodePoolService(slog.Default(), mockDB, nil, config.TeleportConfig{})
 
 	resp, err := service.CreateNodePool(context.Background(), api.CreateNodePoolRequestObject{
 		Body: &api.CreateNodePoolRequest{
@@ -366,7 +382,11 @@ func TestApplyClusterControlPlaneConfigUpdate_RejectsClearingRequiredField(t *te
 			OrgID:  "test-org",
 			SiteID: uuid.New(), // Forge cluster.
 			ControlPlaneConfig: db.ControlPlaneConfig{
-				DesiredCount: 3,
+				// A non-nil ConfigurationID marks the cluster as controller-managed
+				// (UsesControlPlaneController), which is what gates cluster-level
+				// control-plane config updates now that the mode is per-cluster.
+				ConfigurationID: uuid.New(),
+				DesiredCount:    3,
 				ControlPlaneConfigSpec: db.ControlPlaneConfigSpec{
 					InstanceTypePreference: []uuid.UUID{uuid.New()},
 					OSProfile:              "ubuntu",
@@ -381,7 +401,7 @@ func TestApplyClusterControlPlaneConfigUpdate_RejectsClearingRequiredField(t *te
 
 	applyUpdate := func(t *testing.T, cluster *db.Cluster, req *api.UpdateClusterControlPlaneConfig) error {
 		t.Helper()
-		svc := clusterService{useControlPlaneController: true}
+		svc := clusterService{controlPlaneControllerAllowed: true}
 		return svc.applyClusterControlPlaneConfigUpdate(ctx, nil, cluster, req)
 	}
 

@@ -71,6 +71,11 @@ func TestUnit_Reconcile(t *testing.T) {
 		VpcID:        uuid.New(),
 		ProviderType: db.ProviderTypeNico,
 	}
+	// A cluster whose control plane is managed by the control-plane controller: a
+	// non-nil ConfigurationID makes UsesControlPlaneController report true, which
+	// is what now gates skipping control-plane node sets (per-cluster, not cfg).
+	cpControllerCluster := baseCluster
+	cpControllerCluster.ControlPlaneConfig.ConfigurationID = uuid.New()
 
 	type parameters struct {
 		nodeSet db.NodeSet
@@ -80,11 +85,8 @@ func TestUnit_Reconcile(t *testing.T) {
 	}
 
 	tests := map[string]parameters{
-		"creates control plane node when control plane controller is disabled": {
+		"creates control plane node for a legacy cluster (control plane node pool)": {
 			nodeSet: baseNodeSet,
-			cfg: config.Config{
-				ProvisionControlPlaneWithControlPlaneController: false,
-			},
 			setup: func(mockDB *testutil.MockDB, mockTx *testutil.MockTx, nodeSet db.NodeSet) {
 				mockDB.MockTx = mockTx
 				mockDB.On("RunInTx", mock.Anything, mock.Anything).Return(nil)
@@ -102,40 +104,35 @@ func TestUnit_Reconcile(t *testing.T) {
 				})).Return(db.Node{}, nil).Once()
 			},
 		},
-		"skips control plane creation when control plane controller is enabled": {
+		"skips control plane creation when cluster uses the control plane controller": {
 			nodeSet: baseNodeSet,
-			cfg: config.Config{
-				ProvisionControlPlaneWithControlPlaneController: true,
-			},
 			setup: func(mockDB *testutil.MockDB, mockTx *testutil.MockTx, nodeSet db.NodeSet) {
 				mockDB.MockTx = mockTx
 				mockDB.On("RunInTx", mock.Anything, mock.Anything).Return(nil)
 				mockTx.On("GetNodeSet", mock.Anything, nodeSet.ID).Return(nodeSet, nil)
 				mockTx.On("GetNodePool", mock.Anything, nodePoolID).Return(baseNodePool, nil)
+				mockTx.On("GetCluster", mock.Anything, clusterID).Return(cpControllerCluster, nil)
 			},
 			verify: func(t *testing.T, _ *testutil.MockDB, mockTx *testutil.MockTx) {
 				t.Helper()
 
 				mockTx.AssertNotCalled(t, "ListNodes", mock.Anything, mock.Anything)
-				mockTx.AssertNotCalled(t, "GetCluster", mock.Anything, clusterID)
 				mockTx.AssertNotCalled(t, "ListClusterNodeNames", mock.Anything, clusterID)
 				mockTx.AssertNotCalled(t, "CreateNode", mock.Anything, mock.Anything)
 			},
 		},
-		"skips control plane deletion when control plane controller is enabled": {
+		"skips control plane deletion when cluster uses the control plane controller": {
 			nodeSet: db.NodeSet{
 				ID:           nodeSetID,
 				NodePoolID:   nodePoolID,
 				DesiredCount: 0,
-			},
-			cfg: config.Config{
-				ProvisionControlPlaneWithControlPlaneController: true,
 			},
 			setup: func(mockDB *testutil.MockDB, mockTx *testutil.MockTx, nodeSet db.NodeSet) {
 				mockDB.MockTx = mockTx
 				mockDB.On("RunInTx", mock.Anything, mock.Anything).Return(nil)
 				mockTx.On("GetNodeSet", mock.Anything, nodeSet.ID).Return(nodeSet, nil)
 				mockTx.On("GetNodePool", mock.Anything, nodePoolID).Return(baseNodePool, nil)
+				mockTx.On("GetCluster", mock.Anything, clusterID).Return(cpControllerCluster, nil)
 			},
 			verify: func(t *testing.T, _ *testutil.MockDB, mockTx *testutil.MockTx) {
 				t.Helper()

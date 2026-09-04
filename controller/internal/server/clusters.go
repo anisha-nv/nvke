@@ -53,7 +53,6 @@ var (
 	errOIDCWithKubernetesUpgrade                = errors.New("cannot enable OIDC authentication and update the Kubernetes version in the same request")
 	errOIDCWithEtcdEncryption                   = errors.New("cannot enable OIDC authentication and etcd encryption in the same request")
 	errClusterMaxSurgeTooHigh                   = errors.New("maxSurge should be max 1 for cluster-level control plane config")
-	errControlPlaneConfigNotEnabled             = errors.New("cluster-level controlPlaneConfig requires control-plane controller provisioning to be enabled; configure the control plane via a control-plane node pool")
 	cniVersionPattern                           = regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$`)
 )
 
@@ -81,14 +80,12 @@ type clusterService struct {
 	nodePoolService *nodePoolService
 	teleportCfg     config.TeleportConfig
 	oidcAuthEnabled bool
-	// useControlPlaneController mirrors the CWE feature flag
-	// PROVISION_CONTROL_PLANE_WITH_CONTROL_PLANE_CONTROLLER. When true, the
-	// cluster-level controlPlaneConfig is authoritative: it is required on
-	// create, control-plane node pools are rejected, and the config is persisted
-	// as cluster-level desiredCount + a control plane config snapshot. When
-	// false, the control plane is provisioned from a control-plane node pool and
-	// supplying controlPlaneConfig.desiredCount/spec is rejected.
-	useControlPlaneController bool
+	// controlPlaneControllerAllowed is the fleet-wide allow-gate: when false the
+	// API rejects any cluster-level controlPlaneConfig, keeping the whole feature
+	// off. Whether a given cluster uses the controller is still per-cluster
+	// (db.Cluster.UsesControlPlaneController); this only decides whether a request
+	// may opt in at all.
+	controlPlaneControllerAllowed bool
 }
 
 func NewClusterService(
@@ -97,15 +94,15 @@ func NewClusterService(
 	nodePoolService *nodePoolService,
 	teleportCfg config.TeleportConfig,
 	oidcAuthEnabled bool,
-	useControlPlaneController bool,
+	controlPlaneControllerAllowed bool,
 ) *clusterService {
 	return &clusterService{
-		logger:                    logger,
-		db:                        database,
-		nodePoolService:           nodePoolService,
-		teleportCfg:               teleportCfg,
-		oidcAuthEnabled:           oidcAuthEnabled,
-		useControlPlaneController: useControlPlaneController,
+		logger:                        logger,
+		db:                            database,
+		nodePoolService:               nodePoolService,
+		teleportCfg:                   teleportCfg,
+		oidcAuthEnabled:               oidcAuthEnabled,
+		controlPlaneControllerAllowed: controlPlaneControllerAllowed,
 	}
 }
 
@@ -188,7 +185,7 @@ func (s *clusterService) CreateCluster(ctx context.Context, req api.CreateCluste
 		// plane config is authoritative. Persist the desired count and max surge as
 		// columns up front; the config snapshot row is created after the cluster row
 		// exists (it needs the cluster ID).
-		if s.useControlPlaneController && req.Body.ControlPlaneConfig != nil {
+		if req.Body.ControlPlaneConfig != nil {
 			dbCluster.ControlPlaneConfig.DesiredCount = req.Body.ControlPlaneConfig.DesiredCount
 			if req.Body.ControlPlaneConfig.MaxSurge != nil {
 				dbCluster.ControlPlaneConfig.MaxSurge = *req.Body.ControlPlaneConfig.MaxSurge
@@ -200,7 +197,7 @@ func (s *clusterService) CreateCluster(ctx context.Context, req api.CreateCluste
 			return fmt.Errorf("failed to create cluster: %w", err)
 		}
 
-		if s.useControlPlaneController && req.Body.ControlPlaneConfig != nil {
+		if req.Body.ControlPlaneConfig != nil {
 			spec := controlPlaneConfigSpecFromCreateAPI(
 				req.Body.ControlPlaneConfig,
 				createdCluster.KubernetesVersion,
@@ -272,7 +269,7 @@ func (s *clusterService) preflightCheckCreateClusterRequest(
 	// Include the cluster-level control plane node count (and its surge) in the
 	// pod-CIDR capacity check when the control plane is provisioned from the
 	// cluster-level controlPlaneConfig rather than a node pool.
-	if s.useControlPlaneController && req.ControlPlaneConfig != nil {
+	if req.ControlPlaneConfig != nil {
 		desiredNodes += req.ControlPlaneConfig.DesiredCount
 		if req.ControlPlaneConfig.MaxSurge != nil {
 			cpSurge = *req.ControlPlaneConfig.MaxSurge
@@ -290,7 +287,8 @@ func (s *clusterService) preflightCheckCreateClusterRequest(
 
 	// When the control plane is configured at the cluster level for a Forge
 	// cluster, enforce the same subnet/VPC-prefix native-networking rules used
-	if s.useControlPlaneController && req.ControlPlaneConfig != nil && req.Nico != nil {
+	// for node pools.
+	if s.controlPlaneControllerAllowed && req.ControlPlaneConfig != nil && req.Nico != nil {
 		if req.ControlPlaneConfig.Nico == nil {
 			return resolvedClusterNetwork{}, newBadRequestErrorf(
 				"controlPlaneConfig.nico is required for a nico cluster control plane",
@@ -356,18 +354,23 @@ func (s *clusterService) ValidateCreateClusterRequestFields(req *api.CreateClust
 		return fmt.Errorf("exactly one provider must be set")
 	}
 
-	if s.useControlPlaneController {
+	// The control-plane mode is chosen per cluster by the request shape: supplying
+	// controlPlaneConfig opts this cluster into control-plane controller
+	// provisioning, omitting it keeps the legacy control-plane node pool. This lets
+	// operators migrate clusters onto the controller one at a time.
+	if req.ControlPlaneConfig != nil {
+		// Fleet-wide allow-gate: with the feature off, controlPlaneConfig is not
+		// accepted at all, so the whole cluster stays on the legacy node-pool path.
+		if !s.controlPlaneControllerAllowed {
+			return errControlPlaneConfigNotEnabled
+		}
 		// Cluster-level control plane config is authoritative: control-plane node
 		// pools are rejected and the control plane is described by controlPlaneConfig.
 		if err := validateCreateClusterLevelControlPlane(req, nodePools, providerType); err != nil {
 			return err
 		}
 	} else {
-		// Legacy mode: the control plane is provided via a control-plane node pool,
-		// and a cluster-level controlPlaneConfig is not accepted.
-		if req.ControlPlaneConfig != nil {
-			return errControlPlaneConfigNotEnabled
-		}
+		// Legacy mode: the control plane is provided via a control-plane node pool.
 		controlPlaneNodeCount := 0
 		for _, nodePool := range nodePools {
 			if nodePool.ControlPlane {
@@ -669,8 +672,7 @@ func isUpdateClusterClientError(err error) bool {
 		errors.Is(err, errOIDCDuringDeletion) ||
 		errors.Is(err, errOIDCWithKubernetesUpgrade) ||
 		errors.Is(err, errOIDCWithEtcdEncryption) ||
-		errors.Is(err, errClusterMaxSurgeTooHigh) ||
-		errors.Is(err, errControlPlaneConfigNotEnabled)
+		errors.Is(err, errClusterMaxSurgeTooHigh)
 }
 
 func hasNonEtcdEncryptionMutation(req *api.UpdateClusterRequest) bool {
@@ -727,8 +729,8 @@ func (s *clusterService) applyControlPlaneConfigUpdateWithCIDRCheck(
 	if err != nil {
 		return fmt.Errorf("failed to list node pools for pod CIDR capacity validation: %w", err)
 	}
-	currentNodePools := podCIDRNodePoolsWithClusterCP(s.useControlPlaneController, *cluster, nodePools)
-	previousNodePools := podCIDRNodePoolsWithClusterCP(s.useControlPlaneController, previousCluster, nodePools)
+	currentNodePools := podCIDRNodePoolsWithClusterCP(cluster.UsesControlPlaneController(), *cluster, nodePools)
+	previousNodePools := podCIDRNodePoolsWithClusterCP(previousCluster.UsesControlPlaneController(), previousCluster, nodePools)
 	if requiredPodCIDRNodeBlocks(currentNodePools, cluster.ControlPlaneConfig.MaxSurge) >
 		requiredPodCIDRNodeBlocks(previousNodePools, previousCluster.ControlPlaneConfig.MaxSurge) {
 		if err := validateStoredPodCIDRCapacity(*cluster, currentNodePools); err != nil {
@@ -773,12 +775,32 @@ func (s *clusterService) applyClusterControlPlaneConfigUpdate(ctx context.Contex
 		controlPlaneConfigSpec.SetNico(nico)
 	}
 
-	// desiredCount and the full control-plane spec are only honored in
-	// control-plane controller provisioning mode. In legacy mode the control
-	// plane is defined by control-plane node pools, so these updates are rejected.
+	// This is the per-cluster migration point: applying a cluster-level
+	// control-plane config to a cluster that does not yet have one
+	// (UsesControlPlaneController is still false here) bootstraps its first config
+	// row and converts it to controller mode.
 	if hasClusterLevelControlPlaneUpdate(req) {
-		if !s.useControlPlaneController {
-			return errControlPlaneConfigNotEnabled
+		// Fleet-wide allow-gate: with the feature off, a cluster may not opt into
+		// controller mode via PATCH. A cluster already in controller mode stays
+		// manageable so toggling the gate off never strands a live control plane.
+		if !s.controlPlaneControllerAllowed && !cluster.UsesControlPlaneController() {
+			return &badRequestError{message: errControlPlaneConfigNotEnabled.Error()}
+		}
+		// A cluster whose control plane is a legacy node pool must not be flipped
+		// into controller mode as a side effect of a PATCH: converting a running
+		// control plane is an explicit migration, and silently accepting a
+		// cluster-level controlPlaneConfig here would leave both a control-plane
+		// node pool and a cluster-level config describing the same control plane.
+		// (A controller-managed cluster has no control-plane node pool, so this
+		// only guards the legacy -> controller edge.)
+		if !cluster.UsesControlPlaneController() {
+			hasCPPool, err := clusterHasControlPlaneNodePool(ctx, tx, cluster.ID)
+			if err != nil {
+				return err
+			}
+			if hasCPPool {
+				return &badRequestError{message: errControlPlaneConfigRequiresMigration.Error()}
+			}
 		}
 		if err := s.applyClusterLevelControlPlaneSpecUpdate(ctx, cluster, req, &controlPlaneConfigSpec); err != nil {
 			return err
@@ -787,24 +809,54 @@ func (s *clusterService) applyClusterControlPlaneConfigUpdate(ctx context.Contex
 
 	// A PATCH must not clear a required field or persist a spec that create would
 	// reject (Forge instanceTypePreference/osProfile/configProfile or the CAPI
-	// capiInfraMachineTemplate). instanceTypePreference is merged above and is not
-	// covered by hasClusterLevelControlPlaneUpdate, so gate on it explicitly;
-	// maxSurge- and k8s-version-only updates leave these fields untouched.
-	if s.useControlPlaneController &&
-		(hasClusterLevelControlPlaneUpdate(req) || hasInstanceTypePreferences) {
+	// capiInfraMachineTemplate). This full-spec validation only applies to the
+	// cluster-level control plane: either a cluster-level update (which converts a
+	// legacy cluster to controller mode, or updates one already in it), or an
+	// instanceTypePreference change on an already controller-managed cluster
+	// (instanceTypePreference is merged above and is not covered by
+	// hasClusterLevelControlPlaneUpdate, so gate on it explicitly). A legacy
+	// node-pool cluster's own knobs (maxSurge/instanceTypePreference/k8s version)
+	// are left to the legacy node-pool path.
+	if hasClusterLevelControlPlaneUpdate(req) || (cluster.UsesControlPlaneController() && hasInstanceTypePreferences) {
 		if err := validateMergedClusterControlPlaneSpec(*cluster, controlPlaneConfigSpec); err != nil {
 			return err
 		}
 	}
 
-	// Diff the entire spec against the current row and create a new row only
-	// when the effective control-plane spec actually changed.
-	if err := db.CreateControlPlaneConfigRowIfChanged(ctx, tx, cluster, controlPlaneConfigSpec, db.CreateControlPlaneConfigRowOpts{
-		ChangeReason: "cluster PATCH controlPlaneConfig",
-	}); err != nil {
-		return fmt.Errorf("create control plane configuration spec row: %w", err)
+	// Only a controller-managed cluster carries a control-plane configuration row,
+	// and stamping one is what UsesControlPlaneController keys off. Create/update
+	// it for a cluster already in controller mode, or for a cluster-level update
+	// that migrates a cluster into it. A legacy node-pool cluster tweaking its
+	// cluster-level knobs (maxSurge / control-plane k8s version) must NOT acquire
+	// a row, or it would silently flip into controller mode. maxSurge and the k8s
+	// version live on the cluster row and are persisted by the caller's
+	// UpdateCluster regardless.
+	if cluster.UsesControlPlaneController() || hasClusterLevelControlPlaneUpdate(req) {
+		// Diff the entire spec against the current row and create a new row only
+		// when the effective control-plane spec actually changed.
+		if err := db.CreateControlPlaneConfigRowIfChanged(ctx, tx, cluster, controlPlaneConfigSpec, db.CreateControlPlaneConfigRowOpts{
+			ChangeReason: "cluster PATCH controlPlaneConfig",
+		}); err != nil {
+			return fmt.Errorf("create control plane configuration spec row: %w", err)
+		}
 	}
 	return nil
+}
+
+// clusterHasControlPlaneNodePool reports whether the cluster still has a
+// control-plane node pool (legacy control plane), used to gate implicit
+// legacy -> controller migration on a PATCH.
+func clusterHasControlPlaneNodePool(ctx context.Context, tx db.Tx, clusterID uuid.UUID) (bool, error) {
+	pools, err := tx.ListNodePools(ctx, db.NodePoolFilters{ClusterID: &clusterID})
+	if err != nil {
+		return false, fmt.Errorf("list node pools for control-plane migration check: %w", err)
+	}
+	for _, pool := range pools {
+		if pool.ControlPlane {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // hasClusterLevelControlPlaneUpdate reports whether the update touches any of the

@@ -95,10 +95,12 @@ func NewServer(
 			"version":           version.Version,
 			"temporalUIURL":     temporalUIURL(cfg),
 			"temporalNamespace": cfg.TemporalNamespace,
-			// Exposes the control-plane-controller provisioning feature flag so the
-			// UI can switch between cluster-level control plane config mode and the
-			// legacy control-plane node-pool mode. The server validates regardless.
-			"provisionControlPlaneWithControlPlaneController": cfg.UseControlPlaneControllerForControlPlane(),
+			// Fleet-wide allow-gate for control-plane controller provisioning. The
+			// UI reads this to decide whether to offer cluster-level control plane
+			// config mode; when false it stays in legacy node-pool mode. A cluster
+			// still opts in per request by supplying controlPlaneConfig, which the
+			// server only accepts while this is true.
+			"provisionControlPlaneWithControlPlaneController": cfg.ControlPlaneControllerAllowed(),
 		}
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			logger.Error("Failed to write /api/version response", "error", err)
@@ -190,10 +192,10 @@ func handleError(w http.ResponseWriter, logger *slog.Logger, message string, sta
 }
 
 func NewServerImpl(cfg config.Config, logger *slog.Logger, database db.DB, forgeProvider *forge.ForgeProvider, temporalClient client.Client) *serverImpl {
-	nodePoolService := NewNodePoolService(logger, database, forgeProvider, cfg.Teleport, cfg.UseControlPlaneControllerForControlPlane())
+	nodePoolService := NewNodePoolService(logger, database, forgeProvider, cfg.Teleport)
 
 	return &serverImpl{
-		clusterService:       *NewClusterService(logger, database, nodePoolService, cfg.Teleport, cfg.NkeOIDCAuth.Enabled, cfg.UseControlPlaneControllerForControlPlane()),
+		clusterService:       *NewClusterService(logger, database, nodePoolService, cfg.Teleport, cfg.NkeOIDCAuth.Enabled, cfg.ControlPlaneControllerAllowed()),
 		nodePoolService:      *nodePoolService,
 		nodeSetService:       *NewNodeSetService(logger, database, temporalClient),
 		nodeService:          *NewNodeService(logger, database, temporalClient, cfg.AllowEtcdSafetyOverrides),

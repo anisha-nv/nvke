@@ -21,7 +21,7 @@ import (
 // A CAPI cluster rejects a nico payload whatever it carries: the provider shape
 // is what is unsupported, so every field spelling reaches the same rejection.
 func TestValidateCreateNodePoolRequest_CAPIRejectsNicoPayloadWhateverItCarries(t *testing.T) {
-	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{}, false)
+	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{})
 
 	cases := []struct {
 		name string
@@ -51,7 +51,7 @@ func TestValidateCreateNodePoolRequest_CAPIRejectsNicoPayloadWhateverItCarries(t
 // The mirror of the above: a nico cluster rejects an infra payload whatever it
 // carries, even alongside an otherwise valid nico payload.
 func TestValidateCreateNodePoolRequest_NicoRejectsInfraPayloadWhateverItCarries(t *testing.T) {
-	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{}, false)
+	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{})
 
 	cases := []struct {
 		name  string
@@ -86,7 +86,7 @@ func TestValidateCreateNodePoolRequest_NicoRejectsInfraPayloadWhateverItCarries(
 }
 
 func TestValidateUpdateNodePoolRequest_CAPIRejectsForgeSpecificFieldsIndividually(t *testing.T) {
-	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{}, false)
+	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{})
 
 	t.Run("nico provider shape", func(t *testing.T) {
 		err := service.validateUpdateNodePoolRequest(context.Background(), db.Cluster{SiteID: uuid.Nil, ProviderType: db.ProviderTypeCAPI}, &api.UpdateNodePoolRequest{
@@ -115,7 +115,7 @@ func TestValidateUpdateNodePoolRequest_CAPIRejectsForgeSpecificFieldsIndividuall
 }
 
 func TestValidateUpdateNodePoolRequest_ForgeRejectsCAPISpecificFieldsIndividually(t *testing.T) {
-	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{}, false)
+	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{})
 
 	t.Run("infra.bootstrapFiles", func(t *testing.T) {
 		err := service.validateUpdateNodePoolRequest(context.Background(), db.Cluster{SiteID: uuid.New(), ProviderType: db.ProviderTypeNico}, &api.UpdateNodePoolRequest{
@@ -149,7 +149,7 @@ func TestValidateUpdatedNodePool_CAPIRequiresEmptyDiskSelectionStrategy(t *testi
 }
 
 func TestValidateCreateNodePoolRequest_NodeNamePrefixLength(t *testing.T) {
-	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{}, false)
+	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{})
 	clusterName := "runtime-dgxc-k8s-forge-ytl-dev1"
 
 	capiNodePoolRequest := func(nodeNamePrefix string) *api.CreateNodePoolRequest {

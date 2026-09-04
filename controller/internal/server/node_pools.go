@@ -28,6 +28,10 @@ var (
 	errNodePoolDeleting               = nodes.ErrNodePoolDeleting
 	errNodeDeleting                   = nodes.ErrNodeDeleting
 	errControlPlaneNodePoolNotAllowed = errors.New("control-plane node pools are not allowed when control-plane controller provisioning is enabled; configure the control plane via the cluster-level controlPlaneConfig")
+
+	errControlPlaneConfigRequiresMigration = errors.New("cluster has a control-plane node pool; applying a cluster-level controlPlaneConfig requires an explicit control-plane migration")
+
+	errControlPlaneConfigNotEnabled = errors.New("control-plane controller provisioning is not enabled on this deployment; cluster-level controlPlaneConfig is not accepted")
 )
 
 type badRequestError struct {
@@ -55,20 +59,14 @@ type nodePoolService struct {
 	db            db.DB
 	forgeProvider nodePoolForgeProvider
 	teleportCfg   config.TeleportConfig
-	// useControlPlaneController mirrors the CWE feature flag
-	// PROVISION_CONTROL_PLANE_WITH_CONTROL_PLANE_CONTROLLER. When true,
-	// control-plane node pools are rejected on create/update because the control
-	// plane is provisioned from the cluster-level controlPlaneConfig instead.
-	useControlPlaneController bool
 }
 
-func NewNodePoolService(logger *slog.Logger, database db.DB, forgeProvider nodePoolForgeProvider, teleportCfg config.TeleportConfig, useControlPlaneController bool) *nodePoolService {
+func NewNodePoolService(logger *slog.Logger, database db.DB, forgeProvider nodePoolForgeProvider, teleportCfg config.TeleportConfig) *nodePoolService {
 	return &nodePoolService{
-		logger:                    logger,
-		db:                        database,
-		forgeProvider:             forgeProvider,
-		teleportCfg:               teleportCfg,
-		useControlPlaneController: useControlPlaneController,
+		logger:        logger,
+		db:            database,
+		forgeProvider: forgeProvider,
+		teleportCfg:   teleportCfg,
 	}
 }
 
@@ -116,7 +114,7 @@ func (s *nodePoolService) CreateNodePool(
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}
 
-	if s.useControlPlaneController && req.Body.ControlPlane {
+	if cluster.UsesControlPlaneController() && req.Body.ControlPlane {
 		return api.CreateNodePool400JSONResponse{Message: errControlPlaneNodePoolNotAllowed.Error()}, nil
 	}
 
@@ -149,7 +147,7 @@ func (s *nodePoolService) CreateNodePool(
 			return fmt.Errorf("failed to list node pools for pod CIDR capacity validation: %w", err)
 		}
 		nodePools = append(nodePools, dbNodePool)
-		if err := validateStoredPodCIDRCapacity(cluster, podCIDRNodePoolsWithClusterCP(s.useControlPlaneController, cluster, nodePools)); err != nil {
+		if err := validateStoredPodCIDRCapacity(cluster, podCIDRNodePoolsWithClusterCP(cluster.UsesControlPlaneController(), cluster, nodePools)); err != nil {
 			return newBadRequestErrorf("%s", err)
 		}
 
@@ -421,7 +419,7 @@ func (s *nodePoolService) UpdateNodePool(
 			return errNodePoolDeleting
 		}
 
-		if s.useControlPlaneController && dbNodePool.ControlPlane {
+		if cluster.UsesControlPlaneController() && dbNodePool.ControlPlane {
 			return &badRequestError{message: errControlPlaneNodePoolNotAllowed.Error()}
 		}
 		capacityCanIncrease := req.Body != nil &&
@@ -434,7 +432,7 @@ func (s *nodePoolService) UpdateNodePool(
 			if err != nil {
 				return fmt.Errorf("failed to list node pools for pod CIDR capacity validation: %w", err)
 			}
-			previousRequiredNodeBlocks = requiredPodCIDRNodeBlocks(podCIDRNodePoolsWithClusterCP(s.useControlPlaneController, cluster, nodePools), cluster.ControlPlaneConfig.MaxSurge)
+			previousRequiredNodeBlocks = requiredPodCIDRNodeBlocks(podCIDRNodePoolsWithClusterCP(cluster.UsesControlPlaneController(), cluster, nodePools), cluster.ControlPlaneConfig.MaxSurge)
 		}
 
 		if err := s.validateUpdateNodePoolRequest(ctx, cluster, req.Body); err != nil {
@@ -463,7 +461,7 @@ func (s *nodePoolService) UpdateNodePool(
 			if !found {
 				return fmt.Errorf("node pool %s is missing from cluster %s", dbNodePool.ID, cluster.ID)
 			}
-			augmentedNodePools := podCIDRNodePoolsWithClusterCP(s.useControlPlaneController, cluster, nodePools)
+			augmentedNodePools := podCIDRNodePoolsWithClusterCP(cluster.UsesControlPlaneController(), cluster, nodePools)
 			if requiredPodCIDRNodeBlocks(augmentedNodePools, cluster.ControlPlaneConfig.MaxSurge) > previousRequiredNodeBlocks {
 				if err := validateStoredPodCIDRCapacity(cluster, augmentedNodePools); err != nil {
 					return newBadRequestErrorf("%s", err)

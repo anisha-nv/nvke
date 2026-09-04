@@ -71,9 +71,9 @@ type joinCandidate struct {
 // a turn.
 // FIXME: after all CP deletes go through the controller, skip JoinNode while any CP node has Deleting=True.
 func (r *reconciler) reconcileControlPlaneJoins(ctx context.Context, cluster db.Cluster, cp *controlPlane) error {
-	// The control-plane controller only owns joins when it owns the control
-	// plane; otherwise control-plane nodes auto-join inline in ProvisionNode.
-	if !r.cfg.UseControlPlaneControllerForControlPlane() {
+	// The control-plane controller only owns joins for clusters it manages;
+	// otherwise control-plane nodes auto-join inline in ProvisionNode.
+	if !cluster.UsesControlPlaneController() {
 		return nil
 	}
 	if r.cweTemporalClient == nil {

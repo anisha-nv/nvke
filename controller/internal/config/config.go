@@ -251,12 +251,15 @@ type Config struct {
 	// environment; doing so would misroute production nodes to the DinD contract.
 	LocalDevForceDockerMachineBootstrap bool `env:"LOCAL_DEV_FORCE_DOCKER_MACHINE_BOOTSTRAP" default:"false"`
 
-	// ProvisionControlPlaneWithControlPlaneController routes control-plane node
-	// provisioning through the control-plane controller, which creates no-nodepool
-	// control-plane nodes. When enabled, the node set controller stops creating
-	// pending nodes for control-plane node pools so the two controllers never both
-	// create control-plane nodes. When false, control-plane nodes continue to be
-	// created by the node set controller from their node pool.
+	// ProvisionControlPlaneWithControlPlaneController is the fleet-wide allow-gate
+	// (rollout kill-switch) for control-plane controller provisioning. It does NOT
+	// select the mode for any cluster: the mode is chosen per-cluster, and a cluster
+	// runs in controller mode iff it carries a cluster-level controlPlaneConfig
+	// (db.Cluster.UsesControlPlaneController). This flag only governs whether the API
+	// will accept controlPlaneConfig at all, and what /api/version advertises to the
+	// UI. Default false: the feature is off, the API rejects controlPlaneConfig, the
+	// UI stays in legacy node-pool mode, and existing clusters are unaffected until an
+	// operator turns it on to roll the feature out. Runtime behavior never keys off it.
 	ProvisionControlPlaneWithControlPlaneController bool `env:"PROVISION_CONTROL_PLANE_WITH_CONTROL_PLANE_CONTROLLER" default:"false"`
 
 	// InstallCNIAfterInit installs CNI after kubeadm init, from a Debian package
@@ -429,10 +432,12 @@ func (c *TeleportConfig) Validate() error {
 	return nil
 }
 
-// UseControlPlaneControllerForControlPlane reports whether provisioning
-// of all control-plane nodes should be routed through the control-plane
-// controller path.
-func (c Config) UseControlPlaneControllerForControlPlane() bool {
+// ControlPlaneControllerAllowed reports whether this CWE permits clusters to opt
+// into control-plane controller provisioning (a cluster-level controlPlaneConfig).
+// It is a fleet-wide allow-gate / rollout kill-switch only; whether a given cluster
+// actually uses the controller is a per-cluster property
+// (db.Cluster.UsesControlPlaneController).
+func (c Config) ControlPlaneControllerAllowed() bool {
 	return c.ProvisionControlPlaneWithControlPlaneController
 }
 
