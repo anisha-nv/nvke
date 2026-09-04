@@ -103,10 +103,17 @@ func (c *Controller) reconcileNodeSet(ctx context.Context, tx db.Tx, nodeSet db.
 	// them as cluster-level no-nodepool nodes. Skip control-plane node sets
 	// entirely so the two controllers never both act on them; any legacy
 	// nodepool/node-set control-plane nodes are migrated to the control-plane
-	// controller.
-	if nodePool.ControlPlane && c.cfg.UseControlPlaneControllerForControlPlane() {
-		nsLogger.Debug("Control-plane node set fully managed by control-plane controller; skipping")
-		return nil
+	// controller. Keyed per-cluster: only clusters running in controller mode
+	// (their control plane is described by a cluster-level controlPlaneConfig).
+	if nodePool.ControlPlane {
+		cluster, err := tx.GetCluster(ctx, nodePool.ClusterID)
+		if err != nil {
+			return fmt.Errorf("failed to get cluster %s for control-plane node set check: %w", nodePool.ClusterID, err)
+		}
+		if cluster.UsesControlPlaneController() {
+			nsLogger.Debug("Control-plane node set fully managed by control-plane controller; skipping")
+			return nil
+		}
 	}
 
 	if nodePool.AutoProvisionDisabled {

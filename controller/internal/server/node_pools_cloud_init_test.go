@@ -17,7 +17,7 @@ import (
 )
 
 func TestValidateCreateNodePoolRequest_CAPICloudInitInputs(t *testing.T) {
-	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{}, false)
+	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{})
 
 	err := service.validateCreateNodePoolRequest(context.Background(), db.Cluster{SiteID: uuid.Nil}, &api.CreateNodePoolRequest{
 		Name:                       "worker",
@@ -35,7 +35,7 @@ func TestValidateCreateNodePoolRequest_CAPICloudInitInputs(t *testing.T) {
 }
 
 func TestValidateCreateNodePoolRequest_CAPIAllowsMissingConfigProfile(t *testing.T) {
-	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{}, false)
+	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{})
 
 	err := service.validateCreateNodePoolRequest(context.Background(), db.Cluster{SiteID: uuid.Nil}, &api.CreateNodePoolRequest{
 		Name:                       "worker",
@@ -48,7 +48,7 @@ func TestValidateCreateNodePoolRequest_CAPIAllowsMissingConfigProfile(t *testing
 }
 
 func TestValidateCreateNodePoolRequest_CAPIRejectsOSProfile(t *testing.T) {
-	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{}, false)
+	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{})
 
 	err := service.validateCreateNodePoolRequest(context.Background(), db.Cluster{SiteID: uuid.Nil}, &api.CreateNodePoolRequest{
 		Name:                       "worker",
@@ -63,7 +63,7 @@ func TestValidateCreateNodePoolRequest_CAPIRejectsOSProfile(t *testing.T) {
 }
 
 func TestValidateCreateNodePoolRequest_ForgeRejectsCAPICloudInitInputs(t *testing.T) {
-	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{}, false)
+	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{})
 
 	err := service.validateCreateNodePoolRequest(context.Background(), db.Cluster{SiteID: uuid.New()}, &api.CreateNodePoolRequest{
 		Name:                   "worker",
@@ -77,7 +77,7 @@ func TestValidateCreateNodePoolRequest_ForgeRejectsCAPICloudInitInputs(t *testin
 }
 
 func TestValidateCreateNodePoolRequest_ForgeRequiresConfigProfile(t *testing.T) {
-	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{}, false)
+	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{})
 
 	err := service.validateCreateNodePoolRequest(context.Background(), db.Cluster{SiteID: uuid.New()}, &api.CreateNodePoolRequest{
 		Name:             "worker",

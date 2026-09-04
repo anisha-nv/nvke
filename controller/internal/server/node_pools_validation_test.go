@@ -19,7 +19,7 @@ import (
 )
 
 func TestValidateCreateNodePoolRequest_CAPIRejectsForgeSpecificFieldsIndividually(t *testing.T) {
-	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{}, false)
+	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{})
 
 	t.Run("instanceTypeID", func(t *testing.T) {
 		err := service.validateCreateNodePoolRequest(context.Background(), db.Cluster{SiteID: uuid.Nil}, &api.CreateNodePoolRequest{
@@ -65,7 +65,7 @@ func TestValidateCreateNodePoolRequest_CAPIRejectsForgeSpecificFieldsIndividuall
 }
 
 func TestValidateCreateNodePoolRequest_ForgeRejectsCAPISpecificFieldsIndividually(t *testing.T) {
-	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{}, false)
+	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{})
 
 	t.Run("empty capiInfraMachineTemplate", func(t *testing.T) {
 		err := service.validateCreateNodePoolRequest(context.Background(), db.Cluster{SiteID: uuid.New()}, &api.CreateNodePoolRequest{
@@ -93,7 +93,7 @@ func TestValidateCreateNodePoolRequest_ForgeRejectsCAPISpecificFieldsIndividuall
 }
 
 func TestValidateUpdateNodePoolRequest_CAPIRejectsForgeSpecificFieldsIndividually(t *testing.T) {
-	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{}, false)
+	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{})
 
 	t.Run("explicit empty subnetIDs", func(t *testing.T) {
 		err := service.validateUpdateNodePoolRequest(context.Background(), db.Cluster{SiteID: uuid.Nil}, &api.UpdateNodePoolRequest{
@@ -122,7 +122,7 @@ func TestValidateUpdateNodePoolRequest_CAPIRejectsForgeSpecificFieldsIndividuall
 }
 
 func TestValidateUpdateNodePoolRequest_ForgeRejectsCAPISpecificFieldsIndividually(t *testing.T) {
-	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{}, false)
+	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{})
 
 	t.Run("capiBootstrapFiles", func(t *testing.T) {
 		err := service.validateUpdateNodePoolRequest(context.Background(), db.Cluster{SiteID: uuid.New()}, &api.UpdateNodePoolRequest{
@@ -152,7 +152,7 @@ func TestValidateUpdatedNodePool_CAPIRequiresEmptyDiskSelectionStrategy(t *testi
 }
 
 func TestValidateCreateNodePoolRequest_NodeNamePrefixLength(t *testing.T) {
-	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{}, false)
+	service := NewNodePoolService(slog.Default(), nil, nil, config.TeleportConfig{})
 	clusterName := "runtime-dgxc-k8s-forge-ytl-dev1"
 
 	t.Run("accepts short prefix", func(t *testing.T) {

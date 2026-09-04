@@ -44,7 +44,7 @@ func (r *reconciler) reconcile(ctx context.Context, cluster db.Cluster) error {
 		return nil
 	}
 
-	controlPlane, err := readControlPlane(ctx, r.db, cluster, r.cfg.UseControlPlaneControllerForControlPlane())
+	controlPlane, err := readControlPlane(ctx, r.db, cluster, cluster.UsesControlPlaneController())
 	if err != nil {
 		return fmt.Errorf("reading control plane: %w", err)
 	}
@@ -87,7 +87,7 @@ func (r *reconciler) reconcileControlPlaneScaleUp(
 	cluster db.Cluster,
 	controlPlane *controlPlane,
 ) error {
-	if !r.cfg.UseControlPlaneControllerForControlPlane() {
+	if !cluster.UsesControlPlaneController() {
 		return nil
 	}
 

@@ -55,20 +55,16 @@ type clusterService interface {
 }
 
 // newTestClusterService creates a clusterService with a nodePoolService that has a mock forge provider
-// The getSiteByIDFunc is optional - if nil, GetSiteByID will return an error if called
+// The getSiteByIDFunc is optional - if nil, GetSiteByID will return an error if called.
+// The control-plane controller allow-gate is enabled here so tests can exercise
+// cluster-level controlPlaneConfig; the per-cluster mode is still chosen by whether
+// a request supplies controlPlaneConfig.
 func newTestClusterService(logger *slog.Logger, mockDB *mockDB, getSiteByIDFunc func(ctx context.Context, orgID, siteID string) (*forgesdk.Site, error)) clusterService {
-	return newTestClusterServiceWithControlPlaneController(logger, mockDB, getSiteByIDFunc, false)
-}
-
-// newTestClusterServiceWithControlPlaneController builds a clusterService with the
-// PROVISION_CONTROL_PLANE_WITH_CONTROL_PLANE_CONTROLLER feature flag set to
-// useControlPlaneController.
-func newTestClusterServiceWithControlPlaneController(logger *slog.Logger, mockDB *mockDB, getSiteByIDFunc func(ctx context.Context, orgID, siteID string) (*forgesdk.Site, error), useControlPlaneController bool) clusterService {
 	mockForge := &mockForgeProvider{
 		getSiteByIDFunc: getSiteByIDFunc,
 	}
-	nodePoolService := server.NewNodePoolService(logger, mockDB, mockForge, config.TeleportConfig{}, useControlPlaneController)
-	return server.NewClusterService(logger, mockDB, nodePoolService, config.TeleportConfig{}, false, useControlPlaneController)
+	nodePoolService := server.NewNodePoolService(logger, mockDB, mockForge, config.TeleportConfig{})
+	return server.NewClusterService(logger, mockDB, nodePoolService, config.TeleportConfig{}, false, true)
 }
 
 func discardLogger() *slog.Logger {
@@ -1692,20 +1688,25 @@ func TestClusterService_GetCluster_ExposesUpdateFailed(t *testing.T) {
 	mockDB.AssertExpectations(t)
 }
 
+// TestClusterService_UpdateCluster_ControlPlaneConfig covers a legacy
+// (node-pool) cluster patching cluster-level maxSurge. maxSurge lives on the
+// cluster row, so the PATCH must persist it without creating a control-plane
+// configuration row -- creating one would stamp a ConfigurationID and silently
+// flip the cluster into control-plane-controller mode. Spec-level knobs
+// (instanceTypePreference / provisioningMonitorDisabled) are controller-mode
+// concerns and are covered by the cluster_control_plane_config tests.
 func TestClusterService_UpdateCluster_ControlPlaneConfig(t *testing.T) {
 	clusterID := uuid.New()
-	customInst := uuid.MustParse("aaaaaaaa-0000-0000-0000-000000000099")
 	maxSurge := 1
-	prefs := []openapi_types.UUID{customInst}
-	provisioningMonitorDisabled := true
-	createdCfgID := uuid.New()
 
 	mockDB := &mockDB{}
 	mockDB.MockTx = &mockTx{}
 	mockDB.GetTx = func() db.Tx { return mockDB.MockTx }
 	mockDB.On("RunInTx", mock.Anything, mock.Anything).Return(nil).Once()
 	mockDB.MockTx.On("GetClusterForUpdate", mock.Anything, clusterID).Return(db.Cluster{
-		ID: clusterID,
+		ID:                clusterID,
+		SiteID:            uuid.New(),
+		KubernetesVersion: "1.29.0",
 		ControlPlaneConfig: db.ControlPlaneConfig{
 			MaxSurge: 0,
 		},
@@ -1715,32 +1716,14 @@ func TestClusterService_UpdateCluster_ControlPlaneConfig(t *testing.T) {
 		mock.Anything,
 		db.NodePoolFilters{ClusterID: &clusterID},
 	).Return([]db.NodePool{}, nil).Once()
-	mockDB.MockTx.On("CreateControlPlaneConfiguration", mock.Anything, mock.AnythingOfType("*db.ControlPlaneConfiguration")).Return(db.ControlPlaneConfiguration{
-		ID:        createdCfgID,
-		ClusterID: clusterID,
-		Config: db.ControlPlaneConfigSpec{
-			InstanceTypePreference:      []uuid.UUID{customInst},
-			ProvisioningMonitorDisabled: true,
-		},
-	}, nil).Once()
 	mockDB.MockTx.On("UpdateCluster", mock.Anything, mock.MatchedBy(func(c *db.Cluster) bool {
 		return c.ControlPlaneConfig.MaxSurge == 1 &&
-			len(c.ControlPlaneConfig.InstanceTypePreference) == 1 &&
-			c.ControlPlaneConfig.InstanceTypePreference[0] == customInst &&
-			c.ControlPlaneConfig.ProvisioningMonitorDisabled
+			c.ControlPlaneConfig.ConfigurationID == uuid.Nil
 	})).Return(db.Cluster{
-		ID: clusterID,
+		ID:     clusterID,
+		SiteID: uuid.New(),
 		ControlPlaneConfig: db.ControlPlaneConfig{
-			ConfigurationID: createdCfgID,
-			MaxSurge:        1,
-		},
-	}, nil).Once()
-	mockDB.MockTx.On("GetControlPlaneConfiguration", mock.Anything, createdCfgID).Return(db.ControlPlaneConfiguration{
-		ID:        createdCfgID,
-		ClusterID: clusterID,
-		Config: db.ControlPlaneConfigSpec{
-			InstanceTypePreference:      []uuid.UUID{customInst},
-			ProvisioningMonitorDisabled: true,
+			MaxSurge: 1,
 		},
 	}, nil).Once()
 
@@ -1749,9 +1732,7 @@ func TestClusterService_UpdateCluster_ControlPlaneConfig(t *testing.T) {
 		ClusterID: clusterID,
 		Body: &api.UpdateClusterRequest{
 			ControlPlaneConfig: &api.UpdateClusterControlPlaneConfig{
-				MaxSurge:                    &maxSurge,
-				InstanceTypePreference:      &prefs,
-				ProvisioningMonitorDisabled: &provisioningMonitorDisabled,
+				MaxSurge: &maxSurge,
 			},
 		},
 	})
@@ -1761,8 +1742,8 @@ func TestClusterService_UpdateCluster_ControlPlaneConfig(t *testing.T) {
 	require.NotNil(t, body.ControlPlaneConfig)
 	require.NotNil(t, body.ControlPlaneConfig.MaxSurge)
 	assert.Equal(t, 1, *body.ControlPlaneConfig.MaxSurge)
-	require.NotNil(t, body.ControlPlaneConfig.ProvisioningMonitorDisabled)
-	assert.True(t, *body.ControlPlaneConfig.ProvisioningMonitorDisabled)
+	// A legacy maxSurge PATCH must not create a control-plane configuration row.
+	mockDB.MockTx.AssertNotCalled(t, "CreateControlPlaneConfiguration", mock.Anything, mock.Anything)
 	mockDB.AssertExpectations(t)
 }
 
@@ -1861,7 +1842,7 @@ func TestClusterService_UpdateCluster_ControlPlaneConfig_RejectsPodCIDRCapacityE
 		MaxSurge:     1,
 	}}, nil).Once()
 
-	svc := newTestClusterServiceWithControlPlaneController(discardLogger(), mockDB, nil, true)
+	svc := newTestClusterService(discardLogger(), mockDB, nil)
 	resp, err := svc.UpdateCluster(context.Background(), api.UpdateClusterRequestObject{
 		ClusterID: clusterID,
 		Body: &api.UpdateClusterRequest{

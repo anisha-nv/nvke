@@ -116,7 +116,7 @@ func (r *reconciler) startK8sUpgrade(
 	// Update OSProfiles for node pools, which makes old NodeSets deprecated automatically.
 	// Skipped under the control-plane-controller path: no CP node pools, and the new
 	// version already lives in the cluster snapshot.
-	if !r.cfg.UseControlPlaneControllerForControlPlane() {
+	if !cluster.UsesControlPlaneController() {
 		if err := r.updateNodePoolsKubeVersion(ctx, cluster, cp.nodePools, logger); err != nil {
 			logger.Error("Failed to update OSProfile", "error", err)
 			return err
@@ -142,7 +142,7 @@ func (r *reconciler) isK8sVersionUpgradeNeeded(
 ) bool {
 	// Control-plane-controller path: derive the need from each node's pinned
 	// snapshot k8s version.
-	if r.cfg.UseControlPlaneControllerForControlPlane() {
+	if cluster.UsesControlPlaneController() {
 		needed := cp.controlPlaneControllerNeedsK8sUpgrade(cluster.KubernetesVersion)
 		if needed {
 			logger.Info("Control plane needs k8s upgrade", "targetVersion", cluster.KubernetesVersion)
@@ -511,7 +511,7 @@ func (r *reconciler) upgradeAddons(
 
 	// The node-pool guard is spurious under the control-plane-controller path (no
 	// CP node pools); the node guard below still applies.
-	if !r.cfg.UseControlPlaneControllerForControlPlane() && len(cp.nodePools) == 0 {
+	if !cluster.UsesControlPlaneController() && len(cp.nodePools) == 0 {
 		return false, fmt.Errorf("no control plane node pools found for cluster %s", cluster.ID)
 	}
 
