@@ -57,6 +57,74 @@ func TestGenerateSiteSpecWritesToStdout(t *testing.T) {
 	}
 }
 
+func TestGenerateClusterSpecWritesCreateReadyCAPDSpec(t *testing.T) {
+	stdout, _, err := runGenerate(t, "generate", "clusterspec", "local-demo", "--provider", "capd")
+	if err != nil {
+		t.Fatalf("generate clusterspec: %v", err)
+	}
+	for _, want := range []string{"infra:", "DockerCluster", "DockerMachineTemplate", "local-demo-control-plane-template"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("CAPD spec missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestGenerateClusterSpecRejectsIncompleteNicoInputWithoutStdout(t *testing.T) {
+	stdout, _, err := runGenerate(t, "generate", "clusterspec", "nico-demo", "--provider", "nico", "--non-interactive")
+	if err == nil {
+		t.Fatal("generate clusterspec accepted missing NICo input")
+	}
+	if stdout != "" {
+		t.Errorf("failed generation wrote stdout:\n%s", stdout)
+	}
+	if !strings.Contains(err.Error(), "--org-id") {
+		t.Errorf("error %q does not explain required NICo input", err)
+	}
+}
+
+func TestGenerateClusterSpecNicoHelpExplainsNicoFields(t *testing.T) {
+	stdout, _, err := runGenerate(t, "generate", "clusterspec", "--provider", "nico", "--help")
+	if err != nil {
+		t.Fatalf("clusterspec help: %v", err)
+	}
+	for _, want := range []string{"NICo input", "--vpc-prefix-id", "--subnet-id", "Non-terminal invocations"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("NICo help is missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestGenerateClusterSpecPromptsForMissingNicoInput(t *testing.T) {
+	answers := strings.Join([]string{
+		"33333333-3333-4333-8333-333333333333", // VPC prefix
+		"example-org",
+		"11111111-1111-4111-8111-111111111111", // site
+		"22222222-2222-4222-8222-222222222222", // VPC
+		"44444444-4444-4444-8444-444444444444", // instance type
+		"55555555-5555-4555-8555-555555555555", // key group
+		"nke-os",
+		"default-cp",
+		"default-worker",
+	}, "\n") + "\n"
+	var stdout, stderr bytes.Buffer
+	root := newRootCmd("test", "none", "clean", "now")
+	root.SetIn(strings.NewReader(answers))
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{"generate", "clusterspec", "nico-demo", "--provider", "nico"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("interactive generate: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "nico:") {
+		t.Errorf("interactive generation did not emit NICo YAML:\n%s", stdout.String())
+	}
+	for _, want := range []string{"NICo VPC prefix UUID", "NICo organization ID", "NICo worker config profile"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("prompt output is missing %q:\n%s", want, stderr.String())
+		}
+	}
+}
+
 // TestGenerateSiteSpecThenBootstrapDryRun is the end-to-end claim: what
 // generate writes, bootstrap site accepts, with no editing in between. Every
 // other test proves a part of that; this one proves the whole of it.
