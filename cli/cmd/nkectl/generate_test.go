@@ -77,7 +77,7 @@ func TestGenerateClusterSpecRejectsIncompleteNicoInputWithoutStdout(t *testing.T
 	if stdout != "" {
 		t.Errorf("failed generation wrote stdout:\n%s", stdout)
 	}
-	if !strings.Contains(err.Error(), "--org-id") {
+	if !strings.Contains(err.Error(), "nico.orgID") {
 		t.Errorf("error %q does not explain required NICo input", err)
 	}
 }
@@ -87,7 +87,7 @@ func TestGenerateClusterSpecNicoHelpExplainsNicoFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clusterspec help: %v", err)
 	}
-	for _, want := range []string{"NICo input", "--vpc-prefix-id", "--subnet-id", "Non-terminal invocations"} {
+	for _, want := range []string{"NICo fields", "nico.vpcPrefixID", "nico.subnetID", "nodePools.worker.nico.configProfile"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("NICo help is missing %q:\n%s", want, stdout)
 		}
@@ -96,7 +96,6 @@ func TestGenerateClusterSpecNicoHelpExplainsNicoFields(t *testing.T) {
 
 func TestGenerateClusterSpecPromptsForMissingNicoInput(t *testing.T) {
 	answers := strings.Join([]string{
-		"33333333-3333-4333-8333-333333333333", // VPC prefix
 		"example-org",
 		"11111111-1111-4111-8111-111111111111", // site
 		"22222222-2222-4222-8222-222222222222", // VPC
@@ -105,6 +104,7 @@ func TestGenerateClusterSpecPromptsForMissingNicoInput(t *testing.T) {
 		"nke-os",
 		"default-cp",
 		"default-worker",
+		"33333333-3333-4333-8333-333333333333", // VPC prefix
 	}, "\n") + "\n"
 	var stdout, stderr bytes.Buffer
 	root := newRootCmd("test", "none", "clean", "now")
@@ -118,9 +118,30 @@ func TestGenerateClusterSpecPromptsForMissingNicoInput(t *testing.T) {
 	if !strings.Contains(stdout.String(), "nico:") {
 		t.Errorf("interactive generation did not emit NICo YAML:\n%s", stdout.String())
 	}
-	for _, want := range []string{"NICo VPC prefix UUID", "NICo organization ID", "NICo worker config profile"} {
+	for _, want := range []string{"nico.orgID", "nico.vpcPrefixID", "nodePools.worker.nico.configProfile"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("prompt output is missing %q:\n%s", want, stderr.String())
+		}
+	}
+}
+
+func TestGenerateClusterSpecNicoSetsReachTheRequest(t *testing.T) {
+	stdout, _, err := runGenerate(t, "generate", "clusterspec", "nico-demo", "--provider", "nico", "--non-interactive",
+		"--set", "nico.orgID=example-org",
+		"--set", "nico.siteID=11111111-1111-4111-8111-111111111111",
+		"--set", "nico.vpcID=22222222-2222-4222-8222-222222222222",
+		"--set", "nico.vpcPrefixID=33333333-3333-4333-8333-333333333333",
+		"--set", "nico.instanceTypeID=44444444-4444-4444-8444-444444444444",
+		"--set", "nico.sshKeyGroupID=55555555-5555-4555-8555-555555555555",
+		"--set", "nico.osProfile=example-nke-os",
+		"--set", "nodePools.controlPlane.nico.configProfile=example-control-plane",
+		"--set", "nodePools.worker.nico.configProfile=example-worker")
+	if err != nil {
+		t.Fatalf("generate clusterspec with --set: %v", err)
+	}
+	for _, want := range []string{"orgID: example-org", "configProfile: example-control-plane", "configProfile: example-worker"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("--set output missing %q:\n%s", want, stdout)
 		}
 	}
 }

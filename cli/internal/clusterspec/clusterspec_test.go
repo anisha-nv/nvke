@@ -104,7 +104,7 @@ func TestBuildNicoRejectsMissingProviderInputWithoutRendering(t *testing.T) {
 	if err == nil {
 		t.Fatal("Build accepted missing NICo input")
 	}
-	for _, want := range []string{"--org-id", "--site-id", "--vpc-id", "--vpc-prefix-id", "--os-profile"} {
+	for _, want := range []string{"nico.orgID", "nico.siteID", "nico.vpcID", "nico.vpcPrefixID", "nico.osProfile"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not name %s", err, want)
 		}

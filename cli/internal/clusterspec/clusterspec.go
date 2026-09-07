@@ -150,44 +150,44 @@ func buildNico(req *api.CreateClusterRequest, in Input) error {
 	n := in.Nico
 	var errs []error
 	for _, field := range []struct{ name, value string }{
-		{"--org-id", n.OrgID},
-		{"--site-id", n.SiteID},
-		{"--vpc-id", n.VpcID},
-		{"--instance-type-id", n.InstanceTypeID},
-		{"--ssh-key-group-id", n.SSHKeyGroupID},
-		{"--os-profile", n.OSProfile},
-		{"--control-plane-config-profile", n.ControlPlaneConfigProfile},
+		{"nico.orgID", n.OrgID},
+		{"nico.siteID", n.SiteID},
+		{"nico.vpcID", n.VpcID},
+		{"nico.instanceTypeID", n.InstanceTypeID},
+		{"nico.sshKeyGroupID", n.SSHKeyGroupID},
+		{"nico.osProfile", n.OSProfile},
+		{"nodePools.controlPlane.nico.configProfile", n.ControlPlaneConfigProfile},
 	} {
 		if strings.TrimSpace(field.value) == "" {
 			errs = append(errs, fmt.Errorf("%s is required for provider nico", field.name))
 		}
 	}
 	if in.WorkerCount > 0 && strings.TrimSpace(n.WorkerConfigProfile) == "" {
-		errs = append(errs, errors.New("--worker-config-profile is required for provider nico when worker count is nonzero"))
+		errs = append(errs, errors.New("nodePools.worker.nico.configProfile is required for provider nico when worker count is nonzero"))
 	}
 	if n.VpcPrefixID == "" && n.SubnetID == "" {
-		errs = append(errs, errors.New("one of --vpc-prefix-id or --subnet-id is required for provider nico"))
+		errs = append(errs, errors.New("one of nico.vpcPrefixID or nico.subnetID is required for provider nico"))
 	}
 	if n.VpcPrefixID != "" && n.SubnetID != "" {
-		errs = append(errs, errors.New("--vpc-prefix-id and --subnet-id are mutually exclusive"))
+		errs = append(errs, errors.New("nico.vpcPrefixID and nico.subnetID are mutually exclusive"))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return err
 	}
 
-	siteID, err := parseUUID("--site-id", n.SiteID)
+	siteID, err := parseUUID("nico.siteID", n.SiteID)
 	if err != nil {
 		return err
 	}
-	vpcID, err := parseUUID("--vpc-id", n.VpcID)
+	vpcID, err := parseUUID("nico.vpcID", n.VpcID)
 	if err != nil {
 		return err
 	}
-	instanceTypeID, err := parseUUID("--instance-type-id", n.InstanceTypeID)
+	instanceTypeID, err := parseUUID("nico.instanceTypeID", n.InstanceTypeID)
 	if err != nil {
 		return err
 	}
-	sshKeyGroupID, err := parseUUID("--ssh-key-group-id", n.SSHKeyGroupID)
+	sshKeyGroupID, err := parseUUID("nico.sshKeyGroupID", n.SSHKeyGroupID)
 	if err != nil {
 		return err
 	}
@@ -198,13 +198,13 @@ func buildNico(req *api.CreateClusterRequest, in Input) error {
 		SSHKeyGroupIDs: &[]uuid.UUID{sshKeyGroupID},
 	}
 	if n.VpcPrefixID != "" {
-		prefixID, err := parseUUID("--vpc-prefix-id", n.VpcPrefixID)
+		prefixID, err := parseUUID("nico.vpcPrefixID", n.VpcPrefixID)
 		if err != nil {
 			return err
 		}
 		provider.VpcPrefixIDs = []uuid.UUID{prefixID}
 	} else {
-		subnetID, err := parseUUID("--subnet-id", n.SubnetID)
+		subnetID, err := parseUUID("nico.subnetID", n.SubnetID)
 		if err != nil {
 			return err
 		}
