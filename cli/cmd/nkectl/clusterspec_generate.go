@@ -55,23 +55,50 @@ node pools where applicable.`
 	if provider != clusterspec.ProviderNico && provider != clusterspec.ProviderCAPD {
 		return common + "\n\nUse --provider nico --help or --provider capd --help to list only that provider's fields."
 	}
-	var lines []string
-	for _, field := range clusterspec.Fields(provider) {
-		requirement := "optional"
-		if field.Required {
-			requirement = "required"
-		}
-		description := strings.ReplaceAll(field.Description, "\n", " ")
-		lines = append(lines, fmt.Sprintf("  %s (%s): %s", field.Path, requirement, description))
-	}
+	lines := formatClusterSpecFields(clusterspec.Fields(provider))
 	if provider == clusterspec.ProviderNico {
-		lines = append(lines, "  nico.vpcPrefixID or nico.subnetID (exactly one): NICo network ID for all generated node pools.")
+		lines = append(lines, "  Network: set exactly one of nico.vpcPrefixID or nico.subnetID.")
 		return common + "\n\nNICo fields\n" + strings.Join(lines, "\n") + `
 
 When attached to a terminal, missing NICo fields are prompted on standard error.
 YAML remains on standard output, so "> cluster.yaml" is safe.`
 	}
 	return common + "\n\nCAPD fields\n" + strings.Join(lines, "\n")
+}
+
+func formatClusterSpecFields(fields []clusterspec.Field) []string {
+	lines := make([]string, 0, len(fields)*4)
+	for _, field := range fields {
+		status := "optional"
+		if field.Required {
+			status = "required"
+		}
+		lines = append(lines, fmt.Sprintf("  --set %s=<value>  [%s]", field.Path, status))
+		if field.Default != "" {
+			lines = append(lines, "      Default: "+field.Default)
+		}
+		for _, line := range wrapHelpText(field.Description, 76) {
+			lines = append(lines, "      "+line)
+		}
+	}
+	return lines
+}
+
+func wrapHelpText(text string, width int) []string {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return nil
+	}
+	lines := []string{words[0]}
+	for _, word := range words[1:] {
+		last := len(lines) - 1
+		if len(lines[last])+1+len(word) <= width {
+			lines[last] += " " + word
+			continue
+		}
+		lines = append(lines, word)
+	}
+	return lines
 }
 
 func generateClusterSpecExample(provider string) string {

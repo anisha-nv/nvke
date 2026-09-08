@@ -20,6 +20,7 @@ type Field struct {
 	Path        string
 	Description string
 	Required    bool
+	Default     string
 	provider    string
 	schema      string
 	property    string
@@ -45,15 +46,15 @@ func Fields(provider string) []Field {
 }
 
 var commonFields = []Field{
-	{Path: "controlPlaneKubernetesVersion", schema: "CreateClusterRequest", property: "controlPlaneKubernetesVersion"},
-	{Path: "cniPlugin", schema: "CreateClusterRequest", property: "cniPlugin"},
+	{Path: "controlPlaneKubernetesVersion", Default: "1.34.2", schema: "CreateClusterRequest", property: "controlPlaneKubernetesVersion"},
+	{Path: "cniPlugin", Default: "calico", schema: "CreateClusterRequest", property: "cniPlugin"},
 	{Path: "cniVersion", schema: "CreateClusterRequest", property: "cniVersion"},
-	{Path: "etcdEncrypted", schema: "CreateClusterRequest", property: "etcdEncrypted"},
+	{Path: "etcdEncrypted", Default: "false", schema: "CreateClusterRequest", property: "etcdEncrypted"},
 	{Path: "controlPlaneVIP", schema: "CreateClusterRequest", property: "controlPlaneVIP"},
-	{Path: "nodePools.controlPlane.desiredNodeCount", schema: "NodePoolCreateConfig", property: "desiredNodeCount"},
-	{Path: "nodePools.worker.desiredNodeCount", schema: "NodePoolCreateConfig", property: "desiredNodeCount"},
-	{Path: "nodePools.controlPlane.systemReservedMemory", schema: "NodePoolCreateConfig", property: "systemReservedMemory"},
-	{Path: "nodePools.worker.systemReservedMemory", schema: "NodePoolCreateConfig", property: "systemReservedMemory"},
+	{Path: "nodePools.controlPlane.desiredNodeCount", Default: "1", schema: "NodePoolCreateConfig", property: "desiredNodeCount"},
+	{Path: "nodePools.worker.desiredNodeCount", Default: "1", schema: "NodePoolCreateConfig", property: "desiredNodeCount"},
+	{Path: "nodePools.controlPlane.systemReservedMemory", Default: "1Gi", schema: "NodePoolCreateConfig", property: "systemReservedMemory"},
+	{Path: "nodePools.worker.systemReservedMemory", Default: "1Gi", schema: "NodePoolCreateConfig", property: "systemReservedMemory"},
 }
 
 var nicoFields = []Field{
@@ -70,7 +71,7 @@ var nicoFields = []Field{
 }
 
 var capdFields = []Field{
-	{Path: "capd.machineImage", provider: ProviderCAPD, Description: "Container image for generated CAPD DockerMachineTemplates. Defaults to cwe-capd-kindest-node:local."},
+	{Path: "capd.machineImage", Default: "cwe-capd-kindest-node:local", provider: ProviderCAPD, Description: "Container image for generated CAPD DockerMachineTemplates."},
 }
 
 // DefaultInput creates the provider template before --set values are applied.
