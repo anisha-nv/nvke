@@ -1,0 +1,247 @@
+{
+  "LaunchLayerCluster": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "type": "object"
+      },
+      "spec": {
+        "properties": {
+          "cloudProviderEnabled": {
+            "type": "boolean"
+          },
+          "orgID": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "owner": {
+            "properties": {
+              "userID": {
+                "maxLength": 253,
+                "type": "string"
+              },
+              "username": {
+                "maxLength": 253,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "siteID": {
+            "type": "string"
+          },
+          "vpcID": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "x-kubernetes-validations": [
+          {
+            "message": "exactly one of vpcID or orgID must be set",
+            "rule": "has(self.vpcID) != has(self.orgID)"
+          },
+          {
+            "message": "vpcID is immutable",
+            "rule": "has(self.vpcID) == has(oldSelf.vpcID) && (!has(self.vpcID) || self.vpcID == oldSelf.vpcID)"
+          },
+          {
+            "message": "orgID is immutable",
+            "rule": "has(self.orgID) == has(oldSelf.orgID) && (!has(self.orgID) || self.orgID == oldSelf.orgID)"
+          },
+          {
+            "message": "cloudProviderEnabled is immutable",
+            "rule": "has(self.cloudProviderEnabled) == has(oldSelf.cloudProviderEnabled) && (!has(self.cloudProviderEnabled) || self.cloudProviderEnabled == oldSelf.cloudProviderEnabled)"
+          }
+        ]
+      }
+    },
+    "required": [
+      "spec"
+    ],
+    "type": "object",
+    "x-kubernetes-validations": [
+      {
+        "message": "spec.siteID is immutable after a VPC is bound",
+        "rule": "!has(oldSelf.status) || !has(oldSelf.status.vpc) || (has(self.spec.siteID) == has(oldSelf.spec.siteID) && (!has(self.spec.siteID) || self.spec.siteID == oldSelf.spec.siteID))"
+      },
+      {
+        "message": "spec.owner is immutable after a VPC is bound",
+        "rule": "!has(oldSelf.status) || !has(oldSelf.status.vpc) || (has(self.spec.owner) == has(oldSelf.spec.owner) && (!has(self.spec.owner) || self.spec.owner == oldSelf.spec.owner))"
+      }
+    ]
+  },
+  "LaunchLayerMachine": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "type": "object"
+      },
+      "spec": {
+        "properties": {
+          "fulfillmentStrategy": {
+            "enum": [
+              "BEST_EFFORT",
+              "ALL_OR_NOTHING",
+              "WAIT_FOR_RESOURCE"
+            ],
+            "type": "string"
+          },
+          "hostOSProfile": {
+            "type": "string"
+          },
+          "instanceType": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "providerID": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "securityGroups": {
+            "properties": {
+              "gpuNetworkInterface": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "primaryNetworkInterface": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "vmProfile": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "instanceType"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "object",
+    "x-kubernetes-validations": [
+      {
+        "message": "spec.instanceType is immutable after a compute request is submitted",
+        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID)) || self.spec.instanceType == oldSelf.spec.instanceType"
+      },
+      {
+        "message": "spec.hostOSProfile is immutable after a compute request is submitted",
+        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID)) || (has(self.spec.hostOSProfile) == has(oldSelf.spec.hostOSProfile) && (!has(self.spec.hostOSProfile) || self.spec.hostOSProfile == oldSelf.spec.hostOSProfile))"
+      },
+      {
+        "message": "spec.vmProfile is immutable after a compute request is submitted",
+        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID)) || (has(self.spec.vmProfile) == has(oldSelf.spec.vmProfile) && (!has(self.spec.vmProfile) || self.spec.vmProfile == oldSelf.spec.vmProfile))"
+      },
+      {
+        "message": "spec.fulfillmentStrategy is immutable after a compute request is submitted",
+        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID)) || (has(self.spec.fulfillmentStrategy) == has(oldSelf.spec.fulfillmentStrategy) && (!has(self.spec.fulfillmentStrategy) || self.spec.fulfillmentStrategy == oldSelf.spec.fulfillmentStrategy))"
+      },
+      {
+        "message": "spec.securityGroups is immutable after a compute request is submitted",
+        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID)) || (has(self.spec.securityGroups) == has(oldSelf.spec.securityGroups) && (!has(self.spec.securityGroups) || self.spec.securityGroups == oldSelf.spec.securityGroups))"
+      }
+    ]
+  },
+  "LaunchLayerMachineTemplate": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "type": "object"
+      },
+      "spec": {
+        "properties": {
+          "template": {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "fulfillmentStrategy": {
+                    "enum": [
+                      "BEST_EFFORT",
+                      "ALL_OR_NOTHING",
+                      "WAIT_FOR_RESOURCE"
+                    ],
+                    "type": "string"
+                  },
+                  "hostOSProfile": {
+                    "type": "string"
+                  },
+                  "instanceType": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "providerID": {
+                    "maxLength": 512,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "securityGroups": {
+                    "properties": {
+                      "gpuNetworkInterface": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "primaryNetworkInterface": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "vmProfile": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "instanceType"
+                ],
+                "type": "object",
+                "x-kubernetes-validations": [
+                  {
+                    "message": "spec.template.spec is immutable",
+                    "rule": "self == oldSelf"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "spec"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "template"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "object"
+  }
+}

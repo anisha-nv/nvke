@@ -1,0 +1,135 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: launchlayermachinetemplates.infrastructure.cluster.x-k8s.io
+spec:
+  group: infrastructure.cluster.x-k8s.io
+  names:
+    categories:
+    - cluster-api
+    kind: LaunchLayerMachineTemplate
+    listKind: LaunchLayerMachineTemplateList
+    plural: launchlayermachinetemplates
+    shortNames:
+    - llmt
+    singular: launchlayermachinetemplate
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: Compute instance type
+      jsonPath: .spec.template.spec.instanceType
+      name: InstanceType
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: LaunchLayerMachineTemplate is the Schema for the launchlayermachinetemplates
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              LaunchLayerMachineTemplateSpec defines the desired state of
+              LaunchLayerMachineTemplate.
+            properties:
+              template:
+                description: Template is the clone-safe intent for machines in this
+                  pool.
+                properties:
+                  spec:
+                    description: Spec is the LaunchLayerMachine spec every clone receives.
+                    properties:
+                      fulfillmentStrategy:
+                        description: |-
+                          FulfillmentStrategy controls how the Compute Allocation Operator places
+                          the request.
+                        enum:
+                        - BEST_EFFORT
+                        - ALL_OR_NOTHING
+                        - WAIT_FOR_RESOURCE
+                        type: string
+                      hostOSProfile:
+                        description: |-
+                          HostOSProfile selects a Settings host_os_profiles entry for bare-metal
+                          provisioning, as "<name>" or "<name>:<version>". LaunchLayer ignores it
+                          when the instance type resolves to a virtual machine.
+                        type: string
+                      instanceType:
+                        description: |-
+                          InstanceType requests capacity of a given shape through the Compute API,
+                          for example "vm200". The instance type decides whether the result is
+                          virtual or physical.
+                        minLength: 1
+                        type: string
+                      providerID:
+                        description: |-
+                          ProviderID is the stable identity CAPI copies onto the Machine, in the
+                          form launchlayer://<vpc>/instance/<instance_id>.
+                        maxLength: 512
+                        minLength: 1
+                        type: string
+                      securityGroups:
+                        description: |-
+                          SecurityGroups are existing LaunchLayer security group IDs to attach.
+                          CAPLL references them and never creates them, so they must already exist
+                          and belong to the same organisation as the VPC. They belong on the
+                          template rather than the cluster because a GPU pool and a control plane
+                          need different groups.
+                        properties:
+                          gpuNetworkInterface:
+                            description: GPUNetworkInterface are the groups for GPU-paired
+                              network cards.
+                            items:
+                              type: string
+                            type: array
+                          primaryNetworkInterface:
+                            description: PrimaryNetworkInterface are the groups for
+                              the primary interface.
+                            items:
+                              type: string
+                            type: array
+                        type: object
+                      vmProfile:
+                        description: |-
+                          VMProfile selects a Settings vm_profiles entry for virtual provisioning,
+                          as "<name>" or "<name>:<version>". LaunchLayer ignores it when the
+                          instance type resolves to bare metal.
+                        type: string
+                    required:
+                    - instanceType
+                    type: object
+                    x-kubernetes-validations:
+                    - message: spec.template.spec is immutable
+                      rule: self == oldSelf
+                required:
+                - spec
+                type: object
+            required:
+            - template
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources: {}

@@ -1,0 +1,281 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: launchlayermachines.infrastructure.cluster.x-k8s.io
+spec:
+  group: infrastructure.cluster.x-k8s.io
+  names:
+    categories:
+    - cluster-api
+    kind: LaunchLayerMachine
+    listKind: LaunchLayerMachineList
+    plural: launchlayermachines
+    shortNames:
+    - llm
+    singular: launchlayermachine
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: Current machine infrastructure availability
+      jsonPath: .status.conditions[?(@.type=='Available')].status
+      name: Available
+      type: string
+    - description: Machine infrastructure reconciled
+      jsonPath: .status.conditions[?(@.type=='Synced')].status
+      name: Synced
+      type: string
+    - description: Initial machine infrastructure provisioning completed
+      jsonPath: .status.initialization.provisioned
+      name: Provisioned
+      type: string
+    - description: Compute instance
+      jsonPath: .status.instanceID
+      name: Instance
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: LaunchLayerMachine is the Schema for the launchlayermachines
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              LaunchLayerMachineSpec defines the desired state of LaunchLayerMachine.
+
+              Every node is provisioned through the Compute API. InstanceType names the
+              capacity shape and the Compute Allocation Operator places it, deciding
+              whether the result is virtual or physical; a GPU shape resolves to bare
+              metal. The Inventory API is an operator service that tenants do not call.
+            properties:
+              fulfillmentStrategy:
+                description: |-
+                  FulfillmentStrategy controls how the Compute Allocation Operator places
+                  the request.
+                enum:
+                - BEST_EFFORT
+                - ALL_OR_NOTHING
+                - WAIT_FOR_RESOURCE
+                type: string
+              hostOSProfile:
+                description: |-
+                  HostOSProfile selects a Settings host_os_profiles entry for bare-metal
+                  provisioning, as "<name>" or "<name>:<version>". LaunchLayer ignores it
+                  when the instance type resolves to a virtual machine.
+                type: string
+              instanceType:
+                description: |-
+                  InstanceType requests capacity of a given shape through the Compute API,
+                  for example "vm200". The instance type decides whether the result is
+                  virtual or physical.
+                minLength: 1
+                type: string
+              providerID:
+                description: |-
+                  ProviderID is the stable identity CAPI copies onto the Machine, in the
+                  form launchlayer://<vpc>/instance/<instance_id>.
+                maxLength: 512
+                minLength: 1
+                type: string
+              securityGroups:
+                description: |-
+                  SecurityGroups are existing LaunchLayer security group IDs to attach.
+                  CAPLL references them and never creates them, so they must already exist
+                  and belong to the same organisation as the VPC. They belong on the
+                  template rather than the cluster because a GPU pool and a control plane
+                  need different groups.
+                properties:
+                  gpuNetworkInterface:
+                    description: GPUNetworkInterface are the groups for GPU-paired
+                      network cards.
+                    items:
+                      type: string
+                    type: array
+                  primaryNetworkInterface:
+                    description: PrimaryNetworkInterface are the groups for the primary
+                      interface.
+                    items:
+                      type: string
+                    type: array
+                type: object
+              vmProfile:
+                description: |-
+                  VMProfile selects a Settings vm_profiles entry for virtual provisioning,
+                  as "<name>" or "<name>:<version>". LaunchLayer ignores it when the
+                  instance type resolves to bare metal.
+                type: string
+            required:
+            - instanceType
+            type: object
+          status:
+            description: |-
+              LaunchLayerMachineStatus defines the observed state of LaunchLayerMachine.
+
+              The external identifier is persisted before the first poll, so a controller
+              restart can always find its way back to work it already started.
+            properties:
+              addresses:
+                description: Addresses contains addresses observed on the backing
+                  node.
+                items:
+                  description: MachineAddress contains information for the node's
+                    address.
+                  properties:
+                    address:
+                      description: address is the machine address.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                    type:
+                      description: type is the machine address type, one of Hostname,
+                        ExternalIP, InternalIP, ExternalDNS or InternalDNS.
+                      enum:
+                      - Hostname
+                      - ExternalIP
+                      - InternalIP
+                      - ExternalDNS
+                      - InternalDNS
+                      type: string
+                  required:
+                  - address
+                  - type
+                  type: object
+                type: array
+              conditions:
+                description: Conditions describes the current machine state.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                maxItems: 32
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              initialization:
+                description: Initialization provides provisioning observations for
+                  the backing node.
+                minProperties: 1
+                properties:
+                  provisioned:
+                    description: Provisioned is true once the backing instance has
+                      been created.
+                    type: boolean
+                type: object
+              instanceID:
+                description: InstanceID is the Compute instance resolved from the
+                  request.
+                type: string
+              machineID:
+                description: |-
+                  MachineID is the physical machine the instance landed on. Never branch on
+                  it: absence proves nothing, because a deployment older than the release
+                  that added the field omits it entirely. Where the field is served it is
+                  empty for a virtual instance, but the instance type already decided the
+                  substrate, so this is recorded for operators rather than for logic.
+                type: string
+              requestID:
+                description: |-
+                  RequestID is the Compute request submitted for this node. Written before
+                  the first poll so a restart does not submit a second request.
+                type: string
+            type: object
+        type: object
+        x-kubernetes-validations:
+        - message: spec.instanceType is immutable after a compute request is submitted
+          rule: '!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID))
+            || self.spec.instanceType == oldSelf.spec.instanceType'
+        - message: spec.hostOSProfile is immutable after a compute request is submitted
+          rule: '!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID))
+            || (has(self.spec.hostOSProfile) == has(oldSelf.spec.hostOSProfile) &&
+            (!has(self.spec.hostOSProfile) || self.spec.hostOSProfile == oldSelf.spec.hostOSProfile))'
+        - message: spec.vmProfile is immutable after a compute request is submitted
+          rule: '!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID))
+            || (has(self.spec.vmProfile) == has(oldSelf.spec.vmProfile) && (!has(self.spec.vmProfile)
+            || self.spec.vmProfile == oldSelf.spec.vmProfile))'
+        - message: spec.fulfillmentStrategy is immutable after a compute request is
+            submitted
+          rule: '!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID))
+            || (has(self.spec.fulfillmentStrategy) == has(oldSelf.spec.fulfillmentStrategy)
+            && (!has(self.spec.fulfillmentStrategy) || self.spec.fulfillmentStrategy
+            == oldSelf.spec.fulfillmentStrategy))'
+        - message: spec.securityGroups is immutable after a compute request is submitted
+          rule: '!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID))
+            || (has(self.spec.securityGroups) == has(oldSelf.spec.securityGroups)
+            && (!has(self.spec.securityGroups) || self.spec.securityGroups == oldSelf.spec.securityGroups))'
+    served: true
+    storage: true
+    subresources:
+      status: {}
