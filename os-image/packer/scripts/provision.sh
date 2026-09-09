@@ -12,6 +12,7 @@ sudo install -d -m 0755 /usr/lib/nke /etc/nke /var/lib/nke /usr/local/bin
 sudo install -m 0755 "${SRC}/spire-agent" /usr/local/bin/spire-agent
 sudo install -d -m 0755 /usr/local/lib/spire-agent
 sudo install -m 0755 "${SRC}/tpm_attestor_agent" /usr/local/lib/spire-agent/tpm_attestor_agent
+sudo install -m 0755 "${SRC}/get_tpm_pubhash" /usr/local/bin/get_tpm_pubhash
 sudo install -m 0755 "${SRC}/spire-configure.sh" /usr/lib/nke/spire-configure.sh
 sudo install -m 0755 "${SRC}/wait-spiffe-socket.sh" /usr/lib/nke/wait-spiffe-socket.sh
 sudo install -m 0644 "${SRC}/spire-agent.conf.tmpl" /usr/lib/nke/spire-agent.conf.tmpl
@@ -48,6 +49,25 @@ if [[ -d "${SRC}/debs" ]]; then
   sudo install -d -m 0755 /usr/lib/nke/debs
   sudo install -m 0644 "${SRC}"/debs/*.deb "${SRC}/debs/Packages" /usr/lib/nke/debs/
   echo 'deb [trusted=yes] file:/usr/lib/nke/debs ./' | sudo tee /etc/apt/sources.list.d/nke-local.list >/dev/null
+fi
+
+# Install the architecture-independent Calico manifest package. The agent can
+# then use the manifests without an external bundle service during bootstrap.
+calico_manifest_deb="$(find "${SRC}/debs" -maxdepth 1 -type f -name 'nke-cni-calico-manifests-*_all.deb' -print -quit 2>/dev/null || true)"
+if [[ -n "${calico_manifest_deb}" ]]; then
+  sudo dpkg -i "${calico_manifest_deb}"
+fi
+
+# Forge's qcow imager locates the root filesystem by this cloud-image label.
+root_device="$(findmnt -n -o SOURCE /)"
+if [[ ! -b "${root_device}" ]]; then
+  echo "Root filesystem source is not a block device: ${root_device}" >&2
+  exit 1
+fi
+sudo e2label "${root_device}" cloudimg-rootfs
+if [[ "$(sudo e2label "${root_device}")" != cloudimg-rootfs ]]; then
+  echo "Failed to label the root filesystem cloudimg-rootfs" >&2
+  exit 1
 fi
 
 # Golden image: next boot must look like a new instance, without the Packer
