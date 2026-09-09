@@ -160,13 +160,27 @@ systemctl is-enabled nke-agent.service
 systemctl is-enabled spire-agent.service
 systemctl is-enabled nke-spire-configure.service
 test -x /usr/local/bin/nke-agent || test -x /usr/bin/nke-agent
+test -x /usr/local/bin/nke-os-image-check
 test -x /usr/local/bin/spire-agent
 test -x /usr/local/lib/spire-agent/tpm_attestor_agent
 test -x /usr/local/bin/get_tpm_pubhash
+test -x /usr/lib/nke/configure-nke-agent-plaintext.sh
 test -x /usr/lib/nke/spire-configure.sh
 test -x /usr/lib/nke/wait-spiffe-socket.sh
 dpkg-query -W -f='${Status}\n' 'nke-cni-calico-manifests-*' | grep -Fxq 'install ok installed'
 
+sudo /usr/lib/nke/configure-nke-agent-plaintext.sh
+for attempt in $(seq 1 12); do
+  if /usr/local/bin/nke-os-image-check \
+      --plaintext --endpoint 127.0.0.1:15005 --timeout 5s; then
+    break
+  fi
+  if [[ "${attempt}" == 12 ]]; then
+    sudo systemctl --no-pager --full status nke-agent.service || true
+    exit 1
+  fi
+  sleep 5
+done
 EOF
 
-echo "boot-smoke: Forge ARM image contract is satisfied"
+echo "boot-smoke: image contract and plaintext bootstrap mode are operational"
