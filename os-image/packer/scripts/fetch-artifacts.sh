@@ -81,6 +81,16 @@ echo "building nke-agent from source (${repo_root}/agent, ${ARCH})"
 make -C "${repo_root}/agent" "${AGENT_BUILD_TARGET}"
 install -m 0755 "${repo_root}/agent/bin/${AGENT_BIN_DIR}/nke-agent" "${ARTIFACTS_DIR}/nke-agent"
 
+check_version="$(git -C "${repo_root}" describe --tags --dirty --match 'os-image/v[0-9]*' 2>/dev/null || git -C "${repo_root}" rev-parse --short HEAD)"
+echo "building nke-os-image-check from source (${repo_root}/os-image, ${ARCH})"
+(
+  cd "${repo_root}"
+  CGO_ENABLED=0 GOOS=linux GOARCH="${ARCH}" go build \
+    -ldflags "-X main.version=${check_version#os-image/}" \
+    -o "${ARTIFACTS_DIR}/nke-os-image-check" \
+    ./os-image/cmd/nke-os-image-check
+)
+
 # The CNI debs nke-agent installs at cluster create, plus a flat apt index that
 # provision.sh stages as a local repo. amd64 only: the locks pin amd64 digests.
 if [[ "${ARCH}" == amd64 ]]; then
@@ -180,4 +190,5 @@ install -m 0644 "${files_dir}/spire-agent.service" "${ARTIFACTS_DIR}/spire-agent
 install -m 0644 "${files_dir}/nke-spire-configure.service" "${ARTIFACTS_DIR}/nke-spire-configure.service"
 install -m 0644 "${files_dir}/spire-agent.conf.tmpl" "${ARTIFACTS_DIR}/spire-agent.conf.tmpl"
 install -m 0755 "${files_dir}/spire-configure.sh" "${ARTIFACTS_DIR}/spire-configure.sh"
+install -m 0755 "${files_dir}/configure-nke-agent-plaintext.sh" "${ARTIFACTS_DIR}/configure-nke-agent-plaintext.sh"
 install -m 0755 "${files_dir}/wait-spiffe-socket.sh" "${ARTIFACTS_DIR}/wait-spiffe-socket.sh"

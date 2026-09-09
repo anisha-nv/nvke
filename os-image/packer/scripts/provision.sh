@@ -15,12 +15,14 @@ sudo install -d -m 0755 /usr/local/lib/spire-agent
 sudo install -m 0755 "${SRC}/tpm_attestor_agent" /usr/local/lib/spire-agent/tpm_attestor_agent
 sudo install -m 0755 "${SRC}/get_tpm_pubhash" /usr/local/bin/get_tpm_pubhash
 sudo install -m 0755 "${SRC}/spire-configure.sh" /usr/lib/nke/spire-configure.sh
+sudo install -m 0755 "${SRC}/configure-nke-agent-plaintext.sh" /usr/lib/nke/configure-nke-agent-plaintext.sh
 sudo install -m 0755 "${SRC}/wait-spiffe-socket.sh" /usr/lib/nke/wait-spiffe-socket.sh
 sudo install -m 0644 "${SRC}/spire-agent.conf.tmpl" /usr/lib/nke/spire-agent.conf.tmpl
 sudo install -m 0644 "${SRC}/spire-agent.service" /etc/systemd/system/spire-agent.service
 sudo install -m 0644 "${SRC}/nke-spire-configure.service" /etc/systemd/system/nke-spire-configure.service
 
 sudo install -m 0755 "${SRC}/nke-agent" /usr/local/bin/nke-agent
+sudo install -m 0755 "${SRC}/nke-os-image-check" /usr/local/bin/nke-os-image-check
 sudo install -m 0644 "${SRC}/nke-agent.service" /etc/systemd/system/nke-agent.service
 
 if [[ ! -f /etc/default/nke-agent ]]; then

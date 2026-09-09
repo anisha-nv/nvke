@@ -67,6 +67,20 @@ After a successful `nke-agent` start, the image touches
 `/var/lib/spire-agent/.nke-attested` and subsequent boots omit `-joinToken`
 (the token is single-use).
 
+### Bootstrap without mTLS
+
+A bootstrap can omit SPIRE identity data and run this cloud-init command:
+
+```yaml
+runcmd:
+  - [/usr/lib/nke/configure-nke-agent-plaintext.sh]
+```
+
+The helper probes the local agent first. If the plaintext endpoint already
+responds, the helper makes no change. Otherwise, it disables the SPIRE units
+and starts `nke-agent` with `--disable-mtls`. This mode does not change the
+default mTLS configuration in the image.
+
 ## Must have (FDE variant)
 
 `nke-node-fde.pkr.hcl` is an **opt-in** build variant, not the default image.
@@ -123,7 +137,7 @@ server, not this image.
 
 - kubeadm / kubelet / container runtime as a cluster-ready stack
 - GPU drivers and NVIDIA fabric
-- `--disable-mtls` as a supported production mode
+- `--disable-mtls` outside the bootstrap mode described above
 - Kubernetes Secrets / etcd encryption-at-rest — a controller/agent concern,
   not an image-build concern; out of scope for `os-image/`
 
