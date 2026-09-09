@@ -258,6 +258,11 @@ func (s *nodePoolService) validateCreateNodePoolRequest(cluster db.Cluster, req 
 		if err := s.providers.require(config.InfraProviderInfra); err != nil {
 			return err
 		}
+		if req.Infra != nil {
+			if err := validateStoredLaunchLayerBinding(cluster, req.Infra.MachineTemplate, "infra.machineTemplate"); err != nil {
+				return err
+			}
+		}
 		return validateCreateCAPINodePoolRequest(req)
 	case db.ProviderTypeNico:
 		if err := s.providers.require(config.InfraProviderNico); err != nil {
@@ -420,6 +425,9 @@ func (s *nodePoolService) UpdateNodePool(
 		oldNodePool := dbNodePool
 
 		if err := applyUpdateNodePoolRequest(cluster, &dbNodePool, req.Body); err != nil {
+			return err
+		}
+		if err := validateLaunchLayerNodePoolUpdate(cluster, &dbNodePool, req.Body); err != nil {
 			return err
 		}
 		if err := validateUpdatedNodePool(cluster, &dbNodePool); err != nil {
@@ -639,6 +647,11 @@ func (s *nodePoolService) validateUpdateNodePoolRequest(cluster db.Cluster, req 
 	case db.ProviderTypeCAPI:
 		if req != nil && (req.Infra != nil || req.Nico != nil) {
 			if err := s.providers.require(config.InfraProviderInfra); err != nil {
+				return err
+			}
+		}
+		if req.Infra != nil && req.Infra.MachineTemplate != nil {
+			if err := validateStoredLaunchLayerBinding(cluster, req.Infra.MachineTemplate, "infra.machineTemplate"); err != nil {
 				return err
 			}
 		}

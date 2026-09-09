@@ -307,6 +307,18 @@ func (s *clusterService) preflightCheckCreateClusterRequest(
 		}
 	}
 
+	cluster, err := DBClusterFromAPI(req)
+	if err != nil {
+		return resolvedClusterNetwork{}, newBadRequestErrorf("invalid cluster provider payload")
+	}
+	if req.NodePools != nil {
+		for i, pool := range *req.NodePools {
+			poolReq := initialNodePoolRequest(cluster.ID, pool)
+			if err := s.nodePoolService.validateCreateNodePoolRequest(cluster, &poolReq); err != nil {
+				return resolvedClusterNetwork{}, newBadRequestErrorf("nodePools[%d]: %s", i, err)
+			}
+		}
+	}
 	return network, nil
 }
 
@@ -325,6 +337,9 @@ func forgeCAPINicoClusterManifest(siteID uuid.UUID) ([]byte, error) {
 }
 
 func (s *clusterService) ValidateCreateClusterRequestFields(req *api.CreateClusterRequest) error {
+	if err := validateLaunchLayerCreateIntent(req); err != nil {
+		return err
+	}
 	if err := naming.ValidateClusterNameForNodeNaming(req.Name); err != nil {
 		return err
 	}
@@ -433,30 +448,34 @@ func validateCreateNicoClusterProvider(req *api.CreateClusterRequest) error {
 	return nil
 }
 
+func initialNodePoolRequest(clusterID uuid.UUID, nodePoolConfig api.NodePoolCreateConfig) api.CreateNodePoolRequest {
+	//exhaustruct:enforce
+	return api.CreateNodePoolRequest{
+		ClusterID:                   clusterID,
+		Name:                        nodePoolConfig.Name,
+		NodeNamePrefix:              nodePoolConfig.NodeNamePrefix,
+		SystemReservedMemory:        nodePoolConfig.SystemReservedMemory,
+		KubeReservedMemory:          nodePoolConfig.KubeReservedMemory,
+		NodeLabels:                  nodePoolConfig.NodeLabels,
+		ControlPlane:                nodePoolConfig.ControlPlane,
+		DesiredNodeCount:            nodePoolConfig.DesiredNodeCount,
+		Description:                 nodePoolConfig.Description,
+		AutoProvisionDisabled:       nodePoolConfig.AutoProvisionDisabled,
+		AutoModeDisabled:            nodePoolConfig.AutoModeDisabled,
+		ProvisioningMonitorDisabled: nodePoolConfig.ProvisioningMonitorDisabled,
+		RecycleBudget:               nodePoolConfig.RecycleBudget,
+		TeleportEnabled:             nodePoolConfig.TeleportEnabled,
+		Nico:                        nodePoolConfig.Nico,
+		Infra:                       nodePoolConfig.Infra,
+	}
+}
+
 func (s *clusterService) createInitialNodePools(ctx context.Context, tx db.Tx, cluster db.Cluster, nodePools []api.NodePoolCreateConfig) error {
 	for _, nodePoolConfig := range nodePools {
-		//exhaustruct:enforce
-		nodePoolReq := api.CreateNodePoolRequest{
-			ClusterID:                   cluster.ID,
-			Name:                        nodePoolConfig.Name,
-			NodeNamePrefix:              nodePoolConfig.NodeNamePrefix,
-			SystemReservedMemory:        nodePoolConfig.SystemReservedMemory,
-			KubeReservedMemory:          nodePoolConfig.KubeReservedMemory,
-			NodeLabels:                  nodePoolConfig.NodeLabels,
-			ControlPlane:                nodePoolConfig.ControlPlane,
-			DesiredNodeCount:            nodePoolConfig.DesiredNodeCount,
-			Description:                 nodePoolConfig.Description,
-			AutoProvisionDisabled:       nodePoolConfig.AutoProvisionDisabled,
-			AutoModeDisabled:            nodePoolConfig.AutoModeDisabled,
-			ProvisioningMonitorDisabled: nodePoolConfig.ProvisioningMonitorDisabled,
-			RecycleBudget:               nodePoolConfig.RecycleBudget,
-			TeleportEnabled:             nodePoolConfig.TeleportEnabled,
-			Nico:                        nodePoolConfig.Nico,
-			Infra:                       nodePoolConfig.Infra,
-		}
+		nodePoolReq := initialNodePoolRequest(cluster.ID, nodePoolConfig)
 
 		if err := s.nodePoolService.validateCreateNodePoolRequest(cluster, &nodePoolReq); err != nil {
-			return fmt.Errorf("invalid node pool %q: %w", nodePoolConfig.Name, err)
+			return newBadRequestErrorf("invalid node pool %q: %s", nodePoolConfig.Name, err)
 		}
 
 		s.applyNodePoolDefaults(&nodePoolReq, cluster)
@@ -544,6 +563,9 @@ func (s *clusterService) UpdateCluster(ctx context.Context, req api.UpdateCluste
 			if dbCluster.ProviderType == db.ProviderTypeCAPI && cpConfig.Nico != nil {
 				return newBadRequestErrorf("controlPlaneConfig.nico is not supported, please provide controlPlaneConfig.infra")
 			}
+		}
+		if err := s.preflightInfraControlPlanePatch(ctx, dbCluster, req.Body.ControlPlaneConfig); err != nil {
+			return err
 		}
 		// Update fields from request
 		if req.Body.EnableCPNodeRecycling != nil {
@@ -803,6 +825,12 @@ func (s *clusterService) applyClusterControlPlaneConfigUpdate(ctx context.Contex
 		}
 	}
 
+	if cluster.ProviderType == db.ProviderTypeCAPI && req.Infra != nil {
+		if err := validateLaunchLayerControlPlaneUpdate(*cluster, controlPlaneConfigSpec); err != nil {
+			return err
+		}
+	}
+
 	// A PATCH must not clear a required field or persist a spec that create would
 	// reject (Forge instanceTypePreference/osProfile/configProfile or the CAPI
 	// capiInfraMachineTemplate). instanceTypePreference is merged above and is not
@@ -935,6 +963,9 @@ func (s *clusterService) applyClusterLevelControlPlaneSpecUpdate(
 			capi.PreKubeadmCommands = append([]string(nil), req.Infra.PreKubeadmCommands...)
 		}
 		if req.Infra.MachineTemplate != nil {
+			if err := validateStoredLaunchLayerBinding(*cluster, req.Infra.MachineTemplate, "controlPlaneConfig.infra.machineTemplate"); err != nil {
+				return newBadRequestErrorf("%s", err)
+			}
 			if isEmptyManifestObject(req.Infra.MachineTemplate) {
 				capi.InfraMachineTemplatePreferences = nil
 			} else {
