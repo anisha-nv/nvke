@@ -403,7 +403,12 @@ type GenericError struct {
 // directly. Not to be used merely because a cluster is provisioned through CAPI —
 // `nico` clusters may be too. Mutually exclusive with `nico`.
 type InfraClusterProvider struct {
-	// Cluster Arbitrary JSON manifest for the CAPI infrastructure provider Cluster resource
+	// Cluster JSON manifest for the CAPI infrastructure provider Cluster resource.
+	// LaunchLayer intent is validated against the pinned v1alpha1 contract in
+	// docs/launchlayer-validation.md: exactly one vpcID/orgID, both owner fields,
+	// supported fields and metadata, and compatible MachineTemplate kinds.
+	// Invalid intent returns 400 before provisioning is queued; acceptance does
+	// not verify backend resources, authorization, deployment, or readiness.
 	Cluster map[string]interface{} `json:"cluster,omitempty"`
 }
 
@@ -412,7 +417,12 @@ type InfraControlPlaneProvider struct {
 	// BootstrapFiles Cloud-init write_files entries for CAPI-backed control plane nodes
 	BootstrapFiles []CloudInitFile `json:"bootstrapFiles,omitempty"`
 
-	// MachineTemplate Arbitrary JSON manifest for the CAPI infrastructure provider MachineTemplate resource used for control plane nodes
+	// MachineTemplate JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
+	// LaunchLayer clusters require LaunchLayerMachineTemplate v1alpha1 with
+	// spec.template.spec.instanceType and only supported fields; see
+	// docs/launchlayer-validation.md for the pinned contract and examples.
+	// The same checks apply to effective provider-bearing updates. Bootstrap
+	// delivery depends on the provider's deployed profile and configuration.
 	MachineTemplate map[string]interface{} `json:"machineTemplate,omitempty"`
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed control plane nodes
@@ -428,7 +438,12 @@ type InfraControlPlaneProviderUpdate struct {
 	// BootstrapFiles Cloud-init write_files entries for CAPI-backed control plane nodes
 	BootstrapFiles []CloudInitFile `json:"bootstrapFiles,omitempty"`
 
-	// MachineTemplate Arbitrary JSON manifest for the CAPI infrastructure provider MachineTemplate resource used for control plane nodes
+	// MachineTemplate JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
+	// LaunchLayer clusters require LaunchLayerMachineTemplate v1alpha1 with
+	// spec.template.spec.instanceType and only supported fields; see
+	// docs/launchlayer-validation.md for the pinned contract and examples.
+	// The same checks apply to effective provider-bearing updates. Bootstrap
+	// delivery depends on the provider's deployed profile and configuration.
 	MachineTemplate map[string]interface{} `json:"machineTemplate,omitempty"`
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed control plane nodes
@@ -443,7 +458,12 @@ type InfraNodePoolProvider struct {
 	// BootstrapFiles Cloud-init write_files entries for CAPI-backed nodes
 	BootstrapFiles []CloudInitFile `json:"bootstrapFiles,omitempty"`
 
-	// MachineTemplate Arbitrary JSON manifest for the CAPI infrastructure provider MachineTemplate resource
+	// MachineTemplate JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
+	// LaunchLayer clusters require LaunchLayerMachineTemplate v1alpha1 with
+	// spec.template.spec.instanceType and only supported fields; see
+	// docs/launchlayer-validation.md for the pinned contract and examples.
+	// The same checks apply to effective provider-bearing updates. Bootstrap
+	// delivery depends on the provider's deployed profile and configuration.
 	MachineTemplate map[string]interface{} `json:"machineTemplate,omitempty"`
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed nodes
@@ -459,7 +479,12 @@ type InfraNodePoolProviderUpdate struct {
 	// BootstrapFiles Cloud-init write_files entries for CAPI-backed nodes
 	BootstrapFiles []CloudInitFile `json:"bootstrapFiles,omitempty"`
 
-	// MachineTemplate Arbitrary JSON manifest for the CAPI infra provider MachineTemplate resource
+	// MachineTemplate JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
+	// LaunchLayer clusters require LaunchLayerMachineTemplate v1alpha1 with
+	// spec.template.spec.instanceType and only supported fields; see
+	// docs/launchlayer-validation.md for the pinned contract and examples.
+	// The same checks apply to effective provider-bearing updates. Bootstrap
+	// delivery depends on the provider's deployed profile and configuration.
 	MachineTemplate map[string]interface{} `json:"machineTemplate,omitempty"`
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed nodes
@@ -474,7 +499,12 @@ type InfraNodeSetProvider struct {
 	// BootstrapFiles Cloud-init write_files entries for CAPI-backed nodes
 	BootstrapFiles []CloudInitFile `json:"bootstrapFiles,omitempty"`
 
-	// MachineTemplate Arbitrary JSON manifest for the CAPI infrastructure provider MachineTemplate resource
+	// MachineTemplate JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
+	// LaunchLayer clusters require LaunchLayerMachineTemplate v1alpha1 with
+	// spec.template.spec.instanceType and only supported fields; see
+	// docs/launchlayer-validation.md for the pinned contract and examples.
+	// The same checks apply to effective provider-bearing updates. Bootstrap
+	// delivery depends on the provider's deployed profile and configuration.
 	MachineTemplate map[string]interface{} `json:"machineTemplate,omitempty"`
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed nodes

@@ -1989,7 +1989,13 @@ components:
         cluster:
           type: object
           additionalProperties: true
-          description: Arbitrary JSON manifest for the CAPI infrastructure provider Cluster resource
+          description: |
+            JSON manifest for the CAPI infrastructure provider Cluster resource.
+            LaunchLayer intent is validated against the pinned v1alpha1 contract in
+            docs/launchlayer-validation.md: exactly one vpcID/orgID, both owner fields,
+            supported fields and metadata, and compatible MachineTemplate kinds.
+            Invalid intent returns 400 before provisioning is queued; acceptance does
+            not verify backend resources, authorization, deployment, or readiness.
           x-go-type-skip-optional-pointer: true
 
     NicoNodePoolProvider:
@@ -2124,7 +2130,13 @@ components:
         machineTemplate:
           type: object
           additionalProperties: true
-          description: Arbitrary JSON manifest for the CAPI infrastructure provider MachineTemplate resource
+          description: |
+            JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
+            LaunchLayer clusters require LaunchLayerMachineTemplate v1alpha1 with
+            spec.template.spec.instanceType and only supported fields; see
+            docs/launchlayer-validation.md for the pinned contract and examples.
+            The same checks apply to effective provider-bearing updates. Bootstrap
+            delivery depends on the provider's deployed profile and configuration.
           x-go-type-skip-optional-pointer: true
         spireAttestationMethod:
           $ref: "#/components/schemas/SpireAttestationMethodCreate"
@@ -2152,7 +2164,13 @@ components:
         machineTemplate:
           type: object
           additionalProperties: true
-          description: Arbitrary JSON manifest for the CAPI infra provider MachineTemplate resource
+          description: |
+            JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
+            LaunchLayer clusters require LaunchLayerMachineTemplate v1alpha1 with
+            spec.template.spec.instanceType and only supported fields; see
+            docs/launchlayer-validation.md for the pinned contract and examples.
+            The same checks apply to effective provider-bearing updates. Bootstrap
+            delivery depends on the provider's deployed profile and configuration.
           x-go-type-skip-optional-pointer: true
         spireAttestationMethod:
           $ref: "#/components/schemas/SpireAttestationMethod"
@@ -2178,7 +2196,13 @@ components:
         machineTemplate:
           type: object
           additionalProperties: true
-          description: Arbitrary JSON manifest for the CAPI infrastructure provider MachineTemplate resource
+          description: |
+            JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
+            LaunchLayer clusters require LaunchLayerMachineTemplate v1alpha1 with
+            spec.template.spec.instanceType and only supported fields; see
+            docs/launchlayer-validation.md for the pinned contract and examples.
+            The same checks apply to effective provider-bearing updates. Bootstrap
+            delivery depends on the provider's deployed profile and configuration.
           x-go-type-skip-optional-pointer: true
         spireAttestationMethod:
           $ref: "#/components/schemas/SpireAttestationMethodCreate"
@@ -2346,7 +2370,13 @@ components:
         machineTemplate:
           type: object
           additionalProperties: true
-          description: Arbitrary JSON manifest for the CAPI infrastructure provider MachineTemplate resource used for control plane nodes
+          description: |
+            JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
+            LaunchLayer clusters require LaunchLayerMachineTemplate v1alpha1 with
+            spec.template.spec.instanceType and only supported fields; see
+            docs/launchlayer-validation.md for the pinned contract and examples.
+            The same checks apply to effective provider-bearing updates. Bootstrap
+            delivery depends on the provider's deployed profile and configuration.
           x-go-type-skip-optional-pointer: true
         spireAttestationMethod:
           $ref: "#/components/schemas/SpireAttestationMethodCreate"
@@ -2374,7 +2404,13 @@ components:
         machineTemplate:
           type: object
           additionalProperties: true
-          description: Arbitrary JSON manifest for the CAPI infrastructure provider MachineTemplate resource used for control plane nodes
+          description: |
+            JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
+            LaunchLayer clusters require LaunchLayerMachineTemplate v1alpha1 with
+            spec.template.spec.instanceType and only supported fields; see
+            docs/launchlayer-validation.md for the pinned contract and examples.
+            The same checks apply to effective provider-bearing updates. Bootstrap
+            delivery depends on the provider's deployed profile and configuration.
           x-go-type-skip-optional-pointer: true
         spireAttestationMethod:
           $ref: "#/components/schemas/SpireAttestationMethod"
