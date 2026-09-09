@@ -247,3 +247,8 @@ The process needs a SPIFFE workload API with an SVID whose path starts with
 Override with `--spiffe-socket`. This is the same shape as the controller
 dialer; it is not a SPIRE server. For a local SPIRE, see
 `controller/scripts/dev-env-spire.sh`.
+
+Use `--plaintext` only to verify a bootstrap that has mTLS disabled. The image
+installs the checker and `/usr/lib/nke/configure-nke-agent-plaintext.sh`.
+Cloud-init can run the helper to select plaintext mode. The helper first probes
+the agent and does not restart an agent that already responds.
