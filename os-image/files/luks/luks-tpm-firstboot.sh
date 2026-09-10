@@ -316,17 +316,29 @@ update-initramfs -u -k all
 echo "Cleaning up GRUB configuration..."
 GRUB_UPDATED=false
 
+remove_luks_key_from_grub_dropins() {
+    local dropin_dir="$1" dropin
+
+    for dropin in "${dropin_dir}"/*.cfg; do
+        if [[ -f "$dropin" ]] && grep -F -q 'luks.key=' "$dropin" 2>/dev/null; then
+            # The autoinstall drop-in puts luks.key= immediately after =",
+            # while other callers may put it between kernel parameters.
+            sed -E -i.bak \
+                -e 's/(=")luks\.key=[^[:space:]"]*[[:space:]]*/\1/g' \
+                -e 's/[[:space:]]luks\.key=[^[:space:]"]*//g' \
+                "$dropin"
+            rm -f "${dropin}.bak"
+            echo "Removed luks.key from $dropin"
+            GRUB_UPDATED=true
+        fi
+    done
+}
+
 # autoinstall-lvm.pkrtpl always writes luks.key= to
 # /etc/default/grub.d/99-luks-key.cfg, never to /etc/default/grub directly —
 # glob the drop-in dir rather than hardcode that filename, in case it ever
 # changes.
-for dropin in /etc/default/grub.d/*.cfg; do
-    if [[ -f "$dropin" ]] && grep -q 'luks.key=' "$dropin" 2>/dev/null; then
-        sed -i 's/ luks.key=[^ "]*//g' "$dropin"
-        echo "Removed luks.key from $dropin"
-        GRUB_UPDATED=true
-    fi
-done
+remove_luks_key_from_grub_dropins /etc/default/grub.d
 
 if [[ "$GRUB_UPDATED" == "true" ]]; then
     update-grub

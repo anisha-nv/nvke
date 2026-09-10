@@ -126,16 +126,53 @@ sudo clevis luks list -d "${LUKS_DEV}"
 
 ## Building and testing locally
 
+From `os-image/`, the Linux amd64/KVM path is:
+
 ```bash
 cd packer
-make os-image-fde NKE_AGENT_VERSION=edge
+make os-image-fde ARCH=amd64
+cd ..
+make fde-test QCOW=packer/output-fde/nke-node-fde-ubuntu-26.04.1-amd64.qcow2 \
+  REQUIRE_ACCELERATION=1
 ```
 
-then run `../demo-fde.sh` (see its `--help`) to exercise the acceptance
-scenarios against the built image under QEMU with `swtpm`. Requires
-`qemu-system-x86_64`, `swtpm`, `cloud-localds`, and OVMF
-(`/usr/share/OVMF/OVMF_CODE_4M.fd` + `OVMF_VARS_4M.fd`) on `PATH`/in the
-default location. No interactive/scripted console typing is needed: the
+From the repository root on Apple Silicon, build and test the arm64 image with native HVF:
+
+```bash
+make -C os-image image-native ARCH=arm64 VARIANT=fde KERNEL_PACKAGE=linux-generic
+make -C os-image fde-test \
+  QCOW=/absolute/path/to/nke-node-fde-ubuntu-26.04.1-arm64.qcow2 \
+  REQUIRE_ACCELERATION=1 \
+  FDE_TEST_OUTPUT_DIR=/absolute/path/to/fde-evidence
+```
+
+The harness chooses `qemu-system-x86_64` plus KVM for a matching amd64 Linux
+host, or `qemu-system-aarch64` plus HVF for a matching arm64 macOS host. A
+generic development run can explicitly use `ACCELERATOR=tcg`; it is much
+slower, so the default per-boot timeout rises from 360 seconds to 1800 seconds.
+`REQUIRE_ACCELERATION=1` rejects an unavailable or mismatched accelerator.
+`KERNEL_PACKAGE=linux-generic` is a development-only override for the local
+Apple Silicon path; production ARM64 image acceptance uses `linux-nvidia-64k`
+on native Linux KVM.
+
+The harness requires the selected QEMU binary, `qemu-img`, `swtpm`,
+`cloud-localds`, SSH, and a timeout-compatible command. It finds matching OVMF
+or AAVMF firmware from standard paths or QEMU's firmware directory. Override
+discovery with `OVMF_CODE` and `OVMF_VARS_TEMPLATE`; on macOS, set
+`TIMEOUT_BIN` if neither `timeout` nor `gtimeout` is available. The software
+TPM is only an acceptance-test device: it verifies the image's TPM-sealing
+flow, not a hardware TPM, measured boot, or production recovery procedure.
+
+`FDE_TEST_OUTPUT_DIR` preserves the per-run QEMU, swtpm, serial-console, and
+overlay evidence under that directory. Without it, the successful harness run
+removes its temporary evidence. `make -C os-image test-fde-harness` tests the
+harness lifecycle and negative-evidence handling without an image, QEMU, or
+swtpm.
+
+`make fde-test` runs these three scenarios: a fresh boot binds and verifies the
+LUKS volume with its TPM; the encrypted disk does not unlock against a different
+software TPM; and a later boot against the original software TPM unlocks again.
+No interactive/scripted console typing is needed: the
 autoinstall storage layout bakes a build-time `luks.key=<passphrase>` GRUB
 parameter, so `files/luks/luks-cmdline-script` unlocks the very first real
 boot on its own — the same mechanism production uses via an
@@ -143,8 +180,9 @@ iPXE `luks.key=` kernel parameter. `luks-tpm-firstboot.sh` strips
 `luks.key=` from GRUB once the TPM bind succeeds, so a later boot against a
 different TPM has no fallback and correctly fails to unlock.
 
-The autoinstall layout also bakes `console=tty0 console=ttyS0,115200` into
-GRUB, so boot and kernel messages — including
+The autoinstall layout bakes `console=tty0 console=ttyS0,115200` for amd64 and
+`console=tty0 console=ttyAMA0,115200` for arm64 into GRUB, so boot and kernel
+messages — including
 the LUKS unlock prompt on a boot that *doesn't* have `luks.key=` anymore —
 reach a serial console (`virsh console`, `-nographic`, real BMC/SOL access)
 and not just the VGA framebuffer. Earlier revisions of this variant shipped

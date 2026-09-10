@@ -142,7 +142,7 @@ ARTIFACTS_DIR ?= $(CURDIR)/packer/artifacts/$(ARCH)
 export ARCH ARTIFACTS_DIR
 export CRANE_VERSION NFPM_VERSION
 
-.PHONY: package-builder packages packages-lock test-builder image image-native
+.PHONY: package-builder packages packages-lock test-builder image image-native fde-test test-fde-harness
 package-builder: ## Build the pinned native Linux package-builder container.
 	./packages/builder/build.sh image
 
@@ -162,3 +162,10 @@ image: ## Bake a node image; Packer tries container packages with guest-build fa
 
 image-native: ## Require native hardware acceleration for a production image bake.
 	$(MAKE) image REQUIRE_ACCELERATION=1
+
+fde-test: ## Run the FDE TPM acceptance scenarios (QCOW=path; optional FDE_TEST_OUTPUT_DIR=path).
+	QCOW="$(QCOW)" REQUIRE_ACCELERATION="$(REQUIRE_ACCELERATION)" ACCELERATOR="$(ACCELERATOR)" FDE_TEST_OUTPUT_DIR="$(FDE_TEST_OUTPUT_DIR)" bash ./demo-fde.sh
+
+test-fde-harness: ## Run FDE harness lifecycle checks without a qcow2 or QEMU.
+	bash ./packer/scripts/demo-fde-test.sh
+	bash ./files/luks/luks-tpm-firstboot-test.sh
