@@ -1,154 +1,199 @@
-# LaunchLayer-backed NKE tenant-cluster request validation
+# Typed LaunchLayer support for NKE tenant clusters
 
-Use the existing `infra` request mode for LaunchLayer-backed NKE tenant clusters.
-There is no new `launchlayer` API object or provider registration endpoint.
-The NKE Cloud Workflow Engine (CWE) validates the complete initial request
-before opening its database transaction, then persists desired state and outbox
-records using the existing lifecycle workflow.
+The NKE Cloud Workflow Engine (CWE) accepts three independent API modes:
+`nico`, `launchlayer`, and `infra`. Use `launchlayer` for first-class LaunchLayer
+intent and validation. Keep `infra` for generic CAPI envelopes, including raw CAPLL
+manifests; their kind does not select typed validation. This is API admission,
+not provider registration, installation discovery, or backend health verification.
 
-## Contract and deployment prerequisites
+## Deployment and compatibility
 
-The supported pair is
-`infrastructure.cluster.x-k8s.io/v1alpha1`,
-`LaunchLayerCluster` and `LaunchLayerMachineTemplate`.
-The implementation is pinned to
+`SUPPORTED_INFRA_PROVIDERS` (chart value `supportedInfraProviders`) is a
+comma-separated allowlist. The production/chart default remains `nico`.
+For example, `nico,launchlayer` permits typed NICo and LaunchLayer requests but
+not raw `infra` requests. `infra` alone permits raw CAPLL manifests without
+enabling typed LaunchLayer requests. Unknown, empty, and duplicate mode names
+fail startup validation.
+
+`GET /api/infraProviders` reports configured API modes. It is distinct from
+`nkectl get providers`, which inspects installed Kubernetes provider modules.
+Existing objects remain readable and scalar maintenance remains available when
+a mode is disabled; disabling admission does not stop reconciliation or queued
+work. New clusters, later pools, and provider-bearing PATCH requests require
+their mode to be enabled.
+
+The source contract is pinned to
 [CAPLL revision 80a0d3da5d4af8ebd25cf3d8f897c4779248f50b](https://github.com/NVIDIA/cluster-api-provider-launchlayer/tree/80a0d3da5d4af8ebd25cf3d8f897c4779248f50b).
-The checked-in CRD fixtures and schema inventory are under
-[controller/internal/capi/validation/testdata](../controller/internal/capi/validation/testdata/capll-v1alpha1/README.md).
+[CRD fixtures and inventory](../controller/internal/capi/validation/testdata/capll-v1alpha1/README.md)
+record the reviewed schema. CWE authors
+`infrastructure.cluster.x-k8s.io/v1alpha1` LaunchLayerCluster and
+LaunchLayerMachineTemplate resources. Matching CRDs, CAPLL controller images,
+manager credentials/endpoints, profiles, and bootstrap configuration must be
+installed and qualified separately in the relevant NKE CAPI management cluster.
+A source revision or API version string is not evidence of deployment.
 
-An operator must separately install compatible CAPLL CRDs/images and manager
-endpoint/authentication configuration in the relevant NKE CAPI management
-cluster, authorize the infra request mode through the release's admission
-configuration, and provide tested host/VM profiles.
-The revision above is a source contract, not a selected released chart/image or
-evidence of deployment. A v1alpha1 name alone does not establish compatibility:
-vmProfile was added without changing that version name.
-Do not advertise new fields until the installed CRDs and controller support them.
+Apply the additive `clusters.api_provider` migration first, upgrade **all**
+CWE readers and writers, and only then enable `launchlayer`.
+The immutable API mode is separate from the existing `provider_type=capi`
+execution path. Legacy NULL rows retain their historical NICo or generic CAPI
+representation, even when their raw manifests use CAPLL kinds. No automatic
+backfill, promotion, or manifest rewrite occurs.
 
-## Cluster and template fields
+Mixed-version writers and rollback after typed rows exist are not automatically
+safe. The down migration refuses to remove the discriminator. Preserve the
+column and use roll-forward or a separately approved offline conversion;
+do not silently reclassify typed rows as generic input.
+
+## Typed contract
+
+Every LaunchLayer-specific object is closed: unknown keys and explicit null
+values fail. Shared bootstrap file entries retain the existing CloudInitFile
+schema and validation rules.
+Do not submit raw GVKs, metadata, status, providerID, credentials, or nested
+Kubernetes resource envelopes inside `launchlayer`.
 
 | Location | Contract |
 | --- | --- |
-| Cluster spec.vpcID / spec.orgID | Exactly one present, nonblank string; no UUID restriction. vpcID selects an existing VPC; orgID requests a CAPLL-managed VPC. |
-| Cluster spec.owner | Required object with nonblank userID and username, each at most 253 Unicode characters. No extra owner.orgID. |
-| Cluster spec.siteID | Optional string, including empty; not verified routing or scheduling information. |
-| Cluster spec.cloudProviderEnabled | Optional boolean, preserved without defaulting; true requires a separately functioning CCM. |
-| MachineTemplate spec.template.spec | Required object chain. No embedded metadata, kind, apiVersion or status override. |
-| Machine spec.instanceType | Required nonblank string; not a NICo UUID or an instance-type preference list. |
-| Machine spec.hostOSProfile / spec.vmProfile | Optional strings, independently preserved. name[:version] is a convention, not an enforced regex. Instance-type spelling does not establish substrate. |
-| Machine spec.fulfillmentStrategy | Optional BEST_EFFORT, ALL_OR_NOTHING or WAIT_FOR_RESOURCE. Omission is preserved for CAPLL to default to BEST_EFFORT. |
-| Machine spec.securityGroups | Optional object with primaryNetworkInterface and gpuNetworkInterface string arrays. No invented UUID, count or uniqueness limits. |
-| Top-level metadata | Optional name, namespace, labels and annotations only, with Kubernetes syntax/types/size checks. |
-| Lifecycle and other fields | Unknown fields, explicit nulls for nonnullable fields, root status, server-owned metadata and Machine providerID are rejected. |
+| launchlayer.vpcID / orgID | Exactly one nonblank string; no NICo UUID restriction. Existing VPC versus CAPLL-managed VPC. |
+| launchlayer.owner | Required userID and username, both nonblank and at most 253 Unicode characters. No owner.orgID. |
+| launchlayer.siteID | Optional string, including empty. Passed through; not validated routing or scheduling information. |
+| launchlayer.cloudProviderEnabled | Optional boolean, preserved without defaulting. True requires a functioning CCM. |
+| Pool/CP launchlayer.machine.instanceType | Required nonblank string; not a NICo instance-type UUID or preference list. |
+| machine.hostOSProfile / vmProfile | Independently optional strings. name[:version] is a convention, not an enforced regex or substrate selector. |
+| machine.fulfillmentStrategy | Optional BEST_EFFORT, ALL_OR_NOTHING, or WAIT_FOR_RESOURCE. Omission leaves CAPLL to default. |
+| machine.securityGroups | Optional primaryNetworkInterface and gpuNetworkInterface string arrays; ordering and explicit empty arrays are preserved. |
+| Pool/CP launchlayer.spireAttestationMethod | Required on create: tpm or joinToken. |
+| Pool/CP launchlayer.bootstrapFiles / preKubeadmCommands | Optional existing cloud-init inputs. Reserved SPIRE paths remain controller-managed. |
 
-The owner requirement is intentionally stricter than the CRD, which makes
-owner optional: the reviewed Compute client requires both identity strings.
-Owner presence does not verify the caller's authorization to use that identity.
-The HTTP validator does not execute update-only CEL rules involving oldSelf.
+Owner presence is intentionally stricter than the CRD's optional owner because
+the reviewed Compute client requires both identity strings. Presence does not
+authorize impersonation of that identity. Profile spelling does not prove
+compatibility. In particular, vmProfile support does not promise VM provisioning:
+the pinned CAPLL implementation still requires backend VPC type BARE_METAL.
 
-All initial node pools are checked, including zero-sized/disabled pools.
-Control-plane node-pool mode and controller-based control-plane mode both reuse
-shared naming, Kubernetes version, CNI/network/count/VIP, SPIRE attestation and
-reserved-bootstrap-file checks. NICo subnet/VPC-prefix or OS-profile rules are
-not imposed on LaunchLayer inputs.
+All initial pools are validated, including zero-sized and disabled pools, before
+the create transaction. Both control-plane node-pool mode and controller-based
+control-plane mode preserve the shared naming, Kubernetes version, CNI/network,
+count/VIP, SPIRE, and bootstrap-path checks. NICo-only subnet, VPC-prefix,
+OS-profile, and UUID rules are not applied to LaunchLayer intent.
 
-## Checked request example
+## Create and read examples
 
-[examples/launchlayer-cluster.json](examples/launchlayer-cluster.json) is a
-complete request body for the default control-plane node-pool mode, with one
-control-plane node and a worker pool. Its identifiers and profiles are examples,
-not allocated resources; select a supported Kubernetes version for the deployment.
+[Typed JSON request](examples/launchlayer-cluster.json) and
+[nkectl YAML example](../cli/examples/launchlayer-cluster.yaml) describe an NKE
+tenant cluster with a control-plane pool and worker pool. Identifiers and
+profiles are illustrative, not allocated resources.
 
-For a managed VPC, replace spec.vpcID with spec.orgID, never supply both.
-For controller-based control-plane mode, remove the cp node pool and put its
-infra object in controlPlaneConfig.infra with desiredCount: 1 and maxSurge: 1.
-Enable the corresponding control-plane-controller feature flag.
-The API tests build and persist both network choices in both modes.
+For a managed VPC, replace root `launchlayer.vpcID` with `orgID`, never both.
+For controller-based control-plane mode, remove the control-plane pool and put
+its typed provider into `controlPlaneConfig.launchlayer`, alongside
+`desiredCount: 1` and optionally `maxSurge: 1`. Enable the existing
+control-plane-controller feature flag.
 
-The example includes vmProfile to illustrate the field contract, not to promise
-VM provisioning. At the pinned revision, CAPLL still requires backend VPC type
-BARE_METAL. Substrate/profile compatibility must be qualified separately.
-
-For example, removing instanceType from the second node pool produces HTTP 400:
+Reads retain the cluster's immutable API mode. Typed cluster, pool, and node-set
+responses contain `launchlayer`, never an additional `infra` block.
+Control-plane responses expose all stored `machinePreferences`, for example:
 
 ```json
 {
-  "message": "nodePools[1].infra.machineTemplate.spec.template.spec.instanceType: required nonblank string"
+  "launchlayer": {
+    "machinePreferences": [
+      {"instanceType": "example-control-plane-type", "hostOSProfile": "example-host:1"}
+    ],
+    "spireAttestationMethod": "tpm"
+  }
 }
 ```
 
-No transaction, desired-state write or outbox entry is made for that invalid
-create. CAPLL errors use a declared field path and a bounded reason, not raw
-manifest contents or unknown field names. Shared OpenAPI and generic validators
-retain their existing error conventions.
+This is the provider fragment of a control-plane response, not a create body.
+The runtime currently uses the **first** preference; this API does not implement
+fallback scheduling. Pool/node-set reads obtain the immutable mode with parent
+joins, not one extra query per result. Configuration-history responses project
+typed field paths and machine specs without rewriting historical snapshots.
+The pre-existing Temporal audit record remains limited to the fields it stores.
 
-## Later writes and compatibility
+## PATCH semantics and errors
 
-Standalone node-pool create compares the template with the stored cluster
-binding. Provider-bearing node-pool and control-plane PATCH requests validate
-the effective merged intent before writing desired state.
-An omitted template remains unchanged; an explicitly empty required template
-is rejected. Every stored control-plane template preference is checked on a
-provider-bearing update, even though the public API supplies one template.
+A later pool must use the same API block as its parent cluster. Neither raw
+`infra` input on a typed cluster nor typed input on a generic cluster can switch
+that binding. Root identity, owner, VPC/org, site settings, and the API mode are
+not patchable through pool or control-plane endpoints.
 
-Malformed stored LaunchLayer bindings return a repair-oriented error for new
-provider intent. Root identity is not freely editable through the cluster API:
-coordinate an explicit administrative repair or recreate under the approved
-lifecycle process; do not replace it by inferring identity from a new template.
-Reads, deletion and unrelated scalar maintenance do not trigger the new
-provider validation. Existing provisioning workflows are not retroactively
-re-admitted or rewritten.
+Omit `launchlayer` to leave provider intent unchanged. Inside a typed PATCH,
+omit `machine` to preserve its complete stored spec. A supplied `machine` is
+a **full replacement**, requires instanceType, and removes omitted optional
+profiles and security groups. The following provider fragment intentionally
+clears those optional machine fields:
 
-Dispatch recognizes LaunchLayer on either side of the cluster/template pair,
-including wrong-case/wrong-role LaunchLayer kinds, and then requires the exact
-pair. Unrelated generic CAPI inputs retain the existing generic path.
-This is not a closed concrete-module catalog, installation discovery, or proof
-that any arbitrary generic provider is supported by a product release.
+```json
+{
+  "launchlayer": {
+    "machine": {"instanceType": "replacement-type"},
+    "bootstrapFiles": [],
+    "preKubeadmCommands": []
+  }
+}
+```
 
-Upgrade compatibility: formerly opaque LaunchLayer inputs with missing owner,
-unknown fields, null values, lifecycle metadata, providerID, embedded template
-overrides or malformed object chains now fail immediately.
-Coordinate this tightening with the compatible CAPLL artifact and operator
-release notes. There is no background rewrite or validation-disable escape hatch.
+Bootstrap and command lists preserve when omitted and clear with `[]`.
+Attestation preserves when omitted; empty, null, or unknown values fail.
+The same rules apply beneath `controlPlaneConfig.launchlayer`.
+A supplied control-plane machine replaces the preference list with one template;
+omitting it preserves every stored preference. All preserved preferences are
+checked on typed provider-bearing updates.
+
+CWE validates a merged copy before storing revisions or enqueueing any operation,
+including a combined etcd-encryption/control-plane PATCH. Rejected creates never
+open the write transaction. Client errors return HTTP 400 with bounded public
+field paths, not raw values or unknown field names. For example:
+
+```json
+{"message":"nodePools[1].launchlayer.machine.instanceType: required nonblank string"}
+```
+
+Malformed or unrepresentable typed storage produces a repair-oriented internal
+error, never a partial typed response or fallback to generic `infra`.
+No live backend checks are performed while reading existing objects.
+
+## Generic escape hatch
+
+[Equivalent raw example](examples/generic-launchlayer-cluster.json) uses
+`infra.cluster` and `infra.machineTemplate` with `infra` enabled.
+Generic envelope, SPIRE, reserved-file, and shared cluster checks remain;
+CAPLL-specific fields are neither pruned nor typed-validated.
+Consequently raw CAPLL input that first-class admission rejects can still pass
+generic admission. This is intentional, not certification that a future module
+is supported by a product release. Existing NICo, CAPD, and pre-provisioned flows
+keep their existing API and execution paths.
 
 ## What HTTP acceptance does not prove
 
-HTTP 201 accepts desired state; it does not mean a VPC, instance or Kubernetes
-node is ready. Backend endpoint/authentication, VPC existence/status/org/type,
-owner authorization, security-group membership, quota, capacity, profile
-existence and substrate compatibility remain asynchronous CAPLL/LaunchLayer
-checks.
+HTTP 201 accepts desired state, not a ready VPC, instance, or Kubernetes node.
+Backend authentication, endpoint reachability, VPC existence/status/org/type,
+owner authorization, security-group membership, quota, capacity, and profile
+compatibility remain asynchronous CAPLL/LaunchLayer checks.
 
-CWE stores template metadata, but CAPI GenerateTemplate does not automatically
-copy top-level MachineTemplate labels/annotations into a Machine.
-CWE assigns the generated resources' names/namespaces. Cluster labels and
-annotations are applied with the infrastructure Cluster.
-The template's approved machine spec is retained in each generated Machine.
-
-CWE renders a bootstrap Secret referenced by the CAPI Machine.
-CAPLL intentionally does not forward the raw cloud-init UserData to Compute:
-its manager-wide ConfigMap maps selected Secret values to user_data_args, and
-the selected backend profile provides cloud-init.
-Accepting bootstrapFiles or preKubeadmCommands does not prove those customizations
-reach LaunchLayer nodes. Matching SPIRE paths, attestation, images, profiles and
-placeholder mappings require separate deployment acceptance.
-No bootstrap transport redesign or new backend preflight is included here.
+CWE writes bootstrap Secrets referenced by CAPI Machines. The pinned CAPLL
+controller does not forward raw cloud-init UserData to Compute: manager-wide
+ConfigMap mappings select Secret values for user_data_args, and backend profiles
+provide cloud-init. Accepting bootstrapFiles or preKubeadmCommands does not prove
+they reach nodes. Image/profile/SPIRE paths and placeholder mappings require
+separate deployment acceptance. No bootstrap transport redesign is included.
 
 ## Local verification
 
-Tests use the vendored dependencies, synthetic authentication keys, recording
-database transactions and in-memory Kubernetes apply recorders.
-The rendering test executes the production scaffold and GenerateTemplate path;
-it is not Kubernetes CRD admission or an end-to-end provisioning test.
+Tests cover the real HTTP/OpenAPI stack, synthetic authentication, recorded
+transaction writes, isolated SQLite migration/query behavior, typed snapshots,
+CLI fake-HTTP round trips, and production CAPI/bootstrap rendering with fake
+Kubernetes clients. PostgreSQL-specific deployment behavior and live provisioning
+are separate checks, not established by these tests.
 
-Always set KUBECONFIG to a verified nonexistent file for local unit tests unless
-live-environment access has been explicitly authorized:
+Always use a verified nonexistent kubeconfig for local verification unless live
+access is explicitly authorized:
 
 ```sh
-test ! -e /tmp/nke-no-live-kubeconfig
+test ! -e /tmp/nke-no-live-kubeconfig && \
 KUBECONFIG=/tmp/nke-no-live-kubeconfig GOPROXY=off make -C controller test
 ```
 
-On macOS, use GNU Make (gmake). Use the Go version pinned by go.work.
-Live integration/E2E runs, release request-mode gating, exact deployed artifact
-pins and bootstrap/profile acceptance are separate release gates.
+Use GNU Make (`gmake` on macOS) and the Go version pinned in go.work.

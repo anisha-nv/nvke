@@ -209,7 +209,7 @@ resources: {}
   #   cpu: 100m
   #   memory: 128Mi
 
-# -- Comma-separated API provider blocks accepted by mutating cluster and node-pool requests. The chart defaults deployed CWE to Nico only; set to "nico,infra" only for deployments that should accept generic CAPI-backed provider payloads.
+# -- Comma-separated API modes: nico, launchlayer, infra. Defaults to nico; opt into launchlayer only after migrating the database and upgrading every CWE writer. The infra mode independently enables generic CAPI input, including raw CAPLL manifests, without typed LaunchLayer validation.
 supportedInfraProviders: "nico"
 
 # -- Additional environment variables to inject into the CWE container.
