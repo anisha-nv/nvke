@@ -22,8 +22,10 @@ const (
 )
 
 type NodeSet struct {
-	ID         uuid.UUID `bun:"type:uuid,pk"`
-	NodePoolID uuid.UUID `bun:"type:uuid,notnull"`
+	// ClusterAPIProvider is joined through the parent pool and is never persisted here.
+	ClusterAPIProvider APIProvider `bun:"cluster_api_provider,scanonly"`
+	ID                 uuid.UUID   `bun:"type:uuid,pk"`
+	NodePoolID         uuid.UUID   `bun:"type:uuid,notnull"`
 
 	// DesiredCount is the desired count of nodes in the NodeSet.
 	// The desired count is only for this NodeSet, the parent NodePool
@@ -139,6 +141,7 @@ func (q *queriesImpl) ListNodeSets(ctx context.Context, filters NodeSetFilters) 
 	var nodeSets []NodeSet
 	query := q.db.NewSelect().Model(&nodeSets).
 		ColumnExpr("node_set.*").
+		ColumnExpr("c.api_provider AS cluster_api_provider").
 		Join("JOIN node_pools np ON np.id = node_set.node_pool_id").
 		Join("JOIN clusters c ON c.id = np.cluster_id")
 
@@ -161,7 +164,10 @@ func (q *queriesImpl) GetNodeSet(ctx context.Context, id uuid.UUID) (NodeSet, er
 	var config NodeSet
 	err := q.db.NewSelect().
 		Model(&config).
-		Where("id = ?", id).
+		ColumnExpr("node_set.*").ColumnExpr("c.api_provider AS cluster_api_provider").
+		Join("JOIN node_pools np ON np.id = node_set.node_pool_id").
+		Join("JOIN clusters c ON c.id = np.cluster_id").
+		Where("node_set.id = ?", id).
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

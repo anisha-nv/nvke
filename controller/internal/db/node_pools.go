@@ -90,6 +90,8 @@ func cloudInitFilesEqual(a, b []CloudInitFile) bool {
 }
 
 type NodePool struct {
+	// ClusterAPIProvider is joined from the parent and is never persisted on the pool.
+	ClusterAPIProvider       APIProvider        `bun:"cluster_api_provider,scanonly"`
 	ID                       uuid.UUID          `bun:"type:uuid,pk"`
 	ClusterID                uuid.UUID          `bun:"type:uuid,notnull"`
 	Name                     string             `bun:"type:text,notnull"`
@@ -327,6 +329,8 @@ func (q *queriesImpl) ListNodePools(ctx context.Context, filters NodePoolFilters
 	var nodePools []NodePool
 	query := q.db.NewSelect().
 		Model(&nodePools).
+		ColumnExpr("node_pool.*").
+		ColumnExpr("c.api_provider AS cluster_api_provider").
 		Join("JOIN clusters c ON c.id = node_pool.cluster_id")
 
 	if filters.ClusterID != nil {
@@ -384,7 +388,10 @@ func (q *queriesImpl) ListNodePoolMetrics(ctx context.Context) ([]NodePoolMetric
 
 func (q *queriesImpl) GetNodePool(ctx context.Context, id uuid.UUID) (NodePool, error) {
 	var nodePool NodePool
-	err := q.db.NewSelect().Model(&nodePool).Where("id = ?", id).Scan(ctx)
+	err := q.db.NewSelect().Model(&nodePool).
+		ColumnExpr("node_pool.*").ColumnExpr("c.api_provider AS cluster_api_provider").
+		Join("JOIN clusters c ON c.id = node_pool.cluster_id").
+		Where("node_pool.id = ?", id).Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return NodePool{}, ErrNotFound
@@ -396,7 +403,10 @@ func (q *queriesImpl) GetNodePool(ctx context.Context, id uuid.UUID) (NodePool, 
 
 func (q *queriesImpl) GetNodePoolForUpdate(ctx context.Context, id uuid.UUID) (NodePool, error) {
 	var nodePool NodePool
-	err := q.db.NewSelect().Model(&nodePool).Where("id = ?", id).For("UPDATE").Scan(ctx)
+	err := q.db.NewSelect().Model(&nodePool).
+		ColumnExpr("node_pool.*").ColumnExpr("c.api_provider AS cluster_api_provider").
+		Join("JOIN clusters c ON c.id = node_pool.cluster_id").
+		Where("node_pool.id = ?", id).For("UPDATE OF node_pool").Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return NodePool{}, ErrNotFound
