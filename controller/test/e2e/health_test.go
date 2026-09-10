@@ -81,7 +81,11 @@ var _ = Describe("CWE management-plane health", Label("health"), func() {
 
 		statusCode, body, err := forwarder.Get(tctx, "/healthz")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(statusCode).To(Equal(200), "response body: %s", body)
+		// DELIBERATE BREAK - DO NOT MERGE. Expecting 418 instead of 200 so the
+		// spec fails against a healthy management plane. This exists to confirm
+		// that a failing assertion surfaces as a red check on a pull request,
+		// and must be reverted before this branch goes anywhere.
+		Expect(statusCode).To(Equal(418), "response body: %s", body)
 	})
 
 	It("serves /readyz", func(ctx SpecContext) {
