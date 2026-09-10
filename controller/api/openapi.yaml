@@ -34,9 +34,9 @@ paths:
 
   /infraProviders:
     get:
-      summary: List Infrastructure Providers
+      summary: List Accepted Infrastructure API Modes
       operationId: listInfraProviders
-      description: Returns the provider payload keys this deployment advertises for CreateClusterRequest cluster specs.
+      description: Returns configured API modes accepted for new clusters and provider-bearing writes. This is not discovery of installed CAPI modules or backend health.
       responses:
         "200":
           description: A list of infrastructure provider payload keys
@@ -619,14 +619,18 @@ components:
       not:
         anyOf:
           - required: [nico, infra]
+          - required: [nico, launchlayer]
+          - required: [infra, launchlayer]
           - allOf:
               - not:
                   required: [nico]
               - not:
                   required: [infra]
+              - not:
+                  required: [launchlayer]
       description: |
-        Exactly one provider payload is required: supply either `nico` or `infra`.
-        A request carrying both, or neither, is rejected with 400.
+        Exactly one provider payload is required: supply one of `nico`, `launchlayer`, or `infra`.
+        A request carrying multiple payloads, or none, is rejected with 400.
       properties:
         name:
           type: string
@@ -712,6 +716,9 @@ components:
           $ref: "#/components/schemas/NicoClusterProvider"
           description: Provider Nico identity fields.
           x-go-type-skip-optional-pointer: true
+        launchlayer:
+          $ref: "#/components/schemas/LaunchLayerClusterProvider"
+          description: First-class LaunchLayer intent, mutually exclusive with nico and infra.
         infra:
           $ref: "#/components/schemas/InfraClusterProvider"
           description: Ifra provider fields.
@@ -761,6 +768,9 @@ components:
           $ref: "#/components/schemas/NicoControlPlaneProvider"
           description: Provider Nico control plane fields.
           x-go-type-skip-optional-pointer: true
+        launchlayer:
+          $ref: "#/components/schemas/LaunchLayerControlPlaneProvider"
+          description: First-class LaunchLayer intent, mutually exclusive with nico and infra.
         infra:
           $ref: "#/components/schemas/InfraControlPlaneProvider"
           description: Infra provider control plane fields.
@@ -830,15 +840,19 @@ components:
       not:
         anyOf:
           - required: [nico, infra]
+          - required: [nico, launchlayer]
+          - required: [infra, launchlayer]
           - allOf:
               - not:
                   required: [nico]
               - not:
                   required: [infra]
+              - not:
+                  required: [launchlayer]
       description: |
         Writable cluster-level control plane configuration supplied at cluster creation.
-        Exactly one provider payload is required: supply either `nico` or `infra`.
-        A request carrying both, or neither, is rejected with 400.
+        Exactly one provider payload is required: supply one of `nico`, `launchlayer`, or `infra`.
+        A request carrying multiple payloads, or none, is rejected with 400.
       properties:
         desiredCount:
           type: integer
@@ -871,6 +885,9 @@ components:
           $ref: "#/components/schemas/NicoControlPlaneProviderCreate"
           description: Provider Nico control plane fields.
           x-go-type-skip-optional-pointer: true
+        launchlayer:
+          $ref: "#/components/schemas/LaunchLayerControlPlaneProviderCreate"
+          description: First-class LaunchLayer intent, mutually exclusive with nico and infra.
         infra:
           $ref: "#/components/schemas/InfraControlPlaneProvider"
           description: Infra provider control plane fields.
@@ -879,10 +896,13 @@ components:
       type: object
       additionalProperties: false
       not:
-        required: [nico, infra]
+        anyOf:
+          - required: [nico, infra]
+          - required: [nico, launchlayer]
+          - required: [infra, launchlayer]
       description: |
-        `nico` and `infra` are mutually exclusive: supply at most one of them (both
-        may be omitted). A request carrying both is rejected with 400, as is a
+        `nico`, `launchlayer`, and `infra` are mutually exclusive: supply at most one
+        (all may be omitted). Multiple payloads are rejected with 400, as is a
         provider payload that does not match the cluster.
       properties:
         desiredCount:
@@ -912,6 +932,9 @@ components:
           $ref: "#/components/schemas/NicoControlPlaneProviderUpdate"
           description: The mutable subset of the Nico control plane fields.
           x-go-type-skip-optional-pointer: true
+        launchlayer:
+          $ref: "#/components/schemas/LaunchLayerControlPlaneProviderUpdate"
+          description: First-class LaunchLayer intent, mutually exclusive with nico and infra.
         infra:
           $ref: "#/components/schemas/InfraControlPlaneProviderUpdate"
           description: The mutable infra provider control plane fields.
@@ -990,6 +1013,9 @@ components:
           $ref: "#/components/schemas/NicoClusterProvider"
           description: Provider Nico identity fields.
           x-go-type-skip-optional-pointer: true
+        launchlayer:
+          $ref: "#/components/schemas/LaunchLayerClusterProvider"
+          description: First-class LaunchLayer intent, mutually exclusive with nico and infra.
         infra:
           $ref: "#/components/schemas/InfraClusterProvider"
           description: Infra provider fields.
@@ -1077,6 +1103,7 @@ components:
       type: string
       enum:
         - nico
+        - launchlayer
         - infra
       description: A top-level provider payload key advertised for CreateClusterRequest cluster specs.
 
@@ -1169,7 +1196,7 @@ components:
       type: object
       description: |
         A node pool follows its cluster's provider, so exactly one provider payload is
-        required: supply either `nico` or `infra`. A request carrying both, or neither,
+        required: supply one of `nico`, `launchlayer`, or `infra`. A request carrying multiple payloads, or none,
         is rejected with 400.
       required:
         - name
@@ -1179,11 +1206,15 @@ components:
       not:
         anyOf:
           - required: [nico, infra]
+          - required: [nico, launchlayer]
+          - required: [infra, launchlayer]
           - allOf:
               - not:
                   required: [nico]
               - not:
                   required: [infra]
+              - not:
+                  required: [launchlayer]
       properties:
         name:
           type: string
@@ -1257,6 +1288,9 @@ components:
           $ref: "#/components/schemas/NicoNodePoolProvider"
           description: Provider Nico node pool fields.
           x-go-type-skip-optional-pointer: true
+        launchlayer:
+          $ref: "#/components/schemas/LaunchLayerNodePoolProvider"
+          description: First-class LaunchLayer intent, mutually exclusive with nico and infra.
         infra:
           $ref: "#/components/schemas/InfraNodePoolProvider"
           description: Infra provider node pool fields.
@@ -1265,10 +1299,13 @@ components:
       type: object
       additionalProperties: false
       not:
-        required: [nico, infra]
+        anyOf:
+          - required: [nico, infra]
+          - required: [nico, launchlayer]
+          - required: [infra, launchlayer]
       description: |
-        `nico` and `infra` are mutually exclusive: supply at most one of them (both
-        may be omitted). A request carrying both is rejected with 400, as is a
+        `nico`, `launchlayer`, and `infra` are mutually exclusive: supply at most one
+        (all may be omitted). Multiple payloads are rejected with 400, as is a
         provider payload that does not match the node pool's cluster.
       # No required fields since all fields are optional
       properties:
@@ -1321,6 +1358,9 @@ components:
           $ref: "#/components/schemas/NicoNodePoolProviderUpdate"
           description: The mutable subset of the Nico node pool fields.
           x-go-type-skip-optional-pointer: true
+        launchlayer:
+          $ref: "#/components/schemas/LaunchLayerNodePoolProviderUpdate"
+          description: First-class LaunchLayer intent, mutually exclusive with nico and infra.
         infra:
           $ref: "#/components/schemas/InfraNodePoolProviderUpdate"
           description: The mutable Infra provider node pool fields.
@@ -1437,6 +1477,9 @@ components:
           $ref: "#/components/schemas/NicoNodePoolProvider"
           description: Provider Nico node pool fields.
           x-go-type-skip-optional-pointer: true
+        launchlayer:
+          $ref: "#/components/schemas/LaunchLayerNodePoolProvider"
+          description: First-class LaunchLayer intent, mutually exclusive with nico and infra.
         infra:
           $ref: "#/components/schemas/InfraNodePoolProvider"
           description: Infra provider node pool fields.
@@ -1564,6 +1607,9 @@ components:
           $ref: "#/components/schemas/NicoNodeSetProvider"
           description: Provider Nico node set fields.
           x-go-type-skip-optional-pointer: true
+        launchlayer:
+          $ref: "#/components/schemas/LaunchLayerNodeSetProvider"
+          description: First-class LaunchLayer intent, mutually exclusive with nico and infra.
         infra:
           $ref: "#/components/schemas/InfraNodeSetProvider"
           description: Infra provider node set fields.
@@ -1957,6 +2003,162 @@ components:
           description: The name of the config profile
           x-order: 1
 
+    LaunchLayerOwner:
+      type: object
+      additionalProperties: false
+      required: [userID, username]
+      properties:
+        userID:
+          type: string
+          minLength: 1
+          maxLength: 253
+        username:
+          type: string
+          minLength: 1
+          maxLength: 253
+
+    LaunchLayerClusterProvider:
+      type: object
+      additionalProperties: false
+      required: [owner]
+      not:
+        anyOf:
+          - required: [vpcID, orgID]
+          - allOf:
+              - not:
+                  required: [vpcID]
+              - not:
+                  required: [orgID]
+      description: |
+        Immutable LaunchLayer cluster intent. Select an existing VPC with vpcID,
+        or request a CAPLL-managed VPC with orgID, never both. Credentials and
+        backend authorization are deployment/reconciliation concerns.
+      properties:
+        vpcID:
+          type: string
+          minLength: 1
+        orgID:
+          type: string
+          minLength: 1
+        owner:
+          $ref: "#/components/schemas/LaunchLayerOwner"
+        siteID:
+          type: string
+          description: Optional pass-through; not a verified routing or placement key.
+        cloudProviderEnabled:
+          type: boolean
+          description: Whether an independently deployed cloud controller owns Node provider IDs.
+
+    LaunchLayerSecurityGroups:
+      type: object
+      additionalProperties: false
+      properties:
+        primaryNetworkInterface:
+          type: array
+          items:
+            type: string
+        gpuNetworkInterface:
+          type: array
+          items:
+            type: string
+
+    LaunchLayerMachine:
+      type: object
+      additionalProperties: false
+      required: [instanceType]
+      description: |
+        LaunchLayer allocation intent, not a Kubernetes manifest. Profiles and
+        security-group identifiers are validated structurally, not against a backend.
+        On PATCH the whole machine object replaces the stored intent.
+      properties:
+        instanceType:
+          type: string
+          minLength: 1
+        hostOSProfile:
+          type: string
+        vmProfile:
+          type: string
+        fulfillmentStrategy:
+          type: string
+          enum: [BEST_EFFORT, ALL_OR_NOTHING, WAIT_FOR_RESOURCE]
+          description: Omission leaves the default to CAPLL.
+        securityGroups:
+          $ref: "#/components/schemas/LaunchLayerSecurityGroups"
+
+    LaunchLayerNodePoolProvider:
+      type: object
+      additionalProperties: false
+      required: [machine, spireAttestationMethod]
+      properties:
+        machine:
+          $ref: "#/components/schemas/LaunchLayerMachine"
+        spireAttestationMethod:
+          $ref: "#/components/schemas/SpireAttestationMethodCreate"
+        bootstrapFiles:
+          type: array
+          items:
+            $ref: "#/components/schemas/CloudInitFile"
+          description: Bootstrap intent; delivery depends on CAPLL profile argument mapping.
+        preKubeadmCommands:
+          type: array
+          items:
+            type: string
+
+    LaunchLayerNodePoolProviderUpdate:
+      type: object
+      additionalProperties: false
+      description: |
+        Omitted fields preserve stored intent. A supplied machine fully replaces
+        its spec, including removing omitted optional fields. Empty arrays clear
+        bootstrap lists; null is not accepted.
+      properties:
+        machine:
+          $ref: "#/components/schemas/LaunchLayerMachine"
+        spireAttestationMethod:
+          $ref: "#/components/schemas/SpireAttestationMethod"
+        bootstrapFiles:
+          type: array
+          items:
+            $ref: "#/components/schemas/CloudInitFile"
+        preKubeadmCommands:
+          type: array
+          items:
+            type: string
+
+    LaunchLayerNodeSetProvider:
+      $ref: "#/components/schemas/LaunchLayerNodePoolProvider"
+
+    LaunchLayerControlPlaneProviderCreate:
+      $ref: "#/components/schemas/LaunchLayerNodePoolProvider"
+
+    LaunchLayerControlPlaneProviderUpdate:
+      $ref: "#/components/schemas/LaunchLayerNodePoolProviderUpdate"
+
+    LaunchLayerControlPlaneProvider:
+      type: object
+      additionalProperties: false
+      required: [machinePreferences, spireAttestationMethod]
+      description: |
+        Read-only control-plane snapshot. All stored preferences are shown; the
+        current controller-mode node context selects the first, not a fallback.
+        Write one machine through controlPlaneConfig.launchlayer.machine.
+      properties:
+        machinePreferences:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/LaunchLayerMachine"
+        spireAttestationMethod:
+          $ref: "#/components/schemas/SpireAttestationMethodCreate"
+        bootstrapFiles:
+          type: array
+          items:
+            $ref: "#/components/schemas/CloudInitFile"
+        preKubeadmCommands:
+          type: array
+          items:
+            type: string
+
     NicoClusterProvider:
       type: object
       additionalProperties: false
@@ -1991,11 +2193,8 @@ components:
           additionalProperties: true
           description: |
             JSON manifest for the CAPI infrastructure provider Cluster resource.
-            LaunchLayer intent is validated against the pinned v1alpha1 contract in
-            docs/launchlayer-validation.md: exactly one vpcID/orgID, both owner fields,
-            supported fields and metadata, and compatible MachineTemplate kinds.
-            Invalid intent returns 400 before provisioning is queued; acceptance does
-            not verify backend resources, authorization, deployment, or readiness.
+            Generic escape hatch: only envelope and shared rules are checked, even
+            for LaunchLayer manifests. Use launchlayer for first-class validation.
           x-go-type-skip-optional-pointer: true
 
     NicoNodePoolProvider:
@@ -2132,11 +2331,8 @@ components:
           additionalProperties: true
           description: |
             JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
-            LaunchLayer clusters require LaunchLayerMachineTemplate v1alpha1 with
-            spec.template.spec.instanceType and only supported fields; see
-            docs/launchlayer-validation.md for the pinned contract and examples.
-            The same checks apply to effective provider-bearing updates. Bootstrap
-            delivery depends on the provider's deployed profile and configuration.
+            Generic escape hatch: no concrete module schema is validated here.
+            Use launchlayer.machine for first-class LaunchLayer validation.
           x-go-type-skip-optional-pointer: true
         spireAttestationMethod:
           $ref: "#/components/schemas/SpireAttestationMethodCreate"
@@ -2166,11 +2362,8 @@ components:
           additionalProperties: true
           description: |
             JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
-            LaunchLayer clusters require LaunchLayerMachineTemplate v1alpha1 with
-            spec.template.spec.instanceType and only supported fields; see
-            docs/launchlayer-validation.md for the pinned contract and examples.
-            The same checks apply to effective provider-bearing updates. Bootstrap
-            delivery depends on the provider's deployed profile and configuration.
+            Generic escape hatch: no concrete module schema is validated here.
+            Use launchlayer.machine for first-class LaunchLayer validation.
           x-go-type-skip-optional-pointer: true
         spireAttestationMethod:
           $ref: "#/components/schemas/SpireAttestationMethod"
@@ -2198,11 +2391,8 @@ components:
           additionalProperties: true
           description: |
             JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
-            LaunchLayer clusters require LaunchLayerMachineTemplate v1alpha1 with
-            spec.template.spec.instanceType and only supported fields; see
-            docs/launchlayer-validation.md for the pinned contract and examples.
-            The same checks apply to effective provider-bearing updates. Bootstrap
-            delivery depends on the provider's deployed profile and configuration.
+            Generic escape hatch: no concrete module schema is validated here.
+            Use launchlayer.machine for first-class LaunchLayer validation.
           x-go-type-skip-optional-pointer: true
         spireAttestationMethod:
           $ref: "#/components/schemas/SpireAttestationMethodCreate"
@@ -2372,11 +2562,8 @@ components:
           additionalProperties: true
           description: |
             JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
-            LaunchLayer clusters require LaunchLayerMachineTemplate v1alpha1 with
-            spec.template.spec.instanceType and only supported fields; see
-            docs/launchlayer-validation.md for the pinned contract and examples.
-            The same checks apply to effective provider-bearing updates. Bootstrap
-            delivery depends on the provider's deployed profile and configuration.
+            Generic escape hatch: no concrete module schema is validated here.
+            Use launchlayer.machine for first-class LaunchLayer validation.
           x-go-type-skip-optional-pointer: true
         spireAttestationMethod:
           $ref: "#/components/schemas/SpireAttestationMethodCreate"
@@ -2406,11 +2593,8 @@ components:
           additionalProperties: true
           description: |
             JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
-            LaunchLayer clusters require LaunchLayerMachineTemplate v1alpha1 with
-            spec.template.spec.instanceType and only supported fields; see
-            docs/launchlayer-validation.md for the pinned contract and examples.
-            The same checks apply to effective provider-bearing updates. Bootstrap
-            delivery depends on the provider's deployed profile and configuration.
+            Generic escape hatch: no concrete module schema is validated here.
+            Use launchlayer.machine for first-class LaunchLayer validation.
           x-go-type-skip-optional-pointer: true
         spireAttestationMethod:
           $ref: "#/components/schemas/SpireAttestationMethod"

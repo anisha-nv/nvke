@@ -157,7 +157,10 @@ func (s *clusterService) ListClusters(ctx context.Context, req api.ListClustersR
 	}
 	apiClusters := make([]api.Cluster, len(dbClusters))
 	for i := range dbClusters {
-		apiClusters[i] = APIClusterFromDB(&dbClusters[i])
+		apiClusters[i], err = APIClusterFromDB(&dbClusters[i])
+		if err != nil {
+			return nil, err
+		}
 	}
 	return api.ListClusters200JSONResponse{Clusters: apiClusters}, nil
 }
@@ -251,7 +254,11 @@ func (s *clusterService) CreateCluster(ctx context.Context, req api.CreateCluste
 		return nil, err
 	}
 
-	return api.CreateCluster201JSONResponse(APIClusterFromDB(&createdCluster)), nil
+	out, err := APIClusterFromDB(&createdCluster)
+	if err != nil {
+		return nil, err
+	}
+	return api.CreateCluster201JSONResponse(out), nil
 }
 
 func (s *clusterService) preflightCheckCreateClusterRequest(
@@ -315,6 +322,9 @@ func (s *clusterService) preflightCheckCreateClusterRequest(
 		for i, pool := range *req.NodePools {
 			poolReq := initialNodePoolRequest(cluster.ID, pool)
 			if err := s.nodePoolService.validateCreateNodePoolRequest(cluster, &poolReq); err != nil {
+				if strings.HasPrefix(err.Error(), "launchlayer.") {
+					return resolvedClusterNetwork{}, newBadRequestErrorf("nodePools[%d].%s", i, err)
+				}
 				return resolvedClusterNetwork{}, newBadRequestErrorf("nodePools[%d]: %s", i, err)
 			}
 		}
@@ -337,6 +347,13 @@ func forgeCAPINicoClusterManifest(siteID uuid.UUID) ([]byte, error) {
 }
 
 func (s *clusterService) ValidateCreateClusterRequestFields(req *api.CreateClusterRequest) error {
+	mode, err := requestProvider(req.Nico != nil, req.Launchlayer != nil, req.Infra != nil, true)
+	if err != nil {
+		return err
+	}
+	if err := s.providers.require(string(mode)); err != nil {
+		return err
+	}
 	if err := validateLaunchLayerCreateIntent(req); err != nil {
 		return err
 	}
@@ -357,8 +374,8 @@ func (s *clusterService) ValidateCreateClusterRequestFields(req *api.CreateClust
 
 	var providerType db.ProviderType
 	switch {
-	case req.Infra != nil && req.Nico != nil:
-		return fmt.Errorf("exactly one provider must be set")
+	case req.Launchlayer != nil:
+		providerType = db.ProviderTypeCAPI
 	case req.Infra != nil:
 		if err := s.providers.require(config.InfraProviderInfra); err != nil {
 			return err
@@ -467,6 +484,7 @@ func initialNodePoolRequest(clusterID uuid.UUID, nodePoolConfig api.NodePoolCrea
 		TeleportEnabled:             nodePoolConfig.TeleportEnabled,
 		Nico:                        nodePoolConfig.Nico,
 		Infra:                       nodePoolConfig.Infra,
+		Launchlayer:                 nodePoolConfig.Launchlayer,
 	}
 }
 
@@ -510,7 +528,11 @@ func (s *clusterService) GetCluster(ctx context.Context, req api.GetClusterReque
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}
 
-	return api.GetCluster200JSONResponse(APIClusterFromDB(&dbCluster)), nil
+	out, err := APIClusterFromDB(&dbCluster)
+	if err != nil {
+		return nil, err
+	}
+	return api.GetCluster200JSONResponse(out), nil
 }
 
 func (s *clusterService) UpdateCluster(ctx context.Context, req api.UpdateClusterRequestObject) (api.UpdateClusterResponseObject, error) {
@@ -552,16 +574,6 @@ func (s *clusterService) UpdateCluster(ctx context.Context, req api.UpdateCluste
 				op:        uip.Type,
 				startedAt: uip.StartedAt,
 				message:   uip.Message,
-			}
-		}
-		// Reject a controlPlaneConfig provider block that doesn't match the cluster before
-		// any field is touched.
-		if cpConfig := req.Body.ControlPlaneConfig; cpConfig != nil {
-			if dbCluster.ProviderType == db.ProviderTypeNico && cpConfig.Infra != nil {
-				return newBadRequestErrorf("controlPlaneConfig.infra is not supported, please provide controlPlaneConfig.nico")
-			}
-			if dbCluster.ProviderType == db.ProviderTypeCAPI && cpConfig.Nico != nil {
-				return newBadRequestErrorf("controlPlaneConfig.nico is not supported, please provide controlPlaneConfig.infra")
 			}
 		}
 		if err := s.preflightInfraControlPlanePatch(ctx, dbCluster, req.Body.ControlPlaneConfig); err != nil {
@@ -660,11 +672,12 @@ func (s *clusterService) UpdateCluster(ctx context.Context, req api.UpdateCluste
 		}
 		return nil, fmt.Errorf("failed to update cluster: %w", err)
 	}
-	response := api.UpdateCluster200JSONResponse(APIClusterFromDB(&updatedCluster))
-	s.logger.Info("UpdateCluster response",
-		clusterIDConst, req.ClusterID,
-		"response", response,
-	)
+	out, err := APIClusterFromDB(&updatedCluster)
+	if err != nil {
+		return nil, err
+	}
+	response := api.UpdateCluster200JSONResponse(out)
+	s.logger.Info("UpdateCluster completed", clusterIDConst, req.ClusterID)
 	return response, nil
 }
 
@@ -825,7 +838,7 @@ func (s *clusterService) applyClusterControlPlaneConfigUpdate(ctx context.Contex
 		}
 	}
 
-	if cluster.ProviderType == db.ProviderTypeCAPI && req.Infra != nil {
+	if cluster.APIProvider == db.APIProviderLaunchLayer && req.Launchlayer != nil {
 		if err := validateLaunchLayerControlPlaneUpdate(*cluster, controlPlaneConfigSpec); err != nil {
 			return err
 		}
@@ -864,7 +877,7 @@ func hasClusterLevelControlPlaneUpdate(req *api.UpdateClusterControlPlaneConfig)
 		req.SystemReservedMemory != nil ||
 		req.NodeLabels != nil ||
 		req.TeleportEnabled != nil ||
-		req.Infra != nil {
+		req.Infra != nil || req.Launchlayer != nil {
 		return true
 	}
 	return hasNestedNicoControlPlanePatch(req.Nico)
@@ -896,6 +909,15 @@ func (s *clusterService) applyClusterLevelControlPlaneSpecUpdate(
 	req *api.UpdateClusterControlPlaneConfig,
 	spec *db.ControlPlaneConfigSpec,
 ) error {
+	if req.Launchlayer != nil {
+		if err := validateLaunchLayerNodePatch(req.Launchlayer, "controlPlaneConfig.launchlayer"); err != nil {
+			return newBadRequestErrorf("%s", err)
+		}
+		copyReq := *req
+		copyReq.Infra = infraControlPlanePatch(req.Launchlayer)
+		copyReq.Launchlayer = nil
+		req = &copyReq
+	}
 	if req.DesiredCount != nil {
 		if *req.DesiredCount < 1 {
 			return newBadRequestErrorf("controlPlaneConfig.desiredCount must be at least 1")
@@ -963,9 +985,6 @@ func (s *clusterService) applyClusterLevelControlPlaneSpecUpdate(
 			capi.PreKubeadmCommands = append([]string(nil), req.Infra.PreKubeadmCommands...)
 		}
 		if req.Infra.MachineTemplate != nil {
-			if err := validateStoredLaunchLayerBinding(*cluster, req.Infra.MachineTemplate, "controlPlaneConfig.infra.machineTemplate"); err != nil {
-				return newBadRequestErrorf("%s", err)
-			}
 			if isEmptyManifestObject(req.Infra.MachineTemplate) {
 				capi.InfraMachineTemplatePreferences = nil
 			} else {
@@ -1152,7 +1171,7 @@ func (s *clusterService) DeleteCluster(ctx context.Context, req api.DeleteCluste
 	return api.DeleteCluster202Response{}, nil
 }
 
-func APIClusterFromDB(dbCluster *db.Cluster) api.Cluster {
+func baseClusterFromDB(dbCluster *db.Cluster) api.Cluster {
 	var controlPlaneVIP *string
 	if dbCluster.ControlPlaneVIP != "" {
 		controlPlaneVIP = &dbCluster.ControlPlaneVIP
@@ -1259,13 +1278,22 @@ func DBClusterFromAPI(req *api.CreateClusterRequest) (db.Cluster, error) {
 	}
 
 	switch {
+	case req.Launchlayer != nil:
+		raw, err := rawManifestFromObject(launchLayerClusterManifest(req.Launchlayer))
+		if err != nil {
+			return db.Cluster{}, err
+		}
+		cluster.SetCAPIProvider(db.CAPIClusterProvider{InfraCluster: raw})
+		cluster.APIProvider = db.APIProviderLaunchLayer
 	case req.Nico != nil:
+		cluster.APIProvider = db.APIProviderNico
 		cluster.SetNicoProvider(db.NicoClusterProvider{
 			OrgID:  req.Nico.OrgID,
 			SiteID: req.Nico.SiteID,
 			VpcID:  req.Nico.VpcID,
 		})
 	case req.Infra != nil:
+		cluster.APIProvider = db.APIProviderInfra
 		capiCluster, err := rawManifestFromObject(req.Infra.Cluster)
 		if err != nil {
 			return db.Cluster{}, err

@@ -22,19 +22,22 @@ func TestAPINodePoolFromDB_SpireAttestationMethod(t *testing.T) {
 	}
 
 	t.Run("omits the infra payload for a pool that has none", func(t *testing.T) {
-		apiNodePool := apiNodePoolFromDB(&db.NodePool{})
+		apiNodePool, mappingErr := apiNodePoolFromDB(&db.NodePool{})
+		require.NoError(t, mappingErr)
 		require.Nil(t, apiNodePool.Infra)
 	})
 
 	t.Run("returns tpm attestation method when set", func(t *testing.T) {
-		apiNodePool := apiNodePoolFromDB(nodePoolWithCAPIMethod(db.SpireAttestationMethodTPM))
+		apiNodePool, mappingErr := apiNodePoolFromDB(nodePoolWithCAPIMethod(db.SpireAttestationMethodTPM))
+		require.NoError(t, mappingErr)
 
 		require.NotNil(t, apiNodePool.Infra)
 		require.Equal(t, api.SpireAttestationMethodCreateTpm, apiNodePool.Infra.SpireAttestationMethod)
 	})
 
 	t.Run("returns join token attestation method when set", func(t *testing.T) {
-		apiNodePool := apiNodePoolFromDB(nodePoolWithCAPIMethod(db.SpireAttestationMethodJoinToken))
+		apiNodePool, mappingErr := apiNodePoolFromDB(nodePoolWithCAPIMethod(db.SpireAttestationMethodJoinToken))
+		require.NoError(t, mappingErr)
 
 		require.NotNil(t, apiNodePool.Infra)
 		require.Equal(t, api.SpireAttestationMethodCreateJoinToken, apiNodePool.Infra.SpireAttestationMethod)

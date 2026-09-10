@@ -67,11 +67,11 @@ func TestLaunchLayerAuthenticatedHTTPAdmission(t *testing.T) {
 			if tc.status == http.StatusCreated {
 				database.On("RunInTx", mock.Anything, mock.Anything).Return(nil).Once()
 			}
-			srv, err := server.NewServer(config.Config{}, discardLogger(), database, nil, authn)
+			srv, err := server.NewServer(config.Config{SupportedInfraProviders: []string{"launchlayer"}}, discardLogger(), database, nil, authn)
 			require.NoError(t, err)
 			body := launchLayerCreateRequest(false, false)
 			if tc.invalid {
-				delete(body.Infra.Cluster["spec"].(map[string]any), "owner")
+				body.Launchlayer.Owner.UserID = " "
 			}
 			data, err := json.Marshal(body)
 			require.NoError(t, err)

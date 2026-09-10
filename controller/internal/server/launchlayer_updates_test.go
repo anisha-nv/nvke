@@ -34,7 +34,7 @@ func launchLayerStoredPool(t *testing.T, clusterID uuid.UUID) db.NodePool {
 	t.Helper()
 	raw, err := json.Marshal(launchLayerTemplate())
 	require.NoError(t, err)
-	pool := db.NodePool{ID: uuid.New(), ClusterID: clusterID, Name: "workers", NodeNamePrefix: "worker", DesiredCount: 2}
+	pool := db.NodePool{ClusterAPIProvider: db.APIProviderLaunchLayer, ID: uuid.New(), ClusterID: clusterID, Name: "workers", NodeNamePrefix: "worker", DesiredCount: 2}
 	pool.SetCapi(db.CAPINodePoolProvider{
 		InfraMachineTemplate: raw, SpireAttestationMethod: db.SpireAttestationMethodJoinToken,
 	})
@@ -54,7 +54,7 @@ func TestLaunchLayerStandaloneCreateRejectsMismatchedBinding(t *testing.T) {
 			database.On("GetCluster", mock.Anything, cluster.ID).Return(cluster, nil).Once()
 			response := launchLayerHTTP(t, launchLayerHandler(t, database, false), http.MethodPost, "/api/nodePools", body)
 			require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
-			require.Contains(t, response.Body.String(), "infra.machineTemplate.kind")
+			require.Contains(t, response.Body.String(), "immutable")
 			database.AssertNotCalled(t, "RunInTx", mock.Anything, mock.Anything)
 			database.AssertExpectations(t)
 		})
@@ -68,16 +68,16 @@ func TestLaunchLayerNodePoolPatchValidatesMergedIntent(t *testing.T) {
 		badStoredTemplate, badStoredCluster bool
 		wantStatus                          int
 	}{
-		{"foreign provider", map[string]any{"infra": map[string]any{"machineTemplate": map[string]any{
+		{"foreign provider", map[string]any{"launchlayer": map[string]any{"machineTemplate": map[string]any{
 			"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha1", "kind": "DockerMachineTemplate",
 		}}}, false, false, http.StatusBadRequest},
-		{"clear template", map[string]any{"infra": map[string]any{"machineTemplate": map[string]any{}}}, false, false, http.StatusBadRequest},
-		{"null template", map[string]any{"infra": map[string]any{"machineTemplate": nil}}, false, false, http.StatusBadRequest},
-		{"invalid attestation", map[string]any{"infra": map[string]any{"spireAttestationMethod": "invalid"}}, false, false, http.StatusBadRequest},
-		{"merged old template invalid", map[string]any{"infra": map[string]any{"spireAttestationMethod": "tpm"}}, true, false, http.StatusBadRequest},
-		{"stored binding invalid", map[string]any{"infra": map[string]any{"machineTemplate": launchLayerTemplate()}}, false, true, http.StatusBadRequest},
-		{"valid template", map[string]any{"infra": map[string]any{"machineTemplate": launchLayerTemplate()}}, false, false, http.StatusOK},
-		{"preserve omitted template", map[string]any{"infra": map[string]any{"spireAttestationMethod": "tpm"}}, false, false, http.StatusOK},
+		{"clear template", map[string]any{"launchlayer": map[string]any{"machine": map[string]any{}}}, false, false, http.StatusBadRequest},
+		{"null template", map[string]any{"launchlayer": map[string]any{"machine": nil}}, false, false, http.StatusBadRequest},
+		{"invalid attestation", map[string]any{"launchlayer": map[string]any{"spireAttestationMethod": "invalid"}}, false, false, http.StatusBadRequest},
+		{"merged old template invalid", map[string]any{"launchlayer": map[string]any{"spireAttestationMethod": "tpm"}}, true, false, http.StatusInternalServerError},
+		{"stored binding invalid", map[string]any{"launchlayer": map[string]any{"machine": launchLayerSpec(launchLayerTemplate())}}, false, true, http.StatusInternalServerError},
+		{"valid template", map[string]any{"launchlayer": map[string]any{"machine": launchLayerSpec(launchLayerTemplate())}}, false, false, http.StatusOK},
+		{"preserve omitted template", map[string]any{"launchlayer": map[string]any{"spireAttestationMethod": "tpm"}}, false, false, http.StatusOK},
 		{"scalar maintenance on legacy binding", map[string]any{"description": "new description"}, true, true, http.StatusOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -96,6 +96,10 @@ func TestLaunchLayerNodePoolPatchValidatesMergedIntent(t *testing.T) {
 			if tc.badStoredCluster {
 				cluster.Capi.InfraCluster = json.RawMessage(`{"apiVersion":"infrastructure.cluster.x-k8s.io/v1alpha1","kind":"LaunchLayerCluster","spec":{"vpcID":"example-vpc"}}`)
 			}
+			if tc.name == "scalar maintenance on legacy binding" {
+				cluster.APIProvider = ""
+				pool.ClusterAPIProvider = ""
+			}
 			before := append([]byte(nil), pool.Capi.InfraMachineTemplate...)
 			tx := &testutil.MockTx{}
 			database := &testutil.MockDB{MockTx: tx}
@@ -113,7 +117,7 @@ func TestLaunchLayerNodePoolPatchValidatesMergedIntent(t *testing.T) {
 			response := launchLayerHTTP(t, launchLayerHandler(t, database, false), http.MethodPatch,
 				"/api/nodePools/"+pool.ID.String(), tc.patch)
 			require.Equal(t, tc.wantStatus, response.Code, response.Body.String())
-			if tc.wantStatus == http.StatusBadRequest {
+			if tc.wantStatus != http.StatusOK {
 				tx.AssertNotCalled(t, "UpdateNodePool", mock.Anything, mock.Anything)
 			}
 			tx.AssertNotCalled(t, "CreateWorkflowOutboxEntry", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
@@ -150,10 +154,13 @@ func TestLaunchLayerControlPlanePatchRejectsInvalidEffectiveTemplate(t *testing.
 			}
 			infra := map[string]any{"spireAttestationMethod": "tpm"}
 			if tc.template != nil {
-				infra["machineTemplate"] = tc.template
+				infra["machine"] = tc.template
+				if tc.template["spec"] != nil {
+					infra["machine"] = launchLayerSpec(tc.template)
+				}
 			}
 			body := map[string]any{
-				"controlPlaneConfig":   map[string]any{"infra": infra},
+				"controlPlaneConfig":   map[string]any{"launchlayer": infra},
 				"enableEtcdEncryption": true,
 			}
 			tx := &testutil.MockTx{}
@@ -162,7 +169,11 @@ func TestLaunchLayerControlPlanePatchRejectsInvalidEffectiveTemplate(t *testing.
 			tx.On("GetClusterForUpdate", mock.Anything, cluster.ID).Return(cluster, nil).Maybe()
 			response := launchLayerHTTP(t, launchLayerHandler(t, database, true), http.MethodPatch,
 				fmt.Sprintf("/api/clusters/%s", cluster.ID), body)
-			require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+			expected := http.StatusBadRequest
+			if tc.badStoredBinding || tc.extraBadPreference {
+				expected = http.StatusInternalServerError
+			}
+			require.Equal(t, expected, response.Code, response.Body.String())
 			tx.AssertNotCalled(t, "UpdateCluster", mock.Anything, mock.Anything)
 			tx.AssertNotCalled(t, "CreateControlPlaneConfiguration", mock.Anything, mock.Anything)
 			tx.AssertNotCalled(t, "CreateWorkflowOutboxEntry", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
@@ -200,12 +211,12 @@ func TestLaunchLayerStandaloneCreatePersistsIntent(t *testing.T) {
 	database.On("RunInTx", mock.Anything, mock.Anything).Return(nil).Once()
 	body := api.CreateNodePoolRequest{
 		ClusterID: cluster.ID, Name: "later-pool", NodeNamePrefix: "later", DesiredNodeCount: 1,
-		Infra: &api.InfraNodePoolProvider{MachineTemplate: launchLayerTemplate(), SpireAttestationMethod: "joinToken"},
+		Launchlayer: launchLayerNodeIntent(),
 	}
 	response := launchLayerHTTP(t, launchLayerHandler(t, database, false), http.MethodPost, "/api/nodePools", body)
 	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
 	require.Len(t, tx.pools, 1)
-	expected, err := json.Marshal(body.Infra.MachineTemplate)
+	expected, err := json.Marshal(launchLayerTemplate())
 	require.NoError(t, err)
 	require.JSONEq(t, string(expected), string(tx.pools[0].Capi.InfraMachineTemplate))
 	require.Equal(t, []string{"ProvisionNodePool"}, tx.outboxes)
@@ -223,7 +234,7 @@ func TestLaunchLayerControlPlanePatchPreservesOmittedTemplate(t *testing.T) {
 	tx := &launchLayerLifecycleTx{cluster: cluster}
 	database := &testutil.MockDB{GetTx: func() db.Tx { return tx }}
 	database.On("RunInTx", mock.Anything, mock.Anything).Return(nil).Once()
-	body := map[string]any{"controlPlaneConfig": map[string]any{"infra": map[string]any{"spireAttestationMethod": "tpm"}}}
+	body := map[string]any{"controlPlaneConfig": map[string]any{"launchlayer": map[string]any{"spireAttestationMethod": "tpm"}}}
 	response := launchLayerHTTP(t, launchLayerHandler(t, database, true), http.MethodPatch, "/api/clusters/"+cluster.ID.String(), body)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.Len(t, tx.configs, 1)

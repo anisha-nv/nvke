@@ -22,6 +22,10 @@ import (
 	"github.com/NVIDIA/nke/controller/internal/temporal/workflows"
 )
 
+const (
+	capiInfraMachineTemplateField = "capiInfraMachineTemplate"
+)
+
 func (s *nodeSetService) GetNodePoolConfigHistory(ctx context.Context, req api.GetNodePoolConfigHistoryRequestObject) (api.GetNodePoolConfigHistoryResponseObject, error) {
 	nodePool, err := s.db.GetNodePool(ctx, req.NodePoolID)
 	if err != nil {
@@ -103,7 +107,7 @@ func (s *nodeSetService) configHistoryFromTemporal(ctx context.Context, nodePool
 		changes[len(changes)-1].IsCurrent = true
 	}
 
-	return changes, nil
+	return typedConfigHistory(nodePool, changes)
 }
 
 // nodePoolConfigChangeInput builds an audit record for a direct config change to a node pool.
@@ -243,7 +247,51 @@ func (s *nodeSetService) configHistoryFromNodeSets(ctx context.Context, nodePool
 		})
 	}
 
+	changes, err = typedConfigHistory(nodePool, changes)
+	if err != nil {
+		return nil, err
+	}
 	return api.GetNodePoolConfigHistory200JSONResponse{Changes: changes}, nil
+}
+
+// Historical snapshots stay unchanged; only the public field paths and typed
+// machine projection follow the immutable parent API mode.
+func typedConfigHistory(pool db.NodePool, changes []api.NodePoolConfigChange) ([]api.NodePoolConfigChange, error) {
+	if pool.ClusterAPIProvider != db.APIProviderLaunchLayer {
+		return changes, nil
+	}
+	for _, change := range changes {
+		fields := change.ChangedFields
+		for j := range fields {
+			field := &fields[j]
+			switch field.Field {
+			case "capiSpireAttestationMethod":
+				field.Field = "launchlayer.spireAttestationMethod"
+			case "capiBootstrapFiles":
+				field.Field = "launchlayer.bootstrapFiles"
+			case "capiPreKubeadmCommands":
+				field.Field = "launchlayer.preKubeadmCommands"
+			case capiInfraMachineTemplateField:
+				field.Field = "launchlayer.machine"
+				values := []*string{&field.To}
+				if field.From != nil {
+					values = append(values, field.From)
+				}
+				for _, value := range values {
+					machine, err := apiLaunchLayerMachine(json.RawMessage(*value))
+					if err != nil {
+						return nil, err
+					}
+					raw, err := json.Marshal(machine)
+					if err != nil {
+						return nil, errStoredLaunchLayerIntent
+					}
+					*value = string(raw)
+				}
+			}
+		}
+	}
+	return changes, nil
 }
 
 // nodeSetConfigDiff returns the config fields that changed between prev and curr.
@@ -284,7 +332,7 @@ func nodeSetConfigDiff(prev, curr *db.NodeSet) []api.NodePoolConfigField {
 	addJSONIfChanged("teleportEnabled", marshalField(prev.TeleportEnabled), marshalField(curr.TeleportEnabled))
 	addJSONIfChanged("subnetIDs", marshalField(prev.SubnetIDs), marshalField(curr.SubnetIDs))
 	addJSONIfChanged("vpcPrefixIDs", marshalField(prev.VpcPrefixIDs), marshalField(curr.VpcPrefixIDs))
-	addJSONIfChanged("capiInfraMachineTemplate", prev.CapiInfraMachineTemplate, curr.CapiInfraMachineTemplate)
+	addJSONIfChanged(capiInfraMachineTemplateField, prev.CapiInfraMachineTemplate, curr.CapiInfraMachineTemplate)
 	addJSONIfChanged("capiBootstrapFiles", marshalField(prev.CapiBootstrapFiles), marshalField(curr.CapiBootstrapFiles))
 	addJSONIfChanged("capiPreKubeadmCommands", marshalField(prev.CapiPreKubeadmCommands), marshalField(curr.CapiPreKubeadmCommands))
 

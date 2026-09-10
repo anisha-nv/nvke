@@ -152,6 +152,18 @@ func TestValidateUpdateNodePoolRequest_DisabledProviderOnlyBlocksProviderPayload
 	require.EqualError(t, err, "infra provider is not supported by this deployment")
 }
 
+func TestValidateUpdateNodePoolRequest_DisabledTypedLaunchLayerAllowsScalarMaintenance(t *testing.T) {
+	service := NewNodePoolService(slog.Default(), nil, config.TeleportConfig{}, []string{config.InfraProviderNico}, false)
+	cluster := db.Cluster{ProviderType: db.ProviderTypeCAPI, APIProvider: db.APIProviderLaunchLayer}
+	request := &api.UpdateNodePoolRequest{}
+	require.NoError(t, service.validateUpdateNodePoolRequest(cluster, request))
+	require.NoError(t, validateLaunchLayerNodePoolUpdate(cluster, &db.NodePool{}, request), "scalar maintenance must not re-admit stored intent")
+	request.Launchlayer = &api.LaunchLayerNodePoolProviderUpdate{}
+	require.EqualError(t, service.validateUpdateNodePoolRequest(cluster, request), "launchlayer provider is not supported by this deployment")
+	cpService := &clusterService{}
+	require.NoError(t, cpService.preflightInfraControlPlanePatch(t.Context(), cluster, &api.UpdateClusterControlPlaneConfig{}))
+}
+
 func TestValidateUpdateNodePoolRequest_CAPIRejectsForgeSpecificFieldsIndividually(t *testing.T) {
 	service := NewNodePoolService(slog.Default(), nil, config.TeleportConfig{}, nil, false)
 

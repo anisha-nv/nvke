@@ -1987,7 +1987,7 @@ func TestClusterService_UpdateCluster_ControlPlaneConfig_RejectsMismatchedProvid
 		assertRejected(t, mockDB, &api.UpdateClusterControlPlaneConfig{
 			Nico:  &api.NicoControlPlaneProviderUpdate{},
 			Infra: &api.InfraControlPlaneProviderUpdate{},
-		}, clusterID, "controlPlaneConfig.infra is not supported, please provide controlPlaneConfig.nico")
+		}, clusterID, "exactly one provider must be set")
 	})
 
 	t.Run("both nico and infra on a CAPI cluster is rejected", func(t *testing.T) {
@@ -1996,7 +1996,7 @@ func TestClusterService_UpdateCluster_ControlPlaneConfig_RejectsMismatchedProvid
 		assertRejected(t, mockDB, &api.UpdateClusterControlPlaneConfig{
 			Nico:  &api.NicoControlPlaneProviderUpdate{},
 			Infra: &api.InfraControlPlaneProviderUpdate{},
-		}, clusterID, "controlPlaneConfig.nico is not supported, please provide controlPlaneConfig.infra")
+		}, clusterID, "exactly one provider must be set")
 	})
 
 	// Regression guard: instanceTypePreference is handled by a code path
@@ -2178,7 +2178,8 @@ func TestDbClusterFromAPI_NestedProvidersReachTheStoredCluster(t *testing.T) {
 		assert.Equal(t, vpcID, cluster.Nico.VpcID)
 		assert.Nil(t, cluster.Capi)
 
-		apiCluster := server.APIClusterFromDB(&cluster)
+		apiCluster, mappingErr := server.APIClusterFromDB(&cluster)
+		require.NoError(t, mappingErr)
 		require.NotNil(t, apiCluster.Nico)
 		assert.Equal(t, "org", apiCluster.Nico.OrgID)
 		assert.Equal(t, siteID, apiCluster.Nico.SiteID)
@@ -2203,7 +2204,8 @@ func TestDbClusterFromAPI_NestedProvidersReachTheStoredCluster(t *testing.T) {
 		require.NotNil(t, cluster.Capi)
 		assert.Nil(t, cluster.Nico)
 
-		apiCluster := server.APIClusterFromDB(&cluster)
+		apiCluster, mappingErr := server.APIClusterFromDB(&cluster)
+		require.NoError(t, mappingErr)
 		require.NotNil(t, apiCluster.Infra)
 		assert.Equal(t, "DockerCluster", apiCluster.Infra.Cluster["kind"])
 		assert.Nil(t, apiCluster.Nico)
@@ -2220,6 +2222,7 @@ func TestApiClusterFromDB_OmitsMissingProviderPayload(t *testing.T) {
 		SiteID: uuid.New(),
 		VpcID:  uuid.New(),
 	}
-	got := server.APIClusterFromDB(&cluster)
+	got, mappingErr := server.APIClusterFromDB(&cluster)
+	require.NoError(t, mappingErr)
 	assert.Nil(t, got.Nico)
 }

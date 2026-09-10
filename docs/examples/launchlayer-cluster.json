@@ -3,40 +3,19 @@
   "controlPlaneKubernetesVersion": "1.35.0",
   "cniPlugin": "calico",
   "etcdEncrypted": false,
-  "infra": {
-    "cluster": {
-      "apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha1",
-      "kind": "LaunchLayerCluster",
-      "spec": {
-        "vpcID": "example-vpc",
-        "owner": {
-          "userID": "example-user-id",
-          "username": "example-operator"
-        }
-      }
-    }
-  },
   "nodePools": [
     {
       "name": "cp",
       "nodeNamePrefix": "cp",
       "controlPlane": true,
       "desiredNodeCount": 1,
-      "infra": {
-        "spireAttestationMethod": "joinToken",
-        "machineTemplate": {
-          "apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha1",
-          "kind": "LaunchLayerMachineTemplate",
-          "spec": {
-            "template": {
-              "spec": {
-                "instanceType": "example-control-plane-type",
-                "hostOSProfile": "example-nke-host:1",
-                "fulfillmentStrategy": "BEST_EFFORT"
-              }
-            }
-          }
-        }
+      "launchlayer": {
+        "machine": {
+          "instanceType": "example-control-plane-type",
+          "hostOSProfile": "example-nke-host:1",
+          "fulfillmentStrategy": "BEST_EFFORT"
+        },
+        "spireAttestationMethod": "joinToken"
       }
     },
     {
@@ -44,30 +23,29 @@
       "nodeNamePrefix": "worker",
       "controlPlane": false,
       "desiredNodeCount": 2,
-      "infra": {
-        "spireAttestationMethod": "joinToken",
-        "machineTemplate": {
-          "apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha1",
-          "kind": "LaunchLayerMachineTemplate",
-          "spec": {
-            "template": {
-              "spec": {
-                "instanceType": "example-worker-type",
-                "hostOSProfile": "example-nke-host:1",
-                "securityGroups": {
-                  "primaryNetworkInterface": [
-                    "example-primary-sg"
-                  ],
-                  "gpuNetworkInterface": [
-                    "example-gpu-sg"
-                  ]
-                },
-                "vmProfile": "example-nke-vm:1"
-              }
-            }
-          }
-        }
+      "launchlayer": {
+        "machine": {
+          "instanceType": "example-worker-type",
+          "hostOSProfile": "example-nke-host:1",
+          "securityGroups": {
+            "primaryNetworkInterface": [
+              "example-primary-sg"
+            ],
+            "gpuNetworkInterface": [
+              "example-gpu-sg"
+            ]
+          },
+          "vmProfile": "example-nke-vm:1"
+        },
+        "spireAttestationMethod": "joinToken"
       }
     }
-  ]
+  ],
+  "launchlayer": {
+    "vpcID": "example-vpc",
+    "owner": {
+      "userID": "example-user-id",
+      "username": "example-operator"
+    }
+  }
 }

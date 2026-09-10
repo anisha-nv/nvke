@@ -54,7 +54,12 @@ func LaunchLayerCluster(obj map[string]any, path string) error {
 	if err != nil {
 		return err
 	}
-	if err := fields(spec, path+".spec", []fieldRule{
+	return LaunchLayerClusterSpec(spec, path+".spec")
+}
+
+// LaunchLayerClusterSpec validates cluster intent independently of its resource envelope.
+func LaunchLayerClusterSpec(spec map[string]any, path string) error {
+	if err := fields(spec, path, []fieldRule{
 		{"vpcID", nonblank},
 		{"orgID", nonblank},
 		{"siteID", stringValue},
@@ -66,9 +71,9 @@ func LaunchLayerCluster(obj map[string]any, path string) error {
 	_, vpc := spec["vpcID"]
 	_, org := spec["orgID"]
 	if vpc == org {
-		return invalid(path+".spec", "exactly one of vpcID or orgID is required")
+		return invalid(path, "exactly one of vpcID or orgID is required")
 	}
-	return owner(spec["owner"], path+".spec.owner")
+	return owner(spec["owner"], path+".owner")
 }
 
 // LaunchLayerMachineTemplate validates a template, not an allocated Machine.
@@ -95,6 +100,11 @@ func machineSpec(value any, path string) error {
 	if err != nil {
 		return err
 	}
+	return LaunchLayerMachineSpec(spec, path)
+}
+
+// LaunchLayerMachineSpec validates allocation intent independently of its template envelope.
+func LaunchLayerMachineSpec(spec map[string]any, path string) error {
 	if err := fields(spec, path, []fieldRule{
 		{"instanceType", nonblank},
 		{"hostOSProfile", stringValue},

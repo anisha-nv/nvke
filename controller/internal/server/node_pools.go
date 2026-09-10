@@ -95,7 +95,10 @@ func (s *nodePoolService) ListNodePools(ctx context.Context, req api.ListNodePoo
 	}
 	apiNodePools := make([]api.NodePool, len(dbNodePools))
 	for i := range dbNodePools {
-		apiNodePools[i] = apiNodePoolFromDB(&dbNodePools[i])
+		apiNodePools[i], err = apiNodePoolFromDB(&dbNodePools[i])
+		if err != nil {
+			return nil, err
+		}
 	}
 	return api.ListNodePools200JSONResponse{NodePools: apiNodePools}, nil
 }
@@ -183,7 +186,11 @@ func (s *nodePoolService) CreateNodePool(
 		return nil, err
 	}
 
-	return api.CreateNodePool201JSONResponse(apiNodePoolFromDB(&createdNodePool)), nil
+	out, err := apiNodePoolFromDB(&createdNodePool)
+	if err != nil {
+		return nil, err
+	}
+	return api.CreateNodePool201JSONResponse(out), nil
 }
 
 func isValidDiskSelectionStrategy(s api.DiskSelectionStrategyCreate) bool {
@@ -253,21 +260,38 @@ func (s *nodePoolService) validateCreateNodePoolRequest(cluster db.Cluster, req 
 		return err
 	}
 
-	switch cluster.ProviderType {
-	case db.ProviderTypeCAPI:
-		if err := s.providers.require(config.InfraProviderInfra); err != nil {
-			return err
-		}
-		if req.Infra != nil {
-			if err := validateStoredLaunchLayerBinding(cluster, req.Infra.MachineTemplate, "infra.machineTemplate"); err != nil {
-				return err
-			}
+	bound, err := cluster.ResolveAPIProvider()
+	if err != nil {
+		return err
+	}
+	if err := s.providers.require(string(bound)); err != nil {
+		return err
+	}
+	if req.Launchlayer == nil && bound != db.APIProviderLaunchLayer {
+		if bound == db.APIProviderNico {
+			return validateCreateNicoNodePoolRequest(req)
 		}
 		return validateCreateCAPINodePoolRequest(req)
-	case db.ProviderTypeNico:
-		if err := s.providers.require(config.InfraProviderNico); err != nil {
+	}
+	mode, err := requestProvider(req.Nico != nil, req.Launchlayer != nil, req.Infra != nil, true)
+	if err != nil {
+		return err
+	}
+	if err := matchProvider(cluster, mode); err != nil {
+		return err
+	}
+	if err := s.providers.require(string(mode)); err != nil {
+		return err
+	}
+	switch mode {
+	case db.APIProviderLaunchLayer:
+		if err := validateStoredLaunchLayerCluster(cluster); err != nil {
 			return err
 		}
+		return validateLaunchLayerNodeProvider(req.Launchlayer, "launchlayer")
+	case db.APIProviderInfra:
+		return validateCreateCAPINodePoolRequest(req)
+	case db.APIProviderNico:
 		return validateCreateNicoNodePoolRequest(req)
 	default:
 		return fmt.Errorf("unsupported cluster provider")
@@ -334,7 +358,11 @@ func (s *nodePoolService) GetNodePool(ctx context.Context, req api.GetNodePoolRe
 		return nil, fmt.Errorf("failed to get node pool: %w", err)
 	}
 
-	return api.GetNodePool200JSONResponse(apiNodePoolFromDB(&dbNodePool)), nil
+	out, err := apiNodePoolFromDB(&dbNodePool)
+	if err != nil {
+		return nil, err
+	}
+	return api.GetNodePool200JSONResponse(out), nil
 }
 
 func (s *nodePoolService) DeleteNodePool(
@@ -488,7 +516,11 @@ func (s *nodePoolService) UpdateNodePool(
 		return nil, err
 	}
 
-	return api.UpdateNodePool200JSONResponse(apiNodePoolFromDB(&updatedNodePool)), nil
+	out, err := apiNodePoolFromDB(&updatedNodePool)
+	if err != nil {
+		return nil, err
+	}
+	return api.UpdateNodePool200JSONResponse(out), nil
 }
 
 func applyUpdateNodePoolRequest(cluster db.Cluster, dbNodePool *db.NodePool, req *api.UpdateNodePoolRequest) error {
@@ -496,6 +528,12 @@ func applyUpdateNodePoolRequest(cluster db.Cluster, dbNodePool *db.NodePool, req
 		return nil
 	}
 
+	if req.Launchlayer != nil {
+		copyReq := *req
+		copyReq.Infra = infraNodePatch(req.Launchlayer)
+		copyReq.Launchlayer = nil
+		req = &copyReq
+	}
 	if req.AutoProvisionDisabled != nil {
 		dbNodePool.AutoProvisionDisabled = *req.AutoProvisionDisabled
 	}
@@ -643,25 +681,43 @@ func validateUpdatedForgeNodePool(dbNodePool *db.NodePool) error {
 
 // validateUpdateNodePoolRequest validates cluster-type-specific update fields before the request is applied.
 func (s *nodePoolService) validateUpdateNodePoolRequest(cluster db.Cluster, req *api.UpdateNodePoolRequest) error {
-	switch cluster.ProviderType {
-	case db.ProviderTypeCAPI:
-		if req != nil && (req.Infra != nil || req.Nico != nil) {
-			if err := s.providers.require(config.InfraProviderInfra); err != nil {
-				return err
-			}
+	if req == nil {
+		return nil
+	}
+	bound, err := cluster.ResolveAPIProvider()
+	if err != nil {
+		return err
+	}
+	if req.Nico != nil || req.Infra != nil || req.Launchlayer != nil {
+		if err := s.providers.require(string(bound)); err != nil {
+			return err
 		}
-		if req.Infra != nil && req.Infra.MachineTemplate != nil {
-			if err := validateStoredLaunchLayerBinding(cluster, req.Infra.MachineTemplate, "infra.machineTemplate"); err != nil {
-				return err
-			}
+	}
+	if req.Launchlayer == nil && bound != db.APIProviderLaunchLayer {
+		if bound == db.APIProviderNico {
+			return validateUpdateNicoNodePoolRequest(req)
 		}
 		return validateUpdateCAPINodePoolRequest(req)
-	case db.ProviderTypeNico:
-		if req != nil && (req.Nico != nil || req.Infra != nil) {
-			if err := s.providers.require(config.InfraProviderNico); err != nil {
-				return err
-			}
+	}
+	mode, err := requestProvider(req.Nico != nil, req.Launchlayer != nil, req.Infra != nil, false)
+	if err != nil {
+		return err
+	}
+	if err := matchProvider(cluster, mode); err != nil {
+		return err
+	}
+	if mode != "" {
+		if err := s.providers.require(string(mode)); err != nil {
+			return err
 		}
+	}
+	if req.Launchlayer != nil {
+		return validateLaunchLayerNodePatch(req.Launchlayer, "launchlayer")
+	}
+	switch cluster.ProviderType {
+	case db.ProviderTypeCAPI:
+		return validateUpdateCAPINodePoolRequest(req)
+	case db.ProviderTypeNico:
 		return validateUpdateNicoNodePoolRequest(req)
 	default:
 		return fmt.Errorf("unsupported cluster provider")
@@ -740,7 +796,7 @@ func uuidSliceDedupe(s []uuid.UUID) []uuid.UUID {
 	return out
 }
 
-func apiNodePoolFromDB(dbNodePool *db.NodePool) api.NodePool {
+func baseNodePoolFromDB(dbNodePool *db.NodePool) api.NodePool {
 	var maxSurge *int
 	if dbNodePool.MaxSurge > 0 {
 		maxSurge = &dbNodePool.MaxSurge
@@ -884,6 +940,13 @@ func dbNodePoolFromAPI(req *api.CreateNodePoolRequest, kubernetesVersion string)
 	}
 
 	switch {
+	case req.Launchlayer != nil:
+		provider, err := dbLaunchLayerNodeProvider(req.Launchlayer)
+		if err != nil {
+			return db.NodePool{}, err
+		}
+		nodePool.SetCapi(provider)
+		nodePool.ClusterAPIProvider = db.APIProviderLaunchLayer
 	case req.Nico != nil:
 		sshKeyGroupIDs := make([]uuid.UUID, 0)
 		if req.Nico.SSHKeyGroupIDs != nil {

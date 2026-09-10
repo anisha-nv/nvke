@@ -13,7 +13,6 @@ import (
 	pathpkg "path"
 	"time"
 
-	"github.com/getkin/kin-openapi/openapi3filter"
 	oapi_middleware "github.com/oapi-codegen/nethttp-middleware"
 	"github.com/swaggest/swgui/v5emb"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -47,9 +46,9 @@ func NewServer(
 	}
 	serverImpl := NewServerImpl(cfg, logger, database, temporalClient)
 	strictHandler := api.NewStrictHandlerWithOptions(serverImpl, nil, api.StrictHTTPServerOptions{
-		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			logger.Error("OpenAPI StrictServer request error", "error", err)
-			handleError(w, logger, err.Error(), http.StatusBadRequest)
+		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, _ error) {
+			logger.Error("OpenAPI StrictServer request parsing failed")
+			handleError(w, logger, "request body does not match the API schema", http.StatusBadRequest)
 		},
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			logger.Error("OpenAPI StrictServer response error", "error", err)
@@ -67,7 +66,7 @@ func NewServer(
 				// AuthenticationFunc kin-openapi answers 401 to every request,
 				// even with authentication off. This makes its check a no-op.
 				// Tokens are verified by the middleware wrapping this mux.
-				Options: openapi3filter.Options{AuthenticationFunc: openapi3filter.NoopAuthenticationFunc},
+				Options: safeRequestValidationOptions(openapiSpec),
 				ErrorHandler: func(w http.ResponseWriter, message string, statusCode int) {
 					logger.Error("OpenAPI middleware validation error", "message", message)
 					handleError(w, logger, message, statusCode)

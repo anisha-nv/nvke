@@ -39,39 +39,37 @@ func launchLayerTemplate() map[string]any {
 }
 
 func launchLayerCreateRequest(controllerMode, managed bool) api.CreateClusterRequest {
-	identity := "vpcID"
+	p := &api.LaunchLayerClusterProvider{
+		VpcID: testutil.PtrTo("example-network"), CloudProviderEnabled: testutil.PtrTo(false),
+		Owner: api.LaunchLayerOwner{UserID: "example-user", Username: "example-operator"},
+	}
 	if managed {
-		identity = "orgID"
+		p.VpcID = nil
+		p.OrgID = testutil.PtrTo("example-network")
 	}
 	body := api.CreateClusterRequest{
 		Name: "ll-validation", CniPlugin: "calico", ControlPlaneKubernetesVersion: "1.35.0",
-		Infra: &api.InfraClusterProvider{Cluster: map[string]any{
-			"apiVersion": validation.LaunchLayerAPIVersion, "kind": "LaunchLayerCluster",
-			"spec": map[string]any{
-				identity: "example-network", "cloudProviderEnabled": false,
-				"owner": map[string]any{"userID": "example-user", "username": "example-operator"},
-			},
-		}},
+		Launchlayer: p,
 		NodePools: &[]api.NodePoolCreateConfig{
-			{
-				Name: "cp", NodeNamePrefix: "cp", ControlPlane: true, DesiredNodeCount: 1,
-				Infra: &api.InfraNodePoolProvider{MachineTemplate: launchLayerTemplate(), SpireAttestationMethod: "joinToken"},
-			},
-			{
-				Name: "workers", NodeNamePrefix: "worker", DesiredNodeCount: 2,
-				Infra: &api.InfraNodePoolProvider{MachineTemplate: launchLayerTemplate(), SpireAttestationMethod: "joinToken"},
-			},
+			{Name: "cp", NodeNamePrefix: "cp", ControlPlane: true, DesiredNodeCount: 1, Launchlayer: launchLayerNodeIntent()},
+			{Name: "workers", NodeNamePrefix: "worker", DesiredNodeCount: 2, Launchlayer: launchLayerNodeIntent()},
 		},
 	}
 	if controllerMode {
-		body.ControlPlaneConfig = &api.CreateClusterControlPlaneConfig{
-			DesiredCount: 1, Infra: &api.InfraControlPlaneProvider{
-				MachineTemplate: launchLayerTemplate(), SpireAttestationMethod: "joinToken",
-			},
-		}
+		body.ControlPlaneConfig = &api.CreateClusterControlPlaneConfig{DesiredCount: 1, Launchlayer: launchLayerNodeIntent()}
 		*body.NodePools = (*body.NodePools)[1:]
 	}
 	return body
+}
+
+func launchLayerNodeIntent() *api.LaunchLayerNodePoolProvider {
+	return &api.LaunchLayerNodePoolProvider{
+		SpireAttestationMethod: "joinToken",
+		Machine: api.LaunchLayerMachine{
+			InstanceType: "example-type", HostOSProfile: testutil.PtrTo("example-host:1"), VMProfile: testutil.PtrTo("example-vm:1"),
+			SecurityGroups: &api.LaunchLayerSecurityGroups{PrimaryNetworkInterface: &[]string{"example-primary"}, GpuNetworkInterface: &[]string{"example-gpu"}},
+		},
+	}
 }
 
 func launchLayerSpec(template map[string]any) map[string]any {
@@ -84,6 +82,7 @@ func launchLayerHandler(t *testing.T, database *testutil.MockDB, controllerMode 
 	// without its optional Forge-only transaction stubs; every write is asserted.
 	srv, err := server.NewServer(config.Config{
 		ProvisionControlPlaneWithControlPlaneController: controllerMode,
+		SupportedInfraProviders:                         []string{"nico", "launchlayer", "infra"},
 	}, discardLogger(), database, nil, nil)
 	require.NoError(t, err)
 	return srv.Handler
@@ -106,50 +105,30 @@ func TestLaunchLayerCreateHTTPRejectsBeforeTransaction(t *testing.T) {
 		mutate func(*api.CreateClusterRequest)
 		path   string
 	}{
-		{"owner", func(r *api.CreateClusterRequest) {
-			delete(r.Infra.Cluster["spec"].(map[string]any), "owner")
-		}, "infra.cluster.spec.owner"},
-		{"both network modes", func(r *api.CreateClusterRequest) {
-			r.Infra.Cluster["spec"].(map[string]any)["orgID"] = "example-org"
-		}, "infra.cluster.spec"},
-		{"unknown cluster field", func(r *api.CreateClusterRequest) {
-			r.Infra.Cluster["spec"].(map[string]any)["example-secret-key"] = "example-secret-value"
-		}, "infra.cluster.spec"},
+		{"blank owner", func(r *api.CreateClusterRequest) { r.Launchlayer.Owner.UserID = " " }, "launchlayer.owner.userID"},
+		{"both networks", func(r *api.CreateClusterRequest) { r.Launchlayer.OrgID = testutil.PtrTo("other") }, "launchlayer"},
 		{"last pool", func(r *api.CreateClusterRequest) {
-			pools := *r.NodePools
-			delete(launchLayerSpec(pools[len(pools)-1].Infra.MachineTemplate), "instanceType")
-		}, "infra.machineTemplate.spec.template.spec.instanceType"},
-		{"zero-sized disabled pool", func(r *api.CreateClusterRequest) {
-			pools := *r.NodePools
-			pool := &pools[len(pools)-1]
-			pool.DesiredNodeCount = 0
-			disabled := true
-			pool.AutoProvisionDisabled = &disabled
-			launchLayerSpec(pool.Infra.MachineTemplate)["instanceType"] = nil
-		}, "infra.machineTemplate.spec.template.spec.instanceType"},
-		{"wrong version", func(r *api.CreateClusterRequest) {
-			(*r.NodePools)[0].Infra.MachineTemplate["apiVersion"] = "example-secret-value"
-		}, "infra.machineTemplate.apiVersion"},
-		{"foreign template", func(r *api.CreateClusterRequest) {
-			(*r.NodePools)[0].Infra.MachineTemplate["kind"] = "DockerMachineTemplate"
-		}, "infra.machineTemplate.kind"},
-		{"foreign cluster with LL template", func(r *api.CreateClusterRequest) {
-			r.Infra.Cluster["kind"] = "DockerCluster"
-		}, "infra.cluster.kind"},
-		{"control plane intent", func(r *api.CreateClusterRequest) {
-			template := (*r.NodePools)[0].Infra.MachineTemplate
-			if r.ControlPlaneConfig != nil {
-				template = r.ControlPlaneConfig.Infra.MachineTemplate
-			}
-			launchLayerSpec(template)["providerID"] = "example-secret-value"
-		}, "infra.machineTemplate.spec.template.spec"},
-		{"shared SPIRE", func(r *api.CreateClusterRequest) {
-			(*r.NodePools)[0].Infra.SpireAttestationMethod = "invalid"
-		}, "spireAttestationMethod"},
+			p := *r.NodePools
+			p[len(p)-1].Launchlayer.Machine.InstanceType = " "
+		}, "launchlayer.machine.instanceType"},
+		{"disabled empty pool", func(r *api.CreateClusterRequest) {
+			p := *r.NodePools
+			p[len(p)-1].DesiredNodeCount = 0
+			p[len(p)-1].AutoProvisionDisabled = testutil.PtrTo(true)
+			p[len(p)-1].Launchlayer.Machine.InstanceType = " "
+		}, "launchlayer.machine.instanceType"},
+		{"mixed root", func(r *api.CreateClusterRequest) { r.Infra = &api.InfraClusterProvider{} }, ""},
+		{"mixed pool", func(r *api.CreateClusterRequest) { (*r.NodePools)[0].Infra = &api.InfraNodePoolProvider{} }, ""},
+		{"wrong pool mode", func(r *api.CreateClusterRequest) {
+			p := &(*r.NodePools)[0]
+			p.Launchlayer = nil
+			p.Infra = &api.InfraNodePoolProvider{MachineTemplate: launchLayerTemplate(), SpireAttestationMethod: "joinToken"}
+		}, "immutable"},
+		{"shared SPIRE", func(r *api.CreateClusterRequest) { (*r.NodePools)[0].Launchlayer.SpireAttestationMethod = "invalid" }, "spireAttestationMethod"},
 		{"shared CNI", func(r *api.CreateClusterRequest) { r.CniPlugin = "invalid" }, "invalid CNI plugin"},
-		{"shared reserved bootstrap file", func(r *api.CreateClusterRequest) {
-			(*r.NodePools)[0].Infra.BootstrapFiles = []api.CloudInitFile{{Path: "/etc/spire-agent/agent.conf", Content: "example-config"}}
-		}, "managed by CWE"},
+		{"reserved bootstrap", func(r *api.CreateClusterRequest) {
+			(*r.NodePools)[0].Launchlayer.BootstrapFiles = &[]api.CloudInitFile{{Path: "/etc/spire-agent/agent.conf", Content: "example-secret-value"}}
+		}, "bootstrapFiles"},
 		{"shared network", func(r *api.CreateClusterRequest) {
 			r.Network = &api.ClusterNetworkCreateConfig{PodCIDR: "192.168.0.0/16", ServiceCIDR: "192.168.0.0/24"}
 		}, "overlap"},
@@ -165,7 +144,6 @@ func TestLaunchLayerCreateHTTPRejectsBeforeTransaction(t *testing.T) {
 				require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
 				require.Contains(t, response.Body.String(), tc.path)
 				require.NotContains(t, response.Body.String(), "example-secret-value")
-				require.NotContains(t, response.Body.String(), "example-secret-key")
 				database.AssertNotCalled(t, "RunInTx", mock.Anything, mock.Anything)
 			})
 		}
@@ -223,13 +201,18 @@ func TestLaunchLayerCreateHTTPPersistsIntent(t *testing.T) {
 				response := launchLayerHTTP(t, launchLayerHandler(t, database, mode), http.MethodPost, "/api/clusters", body)
 				require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
 				require.Len(t, tx.clusters, 1)
-				want, err := json.Marshal(body.Infra.Cluster)
+				require.Equal(t, db.APIProviderLaunchLayer, tx.clusters[0].APIProvider)
+				var responseCluster api.Cluster
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &responseCluster))
+				require.Equal(t, body.Launchlayer, responseCluster.Launchlayer)
+				require.Nil(t, responseCluster.Infra)
+				want, err := json.Marshal(map[string]any{"apiVersion": validation.LaunchLayerAPIVersion, "kind": "LaunchLayerCluster", "spec": body.Launchlayer})
 				require.NoError(t, err)
 				require.JSONEq(t, string(want), string(tx.clusters[0].Capi.InfraCluster))
 				require.Len(t, tx.pools, len(*body.NodePools))
-				for i, pool := range tx.pools {
+				for _, pool := range tx.pools {
 					require.Equal(t, tx.clusters[0].ID, pool.ClusterID)
-					expected, err := json.Marshal((*body.NodePools)[i].Infra.MachineTemplate)
+					expected, err := json.Marshal(launchLayerTemplate())
 					require.NoError(t, err)
 					require.JSONEq(t, string(expected), string(pool.Capi.InfraMachineTemplate))
 					require.Equal(t, db.SpireAttestationMethodJoinToken, pool.Capi.SpireAttestationMethod)
@@ -238,7 +221,7 @@ func TestLaunchLayerCreateHTTPPersistsIntent(t *testing.T) {
 				require.Equal(t, "ProvisionCluster", tx.outboxes[0])
 				if mode {
 					require.Len(t, tx.configs, 1)
-					expected, err := json.Marshal(body.ControlPlaneConfig.Infra.MachineTemplate)
+					expected, err := json.Marshal(launchLayerTemplate())
 					require.NoError(t, err)
 					require.JSONEq(t, string(expected), string(tx.configs[0].Config.Capi.InfraMachineTemplatePreferences[0]))
 				} else {
@@ -252,21 +235,21 @@ func TestLaunchLayerCreateHTTPPersistsIntent(t *testing.T) {
 
 func TestLaunchLayerSecondPoolErrorHasFullPath(t *testing.T) {
 	body := launchLayerCreateRequest(false, false)
-	delete(launchLayerSpec((*body.NodePools)[1].Infra.MachineTemplate), "instanceType")
+	(*body.NodePools)[1].Launchlayer.Machine.InstanceType = " "
 	database := &testutil.MockDB{}
 	response := launchLayerHTTP(t, launchLayerHandler(t, database, false), http.MethodPost, "/api/clusters", body)
 	require.Equal(t, http.StatusBadRequest, response.Code)
-	require.JSONEq(t, `{"message":"nodePools[1].infra.machineTemplate.spec.template.spec.instanceType: required nonblank string"}`, response.Body.String())
+	require.JSONEq(t, `{"message":"nodePools[1].launchlayer.machine.instanceType: required nonblank string"}`, response.Body.String())
 	database.AssertNotCalled(t, "RunInTx", mock.Anything, mock.Anything)
 }
 
 func TestLaunchLayerValidationPreservesGenericCreate(t *testing.T) {
 	body := launchLayerCreateRequest(false, false)
-	body.Infra.Cluster = map[string]any{"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta2", "kind": "DockerCluster"}
+	body.Launchlayer = nil
+	body.Infra = &api.InfraClusterProvider{Cluster: map[string]any{"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta2", "kind": "DockerCluster"}}
 	for i := range *body.NodePools {
-		(*body.NodePools)[i].Infra.MachineTemplate = map[string]any{
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta2", "kind": "DockerMachineTemplate",
-		}
+		(*body.NodePools)[i].Launchlayer = nil
+		(*body.NodePools)[i].Infra = &api.InfraNodePoolProvider{SpireAttestationMethod: "joinToken", MachineTemplate: map[string]any{"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta2", "kind": "DockerMachineTemplate"}}
 	}
 	tx := &launchLayerRecordingTx{}
 	database := &testutil.MockDB{GetTx: func() db.Tx { return tx }}

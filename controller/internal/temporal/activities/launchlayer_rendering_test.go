@@ -38,7 +38,7 @@ func (r *launchLayerApplyRecorder) Patch(_ context.Context, obj client.Object, _
 }
 
 func TestLaunchLayerStoredIntentRendersClusterMachinesAndBootstrap(t *testing.T) {
-	data, err := os.ReadFile("../../../../docs/examples/launchlayer-cluster.json")
+	data, err := os.ReadFile("../../../../docs/examples/generic-launchlayer-cluster.json")
 	require.NoError(t, err)
 	var request api.CreateClusterRequest
 	require.NoError(t, json.Unmarshal(data, &request))

@@ -574,6 +574,7 @@ func nodePoolRequest(clusterID uuid.UUID, pool api.NodePoolCreateConfig) api.Cre
 		NodeLabels:                  pool.NodeLabels,
 		DesiredNodeCount:            pool.DesiredNodeCount,
 		Infra:                       pool.Infra,
+		Launchlayer:                 pool.Launchlayer,
 		Description:                 pool.Description,
 		Nico:                        pool.Nico,
 		NodeNamePrefix:              pool.NodeNamePrefix,

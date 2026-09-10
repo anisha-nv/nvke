@@ -21,6 +21,10 @@ func TestConfig_ParseSupportedInfraProviders(t *testing.T) {
 	}
 
 	tests := map[string]parameters{
+		"typed LaunchLayer opt-in": {
+			envValue: ptr.To("launchlayer,infra"),
+			want:     []string{config.InfraProviderLaunchLayer, config.InfraProviderInfra},
+		},
 		"default": {
 			want: []string{config.InfraProviderNico},
 		},
@@ -63,8 +67,8 @@ func TestConfig_ValidateSupportedInfraProviders(t *testing.T) {
 
 	tests := map[string]parameters{
 		"normalizes whitespace": {
-			providers: []string{" nico ", " infra "},
-			want:      []string{config.InfraProviderNico, config.InfraProviderInfra},
+			providers: []string{" nico ", " launchlayer ", " infra "},
+			want:      []string{config.InfraProviderNico, config.InfraProviderLaunchLayer, config.InfraProviderInfra},
 		},
 		"zero value keeps binary default": {
 			providers: nil,

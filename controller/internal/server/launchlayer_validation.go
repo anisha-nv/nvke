@@ -12,117 +12,142 @@ import (
 	"github.com/NVIDIA/nke/controller/internal/db"
 )
 
-// Dispatch from either side before generic envelope checks: a LaunchLayer
-// template cannot select a different provider from the parent cluster binding.
-func validateLaunchLayerPair(cluster, template map[string]any, clusterPath, templatePath string) error {
-	if !validation.IsLaunchLayer(cluster) && !validation.IsLaunchLayer(template) {
-		return nil
+// API mode is explicit. Raw manifests never select typed admission by kind.
+func requestProvider(nico, launchlayer, infra, required bool) (db.APIProvider, error) {
+	var mode db.APIProvider
+	count := 0
+	for _, candidate := range []struct {
+		present bool
+		mode    db.APIProvider
+	}{
+		{nico, db.APIProviderNico}, {launchlayer, db.APIProviderLaunchLayer}, {infra, db.APIProviderInfra},
+	} {
+		if candidate.present {
+			count++
+			mode = candidate.mode
+		}
 	}
-	if err := validation.LaunchLayerCluster(cluster, clusterPath); err != nil {
+	if count > 1 || (required && count != 1) {
+		return "", fmt.Errorf("exactly one provider must be set")
+	}
+	return mode, nil
+}
+
+func matchProvider(cluster db.Cluster, mode db.APIProvider) error {
+	bound, err := cluster.ResolveAPIProvider()
+	if err != nil {
 		return err
 	}
-	return validation.LaunchLayerMachineTemplate(template, templatePath)
+	if bound == db.APIProviderNico && mode == db.APIProviderInfra {
+		return fmt.Errorf("controlPlaneConfig.infra is not supported, please provide controlPlaneConfig.nico")
+	}
+	if bound == db.APIProviderInfra && mode == db.APIProviderNico {
+		return fmt.Errorf("controlPlaneConfig.nico is not supported, please provide controlPlaneConfig.infra")
+	}
+	if mode != "" && mode != bound {
+		return fmt.Errorf("provider block must match the cluster's immutable %s API mode", bound)
+	}
+	return nil
+}
+
+func validateLaunchLayerNodeProvider(p *api.LaunchLayerNodePoolProvider, path string) error {
+	if p == nil {
+		return fmt.Errorf("%s is required", path)
+	}
+	if err := validation.LaunchLayerMachineSpec(launchLayerMachineSpec(p.Machine), path+".machine"); err != nil {
+		return err
+	}
+	if err := validateCAPISpireAttestationMethod(string(p.SpireAttestationMethod)); err != nil {
+		return fmt.Errorf("%s.spireAttestationMethod must be tpm or joinToken", path)
+	}
+	if err := validateCloudInitFiles(sliceValue(p.BootstrapFiles)); err != nil {
+		return fmt.Errorf("%s.bootstrapFiles contains invalid or controller-managed file paths", path)
+	}
+	return nil
+}
+
+func validateLaunchLayerNodePatch(p *api.LaunchLayerNodePoolProviderUpdate, path string) error {
+	if p == nil {
+		return nil
+	}
+	if p.Machine != nil {
+		if err := validation.LaunchLayerMachineSpec(launchLayerMachineSpec(*p.Machine), path+".machine"); err != nil {
+			return err
+		}
+	}
+	if p.SpireAttestationMethod != nil && validateCAPISpireAttestationMethod(string(*p.SpireAttestationMethod)) != nil {
+		return fmt.Errorf("%s.spireAttestationMethod must be tpm or joinToken", path)
+	}
+	if err := validateCloudInitFiles(sliceValue(p.BootstrapFiles)); err != nil {
+		return fmt.Errorf("%s.bootstrapFiles contains invalid or controller-managed file paths", path)
+	}
+	return nil
 }
 
 func validateLaunchLayerCreateIntent(req *api.CreateClusterRequest) error {
-	if req.Infra == nil {
+	if req.Launchlayer == nil {
 		return nil
 	}
-	cluster := req.Infra.Cluster
-	if validation.IsLaunchLayer(cluster) {
-		if err := validation.LaunchLayerCluster(cluster, "infra.cluster"); err != nil {
-			return err
-		}
-	}
-	if req.ControlPlaneConfig != nil && req.ControlPlaneConfig.Infra != nil {
-		if err := validateLaunchLayerPair(cluster, req.ControlPlaneConfig.Infra.MachineTemplate,
-			"infra.cluster", "controlPlaneConfig.infra.machineTemplate"); err != nil {
-			return err
-		}
-	}
-	if req.NodePools != nil {
-		for i, pool := range *req.NodePools {
-			if pool.Infra == nil {
-				continue // The shared request-mode validator reports the missing infra.
-			}
-			path := fmt.Sprintf("nodePools[%d].infra.machineTemplate", i)
-			if err := validateLaunchLayerPair(cluster, pool.Infra.MachineTemplate, "infra.cluster", path); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return validation.LaunchLayerClusterSpec(launchLayerClusterSpec(req.Launchlayer), "launchlayer")
 }
 
-func validateStoredLaunchLayerBinding(cluster db.Cluster, template map[string]any, templatePath string) error {
-	// Persisted provider payloads are authoritative; do not infer a missing
-	// parent binding from the new template or silently rewrite stored identity.
-	var manifest map[string]any
-	if cluster.Capi != nil {
-		var err error
-		manifest, err = objectFromRawManifest(cluster.Capi.InfraCluster)
-		if err != nil {
-			return fmt.Errorf("stored infra.cluster: cannot read provider binding; repair the stored cluster before changing provider intent")
-		}
+func validateStoredLaunchLayerCluster(cluster db.Cluster) error {
+	if cluster.Capi == nil {
+		return errStoredLaunchLayerIntent
 	}
-	if !validation.IsLaunchLayer(manifest) && !validation.IsLaunchLayer(template) {
-		return nil
-	}
-	if err := validation.LaunchLayerCluster(manifest, "infra.cluster"); err != nil {
-		return fmt.Errorf("stored provider binding needs repair before changing provider intent: %w", err)
-	}
-	return validation.LaunchLayerMachineTemplate(template, templatePath)
+	_, err := apiLaunchLayerCluster(cluster.Capi.InfraCluster)
+	return err
 }
 
 func validateLaunchLayerNodePoolUpdate(cluster db.Cluster, pool *db.NodePool, req *api.UpdateNodePoolRequest) error {
-	if cluster.ProviderType != db.ProviderTypeCAPI || req.Infra == nil {
-		return nil // Unrelated maintenance must not re-admit legacy provider intent.
+	if req.Launchlayer == nil {
+		return nil
 	}
-	provider, err := pool.CAPIProvider()
-	if err != nil {
-		return newBadRequestErrorf("infra: stored node-pool provider payload needs repair")
+	if err := validateStoredLaunchLayerCluster(cluster); err != nil {
+		return err
 	}
-	template, err := objectFromRawManifest(provider.InfraMachineTemplate)
-	if err != nil {
-		return newBadRequestErrorf("infra.machineTemplate: stored template needs repair")
-	}
-	if err := validateStoredLaunchLayerBinding(cluster, template, "infra.machineTemplate"); err != nil {
-		return newBadRequestErrorf("%s", err)
-	}
-	return nil
+	_, err := apiLaunchLayerNodeProvider(pool.Capi)
+	return err
 }
 
 func validateLaunchLayerControlPlaneUpdate(cluster db.Cluster, spec db.ControlPlaneConfigSpec) error {
-	if spec.Capi == nil {
-		return newBadRequestErrorf("controlPlaneConfig.infra: required provider configuration")
+	if cluster.APIProvider != db.APIProviderLaunchLayer {
+		return nil
 	}
-	for i, raw := range spec.Capi.InfraMachineTemplatePreferences {
-		template, err := objectFromRawManifest(raw)
-		if err != nil {
-			return newBadRequestErrorf("controlPlaneConfig.infra.machineTemplate: stored template needs repair")
-		}
-		path := "controlPlaneConfig.infra.machineTemplate"
-		if i > 0 {
-			path = fmt.Sprintf("%sPreferences[%d]", path, i)
-		}
-		if err := validateStoredLaunchLayerBinding(cluster, template, path); err != nil {
-			return newBadRequestErrorf("%s", err)
-		}
+	if err := validateStoredLaunchLayerCluster(cluster); err != nil {
+		return err
 	}
-	if err := validateCAPISpireAttestationMethod(string(spec.Capi.SpireAttestationMethod)); err != nil {
-		return newBadRequestErrorf("controlPlaneConfig.infra.spireAttestationMethod: %s", err)
-	}
-	return nil
+	_, err := apiLaunchLayerControlPlane(spec.Capi)
+	return err
 }
 
-// Validate a copy before a combined PATCH can enqueue other cluster operations.
-// The normal update path still merges and validates defensively before saving.
+// Validate a copy under the parent row lock before a combined PATCH can enqueue
+// any other cluster operation. Unrelated maintenance does not re-admit intent.
 func (s *clusterService) preflightInfraControlPlanePatch(ctx context.Context, cluster db.Cluster, req *api.UpdateClusterControlPlaneConfig) error {
-	if req == nil || req.Infra == nil || cluster.ProviderType != db.ProviderTypeCAPI {
+	if req == nil {
+		return nil
+	}
+	mode, err := requestProvider(req.Nico != nil, req.Launchlayer != nil, req.Infra != nil, false)
+	if err != nil {
+		return newBadRequestErrorf("%s", err)
+	}
+	if err := matchProvider(cluster, mode); err != nil {
+		return newBadRequestErrorf("%s", err)
+	}
+	if mode == "" {
+		return nil
+	}
+	if err := s.providers.require(string(mode)); err != nil {
+		return newBadRequestErrorf("%s", err)
+	}
+	if mode != db.APIProviderInfra && mode != db.APIProviderLaunchLayer {
 		return nil
 	}
 	if !s.useControlPlaneController {
 		return errControlPlaneConfigNotEnabled
+	}
+	if err := validateLaunchLayerNodePatch(req.Launchlayer, "controlPlaneConfig.launchlayer"); err != nil {
+		return newBadRequestErrorf("%s", err)
 	}
 	spec := db.ConfigSpecFromFull(cluster.ControlPlaneConfig)
 	if err := s.applyClusterLevelControlPlaneSpecUpdate(ctx, &cluster, req, &spec); err != nil {

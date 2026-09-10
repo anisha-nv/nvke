@@ -426,7 +426,8 @@ func TestOpenAPIValidator_UpdateNodePoolRejectsUnknownFields(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 	var errBody api.GenericError
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &errBody))
-	assert.Contains(t, errBody.Message, "desiredNodeCounnt")
+	assert.Contains(t, errBody.Message, "API schema")
+	assert.NotContains(t, errBody.Message, "desiredNodeCounnt", "unknown field names are not echoed")
 }
 
 // TestOpenAPIValidator_CreateClusterControlPlaneConfig verifies that the control
@@ -478,7 +479,8 @@ func TestOpenAPIValidator_CreateClusterControlPlaneConfig(t *testing.T) {
 			// has no control-plane controller provisioning enabled. Distinguish the
 			// two by the message rather than the status code.
 			if tt.expectReject {
-				assert.Contains(t, rr.Body.String(), "diskSelectionStrategy")
+				assert.Contains(t, rr.Body.String(), "controlPlaneConfig.nico")
+				assert.Contains(t, rr.Body.String(), "API schema")
 				return
 			}
 			assert.NotContains(t, rr.Body.String(), "diskSelectionStrategy",

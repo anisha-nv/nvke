@@ -25,6 +25,8 @@ const (
 	InfraProviderNico = "nico"
 	// InfraProviderInfra is the API-facing name for the generic CAPI provider block.
 	InfraProviderInfra = "infra"
+	// InfraProviderLaunchLayer selects first-class LaunchLayer admission.
+	InfraProviderLaunchLayer = "launchlayer"
 )
 
 type Config struct {
@@ -481,7 +483,7 @@ func normalizeSupportedInfraProviders(providers []string) ([]string, error) {
 		if normalized == "" {
 			return nil, fmt.Errorf("SUPPORTED_INFRA_PROVIDERS must not contain empty provider names")
 		}
-		if normalized != InfraProviderNico && normalized != InfraProviderInfra {
+		if normalized != InfraProviderNico && normalized != InfraProviderInfra && normalized != InfraProviderLaunchLayer {
 			return nil, fmt.Errorf("SUPPORTED_INFRA_PROVIDERS contains unsupported provider %q", normalized)
 		}
 		if _, ok := seen[normalized]; ok {
