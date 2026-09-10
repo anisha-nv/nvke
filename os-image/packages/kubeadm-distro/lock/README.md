@@ -5,8 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # Lock files
 
-One `<version>.lock` per Kubernetes version in `K8S_VERSIONS`, for example
-`v1.36.3.lock`. Plain text, one sorted record per line, pinning by digest
+One `<arch>/<version>.lock` per Kubernetes version and supported architecture,
+for example `arm64/v1.36.3.lock`. Plain text, one sorted record per line, pinning by digest
 everything the bundle for that version is built from:
 
 ```text
@@ -22,7 +22,7 @@ is renamed or copied to the wrong filename is rejected rather than used.
 These files are **generated, reviewed and committed**, never hand-written:
 
 ```bash
-make lock          # Linux host with network access
+make lock ARCH=arm64 # matching native Linux host with network access
 git diff -- lock/  # read every changed URL and digest
 ```
 

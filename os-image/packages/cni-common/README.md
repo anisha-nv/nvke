@@ -14,11 +14,14 @@ A package is four things: a `Makefile` that sets `CNI`, `PRODUCT`, `VERSIONS`,
 `CONTENT_SPEC` and `CONTENT_KIND` and includes `deb.mk`; a `bundle.sh` that
 stages its artifacts with `fetch` and `verify_artifact`, then calls
 `stage_images` and `finish_bundle`; the content deb's nfpm spec under
-`packaging/`; and `lock/<version>.lock`.
+`packaging/`; and `lock/<arch>/<version>.lock`.
 
 The lock has one `artifact <name> <sha256> <url>` line per fetched file and one
 `image <ref> <digest>` line per image. Builds enforce it; `make lock` rewrites
-the digests from upstream, with the image list seeded by hand.
+the digests from upstream, with the image list seeded by hand. Locks and bundle
+trees are architecture-specific: pass `ARCH=amd64` or `ARCH=arm64` to every
+target. Existing amd64 pins live under `lock/amd64/` and cannot be replaced by
+an arm64 lock refresh.
 
 The images debs `Provides` and `Conflicts` with their unversioned name, so a
 node holds one stream per CNI. They depend on `containerd | nke-kubeadm-distro`:

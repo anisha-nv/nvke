@@ -4,6 +4,8 @@
 # The Calico stream the agent installs by default (defaultCalicoCniStream in
 # agent/internal/agent/cni.go). Bump here and run `make lock`; see README.md.
 CALICO_VERSIONS ?= v3.30.1
+# Revision 2 includes the separate operator CRDs.
+DEB_REVISION ?= 2
 
 CNI := cni-calico
 PRODUCT := Calico

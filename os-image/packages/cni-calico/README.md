@@ -4,7 +4,7 @@ Builds the two Debian packages `nke-agent` installs when it sets up Calico:
 
 | Package | Contents | Installed to |
 |---|---|---|
-| `nke-cni-calico-manifests-<stream>` | Upstream `tigera-operator.yaml` and `custom-resources.yaml` | `/usr/share/nke-cni/calico/<stream>/manifests/` |
+| `nke-cni-calico-manifests-<stream>` | Upstream `operator-crds.yaml`, `tigera-operator.yaml` and `custom-resources.yaml` | `/usr/share/nke-cni/calico/<stream>/manifests/` |
 | `nke-cni-calico-images-<stream>` | Every image the operator resolves, as one docker-archive | `/usr/lib/nke/cni-calico/<stream>/`, imported into containerd by `postinst` |
 
 `provision.sh` stages both into the image under `/usr/lib/nke/debs` as a local
@@ -26,20 +26,22 @@ makes that true; without it a cluster comes up and Calico never does.
 and `nke-cni-calico-images-<stream>`, where `<stream>` is the request's Calico
 version or `defaultCalicoCniStream`. It then finds the install root by looking
 through `dpkg-query -L` for a path ending in `manifests/tigera-operator.yaml`,
-and applies that file and `custom-resources.yaml` beside it.
+applies `operator-crds.yaml` with server-side apply, waits for its CRDs to be
+established, then applies the operator and `custom-resources.yaml` beside it.
+Revision 2 adds the separate CRD manifest required by Calico 3.30.1.
 
-So both manifests must be owned by the package and live in the same
+All three manifests must be owned by the package and live in the same
 `manifests/` directory. `TestCalicoInstallRootFromFiles` in the agent has a case
 pinned to this package's exact layout.
 
 ## Building
 
 ```bash
-make debs OUT_DIR=/absolute/path
+make debs ARCH=arm64 OUT_DIR=/absolute/path
 ```
 
 Linux only. `debs` runs `bundle` first, which verifies every artifact against
-`lock/<version>.lock` before anything is unpacked, and reindexes `OUT_DIR` with
+`lock/<arch>/<version>.lock` before anything is unpacked, and reindexes `OUT_DIR` with
 `dpkg-scanpackages` when it finishes. `make repro-check` builds twice and
 compares every `.deb` byte-for-byte.
 
@@ -48,7 +50,7 @@ compares every `.deb` byte-for-byte.
 Set `CALICO_VERSIONS`, refresh the lock, review it, commit it:
 
 ```bash
-make lock CALICO_VERSIONS=v3.30.2
+make lock ARCH=arm64 CALICO_VERSIONS=v3.30.2
 git diff -- lock
 ```
 

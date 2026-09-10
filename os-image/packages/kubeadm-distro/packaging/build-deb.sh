@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Build one nke-kubeadm-distro-<x.y.z>_<rev>_amd64.deb from a bundle tree
+# Build one nke-kubeadm-distro-<x.y.z>_<rev>_<arch>.deb from a bundle tree
 # written by bundle.sh, using nfpm and packaging/nfpm.yaml.
 #
 # Usage:
@@ -20,7 +20,11 @@
 #   NFPM_BIN       Path to the nfpm binary (default: nfpm on PATH).
 set -euo pipefail
 
-ARCH=amd64
+ARCH="${ARCH:-amd64}"
+case "$ARCH" in
+  amd64|arm64) ;;
+  *) echo "build-deb.sh: unsupported architecture ${ARCH}; supported architectures are amd64 and arm64" >&2; exit 2 ;;
+esac
 PACKAGE_PREFIX=nke-kubeadm-distro
 MATRIX_SUBDIR=k8s-matrix
 NFPM_BIN="${NFPM_BIN:-nfpm}"

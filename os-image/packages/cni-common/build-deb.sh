@@ -15,7 +15,11 @@ set -euo pipefail
 [[ $# -eq 3 ]] || { echo "usage: $(basename "$0") <version> <bundle-dir> <out-dir>" >&2; exit 2; }
 : "${CNI:?}" "${PRODUCT:?}" "${CONTENT_SPEC:?}" "${CONTENT_KIND:?}"
 
-ARCH=amd64
+ARCH="${ARCH:-amd64}"
+case "$ARCH" in
+  amd64|arm64) ;;
+  *) echo "build-deb.sh: unsupported architecture ${ARCH}; supported architectures are amd64 and arm64" >&2; exit 2 ;;
+esac
 # Package names carry the stream without a leading v, matching what
 # agent/internal/agent/cni.go asks apt for.
 STREAM="${1#v}"

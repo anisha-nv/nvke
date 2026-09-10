@@ -17,7 +17,7 @@ node installs the one it needs at cluster create without network access.
   maintainer script. `postinst` only sets OS state kubeadm's preflight needs
   (swap, sysctls, kernel modules), enables units, and imports the bundled
   images with `ctr`. It never calls a package manager.
-- **Every input is pinned and reviewed.** `lock/<version>.lock` holds the
+- **Every input is pinned and reviewed.** `lock/<arch>/<version>.lock` holds the
   sha256 of every upstream artifact and the manifest digest of every image.
   `make debs` refuses to build without a lock, checks each download against
   both the lock and the publisher's checksum, and pulls images by digest.
@@ -29,8 +29,9 @@ node installs the one it needs at cluster create without network access.
   of the package name; every package `Provides: nke-kubeadm-distro` and
   `Conflicts` with its peers, with `containerd`, and with the standalone
   `kubeadm`/`kubelet`/`kubectl` packages.
-- **Linux/amd64 build host only.** The build runs the downloaded `kubeadm`
-  binary for its image list and stages Linux tarballs.
+- **Native Linux build host.** The build runs the downloaded target `kubeadm`
+  binary for its image list and stages target Linux tarballs. Build amd64 on
+  Linux/amd64 and arm64 on Linux/arm64.
 
 ## Layout
 
@@ -54,7 +55,7 @@ node installs the one it needs at cluster create without network access.
 | `/etc/crictl.yaml` | crictl pointed at the containerd socket. Also rewritten on every install |
 | `/etc/default/kubelet` | conffile for operator `KUBELET_EXTRA_ARGS` |
 | `/lib/systemd/system/kubelet.service{,.d/10-kubeadm.conf}`, `containerd.service` | vendor units plus the kubeadm drop-in |
-| `/usr/lib/nke/k8s-matrix/<version>/amd64/` | the control-plane image tarball and its `.sha256` sidecar |
+| `/usr/lib/nke/k8s-matrix/<version>/<arch>/` | the control-plane image tarball and its `.sha256` sidecar |
 
 `/etc/cni/net.d/` is shipped empty. CNI config is the OS image's job.
 
@@ -71,7 +72,7 @@ and is no longer offline.
 
 ```bash
 apt install dpkg-dev gnupg     # dpkg-scanpackages for the apt index; gpg for runc's signature
-make -C os-image/packages/kubeadm-distro debs OUT_DIR=/abs/path/to/apt-repo
+make -C os-image/packages/kubeadm-distro debs ARCH=arm64 OUT_DIR=/abs/path/to/apt-repo
 make -C os-image/packages/kubeadm-distro test
 make -C os-image/packages/kubeadm-distro repro-check
 ```
@@ -86,6 +87,7 @@ before downloading anything.
 |---|---|---|
 | `K8S_VERSIONS` | `v1.36.3 v1.35.3 v1.34.2` | Kubernetes releases to build |
 | `DEB_REVISION` | `1` | Debian packaging revision; the Kubernetes patch is in the package name |
+| `ARCH` | `amd64` | Target architecture: `amd64` or `arm64`; build in a matching native Linux container |
 | `LOCK_DIR` | `./lock` | The committed lock files |
 | `DIST_DIR` | `./dist` | Artifact cache. Anything that still hashes to its lock entry is reused offline; anything else is re-downloaded and re-verified |
 
@@ -100,7 +102,7 @@ build-host metadata (a timestamp, a path, ownership) that nfpm is not pinning.
 2. If the bump crosses a minor, add a row to `pins_for` in `bundle.sh`. There
    is no fallback row, so check containerd's Kubernetes support matrix and
    Helm's version skew policy.
-3. `make lock` on a Linux host with network. It rewrites `lock/<version>.lock`
+3. `make lock ARCH=<arch>` on a matching native Linux host with network. It rewrites `lock/<arch>/<version>.lock`
    and prints what changed.
 4. Review the diff with `git diff -- lock/`, every URL and every digest.
 5. Commit `lock/` with the `K8S_VERSIONS` and `bundle.sh` changes.

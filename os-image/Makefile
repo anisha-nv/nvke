@@ -75,7 +75,7 @@ build: ## Build nke-os-image-check into bin/.
 compile: ## Type-check every package, including the ones with no binary.
 	$(GO) build ./...
 
-test: ## Run this module's tests. (run by the merge gate)
+test: test-builder ## Run this module's tests. (run by the merge gate)
 	$(GO) test $(GO_TEST_FLAGS) ./...
 
 fmt: ## Format the source with golangci-lint's formatters.
@@ -133,3 +133,24 @@ notices-check: ## Verify THIRD_PARTY_NOTICES.md is up to date. (advisory; not in
 		git diff --name-only -- THIRD_PARTY_NOTICES.md; \
 		exit 1; \
 	fi
+
+##@ Native node images
+
+include ../make/tool-versions.mk
+ARCH ?= $(if $(filter arm64 aarch64,$(shell uname -m)),arm64,amd64)
+ARTIFACTS_DIR ?= $(CURDIR)/packer/artifacts/$(ARCH)
+export ARCH ARTIFACTS_DIR
+export CRANE_VERSION NFPM_VERSION
+
+.PHONY: package-builder packages packages-lock test-builder
+package-builder: ## Build the pinned native Linux package-builder container.
+	./packages/builder/build.sh image
+
+packages: package-builder ## Build debs in a native Linux container and export a local apt repo.
+	./packages/builder/build.sh debs
+
+packages-lock: package-builder ## Resolve upstream locks into artifacts/<arch>/lock for review; does not edit source locks.
+	./packages/builder/build.sh lock
+
+test-builder: ## Test the container/artifact boundary without Docker or network.
+	python3 -m unittest discover -s packages/builder -p 'test_*.py'

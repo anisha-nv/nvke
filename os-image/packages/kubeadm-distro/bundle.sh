@@ -8,9 +8,9 @@
 #
 # Usage:
 #   bundle.sh [--write-lock] --version vX.Y.Z --dist DIR --lock-dir DIR \
-#             --crane PATH [--arch amd64]
+#             --crane PATH [--arch amd64|arm64]
 #
-# Default mode builds DIR/vX.Y.Z/ and enforces lock-dir/vX.Y.Z.lock.
+# Default mode builds DIR/vX.Y.Z/<arch>/ and enforces lock-dir/<arch>/vX.Y.Z.lock.
 # --write-lock resolves everything from upstream and rewrites that lock
 # instead; it never stages a tree.
 set -euo pipefail
@@ -90,7 +90,8 @@ file_sha() { sha256sum "$1" | cut -d' ' -f1; }
 # Anything ambiguous prints nothing, and the caller fails.
 checksum_from_doc() {
   awk -v want="$2" '
-    $1 !~ /^[0-9a-fA-F]{64}$/ { next }
+    # Express the SHA-256 length separately for compatibility with Debian mawk.
+    length($1) != 64 || $1 !~ /^[0-9a-fA-F]+$/ { next }
     NF == 1 { bare_count++; bare = tolower($1); next }
     {
       named_lines++
@@ -200,8 +201,9 @@ download_component() {
     rm -f "$tmp"
     die "${component}: downloaded ${got} but ${LOCK_FILE} has ${locked}; upstream changed the bytes behind ${url}"
   fi
+  # Set the executable bit before publishing a bare binary into the cache.
+  make_executable "$component" "$tmp"
   mv "$tmp" "$dest"
-  make_executable "$component" "$dest"
   ARTIFACT_SHA="$got"
 }
 
@@ -390,9 +392,12 @@ while (($#)); do
 done
 [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "--version must be vX.Y.Z, got '${VERSION}'"
 [[ -n "$DIST" && -n "$LOCK_DIR" && -n "$CRANE" ]] || die "--dist, --lock-dir and --crane are required"
-# The lock is one file per Kubernetes version, with nowhere to record a second
-# architecture's digests.
-[[ "$ARCH" == amd64 ]] || die "--arch ${ARCH}: the lock and the .deb are amd64-only for now"
+# Locks are architecture-specific because both release artifacts and image
+# manifest digests differ by target platform.
+case "$ARCH" in
+  amd64|arm64) ;;
+  *) die "--arch ${ARCH}: supported architectures are amd64 and arm64" ;;
+esac
 [[ "$(uname -s)" == Linux ]] || die "the container images are listed by the downloaded linux kubeadm binary, so this build host ($(uname -s)) cannot produce a bundle; run on Linux"
 command -v "$CRANE" >/dev/null 2>&1 || die "crane not found at ${CRANE}"
 
@@ -404,7 +409,7 @@ pins_for "$MINOR"
 CRI_TOOLS="v1.${MINOR}.0"
 
 ARCH_DIR="${DIST}/${VERSION}/${ARCH}"
-LOCK_FILE="${LOCK_DIR}/${VERSION}.lock"
+LOCK_FILE="${LOCK_DIR}/${ARCH}/${VERSION}.lock"
 
 # Before anything is created on disk, so a bad lock leaves no dist tree.
 if ((!WRITE_LOCK)); then
@@ -419,7 +424,7 @@ if ((!WRITE_LOCK)); then
   [[ "$locked_version" == "$VERSION" ]] || die "${LOCK_FILE} locks '${locked_version}', not ${VERSION}"
 fi
 
-mkdir -p "$ARCH_DIR" "$LOCK_DIR"
+mkdir -p "$ARCH_DIR" "${LOCK_DIR}/${ARCH}"
 WORK="$(mktemp -d)"
 GPG_HOME=""
 LOCK_TMP=""

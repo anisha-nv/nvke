@@ -139,6 +139,9 @@ func newFixtureServer(t *testing.T, signer *gpgKey) *fixtureServer {
 	for path, body := range artifacts {
 		fs.bodies[path] = body
 		fs.sha256[path] = fmt.Sprintf("%x", sha256.Sum256(body))
+		arm64Path := strings.ReplaceAll(path, "amd64", "arm64")
+		fs.bodies[arm64Path] = body
+		fs.sha256[arm64Path] = fmt.Sprintf("%x", sha256.Sum256(body))
 	}
 
 	// dl.k8s.io, helm and the GitHub release assets publish a bare digest;
@@ -148,13 +151,18 @@ func newFixtureServer(t *testing.T, signer *gpgKey) *fixtureServer {
 			fs.bodies[path+".sha256sum"] = []byte(fmt.Sprintf("%s  %s\n", digest, filepath.Base(path)))
 			continue
 		}
-		if strings.HasSuffix(path, "/runc.amd64") {
-			list := fmt.Sprintf("%s  runc.amd64\n%s  runc.arm64\n", digest, strings.Repeat("0", 64))
+		if strings.HasSuffix(path, "/runc.amd64") || strings.HasSuffix(path, "/runc.arm64") {
+			list := fmt.Sprintf("%s  %s\n", digest, filepath.Base(path))
 			fs.bodies[filepath.Dir(path)+"/runc.sha256sum"] = signer.clearsign(t, list)
 			continue
 		}
 		fs.bodies[path+".sha256"] = []byte(digest + "\n")
 	}
+	// Both runc architectures share the one publisher checksum document. Add
+	// both rows after the map walk so iteration order cannot overwrite a row.
+	runcDigest := fs.digestOf(fmt.Sprintf("/opencontainers/runc/releases/download/%s/runc.amd64", fixtureRunc))
+	fs.bodies[fmt.Sprintf("/opencontainers/runc/releases/download/%s/runc.sha256sum", fixtureRunc)] = signer.clearsign(t,
+		fmt.Sprintf("%s  runc.amd64\n%s  runc.arm64\n", runcDigest, runcDigest))
 
 	fs.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fs.requests.Add(1)
@@ -336,6 +344,7 @@ type bundleRun struct {
 	keyring string
 	dist    string
 	lockDir string
+	arch    string
 	// env is added to bundle.sh's environment, so a case can change how the
 	// fake crane behaves between two otherwise identical runs.
 	env []string
@@ -348,13 +357,16 @@ func newBundleRun(t *testing.T, signer, keyringOwner *gpgKey) *bundleRun {
 	dir := t.TempDir()
 	keyring := filepath.Join(dir, "runc.keyring")
 	require.NoError(t, os.WriteFile(keyring, keyringOwner.armoredPublicKey(t), 0o644))
-	return &bundleRun{
+	b := &bundleRun{
 		server:  newFixtureServer(t, signer),
 		crane:   writeFakeCrane(t, dir),
 		keyring: keyring,
 		dist:    filepath.Join(dir, "dist"),
 		lockDir: filepath.Join(dir, "lock"),
+		arch:    "amd64",
 	}
+	require.NoError(t, os.MkdirAll(filepath.Join(b.lockDir, b.arch), 0o755))
+	return b
 }
 
 // exec runs bundle.sh and returns its combined output.
@@ -378,35 +390,37 @@ func (b *bundleRun) exec(t *testing.T, args ...string) (string, error) {
 	return string(out), err
 }
 
-func (b *bundleRun) lockPath() string { return filepath.Join(b.lockDir, fixtureVersion+".lock") }
-func (b *bundleRun) archDir() string  { return filepath.Join(b.dist, fixtureVersion, "amd64") }
+func (b *bundleRun) lockPath() string {
+	return filepath.Join(b.lockDir, b.arch, fixtureVersion+".lock")
+}
+func (b *bundleRun) archDir() string  { return filepath.Join(b.dist, fixtureVersion, b.arch) }
 func (b *bundleRun) stageDir() string { return filepath.Join(b.dist, fixtureVersion, "stage") }
 
 // wantLock is the lock text bundle.sh must produce from the fixtures.
 func (b *bundleRun) wantLock() string {
 	url := b.server.URL
 	records := []string{
-		fmt.Sprintf("artifact cni-plugins %s %s/containernetworking/plugins/releases/download/%s/cni-plugins-linux-amd64-%s.tgz",
-			b.server.digestOf(fmt.Sprintf("/containernetworking/plugins/releases/download/%s/cni-plugins-linux-amd64-%s.tgz", fixtureCNI, fixtureCNI)), url, fixtureCNI, fixtureCNI),
-		fmt.Sprintf("artifact containerd %s %s/containerd/containerd/releases/download/v%s/containerd-%s-linux-amd64.tar.gz",
-			b.server.digestOf(fmt.Sprintf("/containerd/containerd/releases/download/v%s/containerd-%s-linux-amd64.tar.gz", fixtureContainerd, fixtureContainerd)), url, fixtureContainerd, fixtureContainerd),
-		fmt.Sprintf("artifact crictl %s %s/kubernetes-sigs/cri-tools/releases/download/%s/crictl-%s-linux-amd64.tar.gz",
-			b.server.digestOf(fmt.Sprintf("/kubernetes-sigs/cri-tools/releases/download/%s/crictl-%s-linux-amd64.tar.gz", fixtureCriTools, fixtureCriTools)), url, fixtureCriTools, fixtureCriTools),
-		fmt.Sprintf("artifact helm %s %s/helm-%s-linux-amd64.tar.gz",
-			b.server.digestOf(fmt.Sprintf("/helm-%s-linux-amd64.tar.gz", fixtureHelm)), url, fixtureHelm),
-		fmt.Sprintf("artifact runc %s %s/opencontainers/runc/releases/download/%s/runc.amd64",
-			b.server.digestOf(fmt.Sprintf("/opencontainers/runc/releases/download/%s/runc.amd64", fixtureRunc)), url, fixtureRunc),
+		fmt.Sprintf("artifact cni-plugins %s %s/containernetworking/plugins/releases/download/%s/cni-plugins-linux-%s-%s.tgz",
+			b.server.digestOf(fmt.Sprintf("/containernetworking/plugins/releases/download/%s/cni-plugins-linux-%s-%s.tgz", fixtureCNI, b.arch, fixtureCNI)), url, fixtureCNI, b.arch, fixtureCNI),
+		fmt.Sprintf("artifact containerd %s %s/containerd/containerd/releases/download/v%s/containerd-%s-linux-%s.tar.gz",
+			b.server.digestOf(fmt.Sprintf("/containerd/containerd/releases/download/v%s/containerd-%s-linux-%s.tar.gz", fixtureContainerd, fixtureContainerd, b.arch)), url, fixtureContainerd, fixtureContainerd, b.arch),
+		fmt.Sprintf("artifact crictl %s %s/kubernetes-sigs/cri-tools/releases/download/%s/crictl-%s-linux-%s.tar.gz",
+			b.server.digestOf(fmt.Sprintf("/kubernetes-sigs/cri-tools/releases/download/%s/crictl-%s-linux-%s.tar.gz", fixtureCriTools, fixtureCriTools, b.arch)), url, fixtureCriTools, fixtureCriTools, b.arch),
+		fmt.Sprintf("artifact helm %s %s/helm-%s-linux-%s.tar.gz",
+			b.server.digestOf(fmt.Sprintf("/helm-%s-linux-%s.tar.gz", fixtureHelm, b.arch)), url, fixtureHelm, b.arch),
+		fmt.Sprintf("artifact runc %s %s/opencontainers/runc/releases/download/%s/runc.%s",
+			b.server.digestOf(fmt.Sprintf("/opencontainers/runc/releases/download/%s/runc.%s", fixtureRunc, b.arch)), url, fixtureRunc, b.arch),
 	}
 	for _, name := range []string{"kubeadm", "kubectl", "kubelet"} {
-		path := fmt.Sprintf("/release/%s/bin/linux/amd64/%s", fixtureVersion, name)
+		path := fmt.Sprintf("/release/%s/bin/linux/%s/%s", fixtureVersion, b.arch, name)
 		records = append(records, fmt.Sprintf("artifact %s %s %s%s", name, b.server.digestOf(path), url, path))
 	}
 	for _, img := range fixtureImages {
 		records = append(records, fmt.Sprintf("image %s %s", img.ref, img.digest))
 	}
 	sort.Strings(records)
-	header := fmt.Sprintf("# nke-kubeadm-distro lock for %s (amd64). Regenerate with `make lock`; review the diff before committing.\n"+
-		"kubernetes %s\n", fixtureVersion, fixtureVersion)
+	header := fmt.Sprintf("# nke-kubeadm-distro lock for %s (%s). Regenerate with `make lock`; review the diff before committing.\n"+
+		"kubernetes %s\n", fixtureVersion, b.arch, fixtureVersion)
 	return header + strings.Join(records, "\n") + "\n"
 }
 
@@ -419,14 +433,33 @@ func requireLinux(t *testing.T) {
 	}
 }
 
-// TestBundleRejectsOtherArch runs everywhere: the arch check comes before the
-// Linux check, so it is the one refusal a developer laptop can exercise.
-func TestBundleRejectsOtherArch(t *testing.T) {
+// TestBundleRejectsUnsupportedArch runs everywhere: the architecture check
+// comes before the Linux check, so it is exerciseable on a developer laptop.
+func TestBundleRejectsUnsupportedArch(t *testing.T) {
 	requireBundleTools(t)
 	b := newBundleRun(t, newGPGKey(t, "runc test <runc@example.invalid>"), newGPGKey(t, "runc test <runc@example.invalid>"))
-	out, err := b.exec(t, "--arch", "arm64")
+	out, err := b.exec(t, "--arch", "s390x")
 	require.Error(t, err)
-	assert.Contains(t, out, "amd64-only")
+	assert.Contains(t, out, "supported architectures are amd64 and arm64")
+}
+
+// TestBundleWritesArm64LockInArchitectureNamespace proves arm64 selects
+// arm64 download URLs and writes a lock that cannot overwrite amd64 pins.
+func TestBundleWritesArm64LockInArchitectureNamespace(t *testing.T) {
+	requireBundleTools(t)
+	requireLinux(t)
+	signer := newGPGKey(t, "runc test <runc@example.invalid>")
+	b := newBundleRun(t, signer, signer)
+	b.arch = "arm64"
+
+	out, err := b.exec(t, "--arch", b.arch, "--write-lock")
+	require.NoErrorf(t, err, "bundle.sh --arch arm64 --write-lock: %s", out)
+	got, err := os.ReadFile(b.lockPath())
+	require.NoError(t, err)
+	assert.Equal(t, b.wantLock(), string(got))
+	assert.FileExists(t, b.lockPath())
+	assert.NoFileExists(t, filepath.Join(b.lockDir, "amd64", fixtureVersion+".lock"))
+	assert.Contains(t, string(got), "/linux/arm64/kubeadm")
 }
 
 // TestBundleRefusesNonLinux pins the early, clear failure on a host that

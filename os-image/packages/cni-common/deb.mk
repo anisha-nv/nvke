@@ -23,6 +23,10 @@ include $(COMMON_DIR)/../../../make/tool-versions.mk
 # Where the .deb files are written. Required by `debs`.
 OUT_DIR ?=
 
+# Target Debian architecture. The bundle executes no target binaries, so both
+# supported architectures can be assembled on a native Linux builder.
+ARCH ?= amd64
+
 # Debian packaging revision. Bump when the package content changes but the
 # upstream version does not.
 DEB_REVISION ?= 1
@@ -41,8 +45,8 @@ debs: check-host check-deb-tools bundle ## Build the content and images debs int
 	@set -eu; \
 	for v in $(VERSIONS); do \
 		CNI="$(CNI)" PRODUCT="$(PRODUCT)" CONTENT_SPEC="$(CONTENT_SPEC)" CONTENT_KIND="$(CONTENT_KIND)" \
-		DEB_REVISION="$(DEB_REVISION)" NFPM_BIN="$(BIN_DIR)/nfpm" \
-			$(COMMON_DIR)/build-deb.sh "$$v" "$(DIST_DIR)/$$v" "$(OUT_DIR)"; \
+		ARCH="$(ARCH)" DEB_REVISION="$(DEB_REVISION)" NFPM_BIN="$(BIN_DIR)/nfpm" \
+			$(COMMON_DIR)/build-deb.sh "$$v" "$(DIST_DIR)/$(ARCH)/$$v" "$(OUT_DIR)"; \
 	done
 	@# Index everything in OUT_DIR: the CNI packages share it.
 	@cd "$(OUT_DIR)" && dpkg-scanpackages . /dev/null >Packages
@@ -52,14 +56,14 @@ debs: check-host check-deb-tools bundle ## Build the content and images debs int
 bundle: check-host $(BUNDLE_DEPS) $(BIN_DIR)/crane ## Download, verify and stage the upstream artifacts into DIST_DIR.
 	@set -eu; \
 	for v in $(VERSIONS); do \
-		./bundle.sh --version "$$v" --dist "$(DIST_DIR)" --lock-dir "$(LOCK_DIR)" --crane "$(BIN_DIR)/crane"; \
+		./bundle.sh --version "$$v" --arch "$(ARCH)" --dist "$(DIST_DIR)" --lock-dir "$(LOCK_DIR)" --crane "$(BIN_DIR)/crane"; \
 	done
 
 .PHONY: lock
-lock: check-host $(BUNDLE_DEPS) $(BIN_DIR)/crane ## Regenerate lock/<version>.lock from upstream. Review the diff, then commit it.
+lock: check-host $(BUNDLE_DEPS) $(BIN_DIR)/crane ## Regenerate lock/<arch>/<version>.lock from upstream. Review the diff, then commit it.
 	@set -eu; \
 	for v in $(VERSIONS); do \
-		./bundle.sh --write-lock --version "$$v" --dist "$(DIST_DIR)" --lock-dir "$(LOCK_DIR)" --crane "$(BIN_DIR)/crane"; \
+		./bundle.sh --write-lock --version "$$v" --arch "$(ARCH)" --dist "$(DIST_DIR)" --lock-dir "$(LOCK_DIR)" --crane "$(BIN_DIR)/crane"; \
 	done
 	@echo
 	@echo "Review the lock diff before committing it:"
@@ -70,8 +74,8 @@ repro-check: ## Build `debs` twice into throwaway OUT_DIRs and diff every .deb b
 	@set -eu; \
 	a="$$(mktemp -d)"; b="$$(mktemp -d)"; \
 	trap 'rm -rf "$$a" "$$b"' EXIT; \
-	$(MAKE) debs OUT_DIR="$$a" VERSIONS="$(VERSIONS)" DEB_REVISION="$(DEB_REVISION)" DIST_DIR="$(DIST_DIR)"; \
-	$(MAKE) debs OUT_DIR="$$b" VERSIONS="$(VERSIONS)" DEB_REVISION="$(DEB_REVISION)" DIST_DIR="$(DIST_DIR)"; \
+		$(MAKE) debs OUT_DIR="$$a" ARCH="$(ARCH)" VERSIONS="$(VERSIONS)" DEB_REVISION="$(DEB_REVISION)" DIST_DIR="$(DIST_DIR)"; \
+		$(MAKE) debs OUT_DIR="$$b" ARCH="$(ARCH)" VERSIONS="$(VERSIONS)" DEB_REVISION="$(DEB_REVISION)" DIST_DIR="$(DIST_DIR)"; \
 	diffs=""; \
 	for f in "$$a"/*.deb; do \
 		name="$$(basename "$$f")"; \

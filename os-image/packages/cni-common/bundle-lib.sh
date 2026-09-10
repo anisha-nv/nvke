@@ -32,9 +32,13 @@ parse_bundle_args() {
   [[ -n "$DIST" ]] || die "--dist is required"
   [[ -n "$LOCK_DIR" ]] || die "--lock-dir is required"
   [[ -n "$CRANE" && -x "$CRANE" ]] || die "--crane must point at an executable crane"
+  case "$ARCH" in
+    amd64|arm64) ;;
+    *) die "--arch ${ARCH}: supported architectures are amd64 and arm64" ;;
+  esac
 
-  LOCK="${LOCK_DIR}/${VERSION}.lock"
-  STAGE="${DIST}/${VERSION}"
+  LOCK="${LOCK_DIR}/${ARCH}/${VERSION}.lock"
+  STAGE="${DIST}/${ARCH}/${VERSION}"
   WORK="${STAGE}/.work"
   ARTIFACT_LINES=()
   rm -rf "$STAGE"
@@ -145,7 +149,7 @@ stage_images() {
 finish_bundle() {
   rm -rf "$WORK"
   if [[ "$WRITE_LOCK" == true ]]; then
-    mkdir -p "$LOCK_DIR"
+    mkdir -p "${LOCK_DIR}/${ARCH}"
     {
       echo "# nke-${CNI} lock for ${VERSION} (${ARCH}). Regenerate with \`make lock\`; review the diff before committing."
       echo "${CNI#cni-} ${VERSION}"

@@ -47,3 +47,7 @@ os-image/efi/output/
 # workspace local applies to a workspace that papers over module boundaries
 # during development; this one is the build definition for every module that
 # releases, and CI verifies it is current (`make work-check`).
+
+# Native package-builder download cache.
+os-image/.cache/
+__pycache__/

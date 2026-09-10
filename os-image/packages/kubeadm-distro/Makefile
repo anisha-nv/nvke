@@ -29,6 +29,11 @@ K8S_VERSIONS_V := $(foreach v,$(K8S_VERSIONS),v$(patsubst v%,%,$(v)))
 # Where the .deb files and the apt index are written. Required by `debs`.
 OUT_DIR ?=
 
+# Target Debian architecture. The downloaded kubeadm must execute while the
+# bundle resolves its control-plane image list, so build this on a native
+# Linux builder for the selected architecture.
+ARCH ?= amd64
+
 # Debian packaging revision. Bump when the package content changes but the
 # Kubernetes patch does not.
 DEB_REVISION ?= 1
@@ -37,6 +42,11 @@ DEB_REVISION ?= 1
 DIST_DIR ?= $(CURDIR)/dist
 BIN_DIR ?= $(CURDIR)/bin
 
+# The guest fallback removes each version's downloaded bundle after packaging
+# it to keep the image-builder root filesystem within its fixed disk budget.
+# The native Docker builder leaves this at zero so its persistent cache stays warm.
+DISCARD_PACKAGE_CACHE ?= 0
+
 # The committed lock files, one per Kubernetes version. The build refuses to
 # run without them.
 LOCK_DIR ?= $(CURDIR)/lock
@@ -44,14 +54,17 @@ LOCK_DIR ?= $(CURDIR)/lock
 ##@ Build
 
 .PHONY: debs
-debs: check-host check-deb-tools bundle ## Build one .deb per K8S_VERSIONS into OUT_DIR, plus a flat apt index.
+debs: check-host check-deb-tools $(BIN_DIR)/crane ## Build one .deb per K8S_VERSIONS into OUT_DIR, plus a flat apt index.
 	@# Clear the previous run first: a .deb left from a different K8S_VERSIONS
 	@# would be indexed here without appearing in any package's Conflicts.
 	rm -f "$(OUT_DIR)"/nke-kubeadm-distro-*.deb "$(OUT_DIR)/Packages"
 	@set -eu; \
+	case "$(DISCARD_PACKAGE_CACHE)" in 0 | 1) ;; *) echo "kubeadm-distro: DISCARD_PACKAGE_CACHE must be 0 or 1" >&2; exit 1 ;; esac; \
 	for v in $(K8S_VERSIONS_V); do \
-		PEER_VERSIONS="$(K8S_VERSIONS_V)" DEB_REVISION="$(DEB_REVISION)" NFPM_BIN="$(BIN_DIR)/nfpm" \
+		./bundle.sh --version "$$v" --arch "$(ARCH)" --dist "$(DIST_DIR)" --lock-dir "$(LOCK_DIR)" --crane "$(BIN_DIR)/crane"; \
+		ARCH="$(ARCH)" PEER_VERSIONS="$(K8S_VERSIONS_V)" DEB_REVISION="$(DEB_REVISION)" NFPM_BIN="$(BIN_DIR)/nfpm" \
 			./packaging/build-deb.sh "$$v" "$(DIST_DIR)/$$v" "$(OUT_DIR)"; \
+		if [ "$(DISCARD_PACKAGE_CACHE)" = 1 ]; then rm -rf "$(DIST_DIR)/$$v"; fi; \
 	done
 	@cd "$(OUT_DIR)" && dpkg-scanpackages . /dev/null >Packages
 	@echo "wrote $(OUT_DIR)/Packages"
@@ -60,7 +73,7 @@ debs: check-host check-deb-tools bundle ## Build one .deb per K8S_VERSIONS into 
 bundle: check-host $(BIN_DIR)/crane ## Download, verify and stage the upstream artifacts into DIST_DIR.
 	@set -eu; \
 	for v in $(K8S_VERSIONS_V); do \
-		./bundle.sh --version "$$v" --dist "$(DIST_DIR)" --lock-dir "$(LOCK_DIR)" --crane "$(BIN_DIR)/crane"; \
+		./bundle.sh --version "$$v" --arch "$(ARCH)" --dist "$(DIST_DIR)" --lock-dir "$(LOCK_DIR)" --crane "$(BIN_DIR)/crane"; \
 	done
 
 .PHONY: repro-check
@@ -76,9 +89,9 @@ repro-check: ## Build `debs` twice into throwaway OUT_DIRs and diff every output
 	a="$$(mktemp -d)"; b="$$(mktemp -d)"; \
 	trap 'rm -rf "$$a" "$$b"' EXIT; \
 	echo "kubeadm-distro: first build -> $$a"; \
-	$(MAKE) debs OUT_DIR="$$a" K8S_VERSIONS="$(K8S_VERSIONS)" DEB_REVISION="$(DEB_REVISION)" DIST_DIR="$(DIST_DIR)"; \
+		$(MAKE) debs OUT_DIR="$$a" ARCH="$(ARCH)" K8S_VERSIONS="$(K8S_VERSIONS)" DEB_REVISION="$(DEB_REVISION)" DIST_DIR="$(DIST_DIR)"; \
 	echo "kubeadm-distro: second build -> $$b"; \
-	$(MAKE) debs OUT_DIR="$$b" K8S_VERSIONS="$(K8S_VERSIONS)" DEB_REVISION="$(DEB_REVISION)" DIST_DIR="$(DIST_DIR)"; \
+		$(MAKE) debs OUT_DIR="$$b" ARCH="$(ARCH)" K8S_VERSIONS="$(K8S_VERSIONS)" DEB_REVISION="$(DEB_REVISION)" DIST_DIR="$(DIST_DIR)"; \
 	sort "$$a/Packages" >"$$a/Packages.sorted"; \
 	sort "$$b/Packages" >"$$b/Packages.sorted"; \
 	diffs=""; \
@@ -101,12 +114,12 @@ repro-check: ## Build `debs` twice into throwaway OUT_DIRs and diff every output
 	echo "kubeadm-distro: reproducible: every .deb and the sorted Packages index matched byte-for-byte"
 
 .PHONY: lock
-lock: check-host $(BIN_DIR)/crane ## Regenerate lock/<version>.lock from upstream. Review the diff, then commit it.
+lock: check-host $(BIN_DIR)/crane ## Regenerate lock/<arch>/<version>.lock from upstream. Review the diff, then commit it.
 	@# Needs Linux and network: it downloads every artifact, runs the verified
 	@# kubeadm for its image list, and resolves each tag to a digest.
 	@set -eu; \
 	for v in $(K8S_VERSIONS_V); do \
-		./bundle.sh --write-lock --version "$$v" --dist "$(DIST_DIR)" --lock-dir "$(LOCK_DIR)" --crane "$(BIN_DIR)/crane"; \
+		./bundle.sh --write-lock --version "$$v" --arch "$(ARCH)" --dist "$(DIST_DIR)" --lock-dir "$(LOCK_DIR)" --crane "$(BIN_DIR)/crane"; \
 	done
 	@echo
 	@echo "Review the lock diff before committing it:"
