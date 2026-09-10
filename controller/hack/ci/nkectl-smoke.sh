@@ -139,6 +139,21 @@ EOF
     return 1
   fi
 
+  # get kubeconfig reads the management cluster directly (the Secret the
+  # tenantaccess controller publishes), not the CWE API, so this is the only
+  # smoke assertion covering that path. The write round trip below never
+  # boots a real node (autoProvisionDisabled), so the Secret this command
+  # reads never exists for a cluster this lane creates -- only the not-found
+  # path is exercisable here.
+  if out="$(nkectl_exec get kubeconfig "${NKECTL_SMOKE_ABSENT}" 2>&1)"; then
+    log "nkectl smoke: 'get kubeconfig ${NKECTL_SMOKE_ABSENT}' succeeded against a name that does not exist" >&2
+    return 1
+  fi
+  if ! grep -q 'not found' <<<"${out}"; then
+    log "nkectl smoke: 'get kubeconfig' failed without a not-found message" >&2
+    return 1
+  fi
+
   # Rejected by the printer before any request is issued.
   if out="$(nkectl_exec get clusters -o bogus 2>&1)"; then
     log "nkectl smoke: 'get clusters -o bogus' was accepted" >&2
