@@ -135,8 +135,10 @@ const (
 	TPMSpireAgentPath                = "/spire/agent/tpm/"
 	JoinTokenAlternateSpireAgentPath = "/join-token-spire-agent/host-id/" //nolint:gosec // This is a SPIFFE path prefix, not a credential.
 
-	CAPISpireAgentConfigPath = "/etc/spire-agent/agent.conf"
-	CAPISpireTrustBundlePath = "/etc/spire-agent/initial-trust-bundle.pem"
+	CAPISpireAgentConfigPath       = "/etc/spire-agent/agent.conf"
+	CAPISpireTrustBundlePath       = "/etc/spire-agent/initial-trust-bundle.pem"
+	CAPINativeSpireEnvironmentPath = "/etc/nke/spire.env"
+	CAPINativeSpireTrustBundlePath = "/etc/nke/trust-bundle.pem"
 )
 
 type RebootStatus string

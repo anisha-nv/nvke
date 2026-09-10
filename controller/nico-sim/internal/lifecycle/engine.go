@@ -528,7 +528,7 @@ func (e *Engine) reconcileRunning(ctx context.Context, instance state.Instance, 
 		}
 
 		if ip == "" {
-			ip, err := e.resolveInstanceIPFromLease(ctx, instance, instance.Interfaces)
+			ip, err = e.resolveInstanceIPFromLease(ctx, instance, instance.Interfaces)
 			if err != nil {
 				return e.markError(ctx, instance.ID, err)
 			}

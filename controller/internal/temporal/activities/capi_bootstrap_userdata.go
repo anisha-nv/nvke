@@ -8,9 +8,14 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"net"
+	"strconv"
+	"strings"
 	"text/template"
 
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"gopkg.in/yaml.v3"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/NVIDIA/nke/controller/internal/constants"
 	"github.com/NVIDIA/nke/controller/internal/db"
@@ -18,6 +23,12 @@ import (
 
 //go:embed capi_spire_agent.conf.tmpl
 var capiSpireAgentConfigTemplateText string
+
+const (
+	capiNativeSpireServerAddressEnvironmentKey = "SPIRE_SERVER_ADDRESS"
+	capiNativeSpireServerPortEnvironmentKey    = "SPIRE_SERVER_PORT"
+	capiNativeSpireTrustDomainEnvironmentKey   = "SPIRE_TRUST_DOMAIN"
+)
 
 type capiCloudInitConfig struct {
 	WriteFiles []capiCloudInitFile `yaml:"write_files,omitempty"`
@@ -91,6 +102,17 @@ func (a *Activities) renderCAPIBootstrapUserData(
 		})
 	}
 	if a.cfg.SpiffeEnabled {
+		nativeSpireEnvironment, err := buildCAPINativeSpireEnvironment(
+			capiNodeSetProvider.SpireAttestationMethod,
+			a.cfg.SpireServerAddress,
+			a.cfg.SpireServerPort,
+			trustDomain,
+			spireJoinToken,
+		)
+		if err != nil {
+			return "", fmt.Errorf("failed to render native SPIRE environment: %w", err)
+		}
+
 		files = append(files,
 			capiCloudInitFile{
 				Path:        constants.CAPISpireTrustBundlePath,
@@ -109,6 +131,18 @@ func (a *Activities) renderCAPIBootstrapUserData(
 					trustDomain,
 					spireJoinToken,
 				),
+			},
+			capiCloudInitFile{
+				Path:        constants.CAPINativeSpireEnvironmentPath,
+				Owner:       "root:root",
+				Permissions: "0600",
+				Content:     nativeSpireEnvironment,
+			},
+			capiCloudInitFile{
+				Path:        constants.CAPINativeSpireTrustBundlePath,
+				Owner:       "root:root",
+				Permissions: "0644",
+				Content:     trustBundle,
 			},
 		)
 	}
@@ -153,4 +187,88 @@ func buildCAPISpireAgentConfig(
 	}
 
 	return buf.String()
+}
+
+func buildCAPINativeSpireEnvironment(
+	attestationMethod db.SpireAttestationMethod,
+	serverAddress, serverPort, trustDomain, spireJoinToken string,
+) (string, error) {
+	if err := validateCAPINativeSpireServerAddress(serverAddress); err != nil {
+		return "", fmt.Errorf("%s: %w", capiNativeSpireServerAddressEnvironmentKey, err)
+	}
+	if err := validateCAPINativeSpireServerPort(serverPort); err != nil {
+		return "", fmt.Errorf("%s: %w", capiNativeSpireServerPortEnvironmentKey, err)
+	}
+	parsedTrustDomain, err := spiffeid.TrustDomainFromString(trustDomain)
+	if err != nil {
+		return "", fmt.Errorf("%s: must be a valid SPIFFE trust domain: %w", capiNativeSpireTrustDomainEnvironmentKey, err)
+	}
+	if parsedTrustDomain.String() != trustDomain {
+		return "", fmt.Errorf("%s: must be a bare SPIFFE trust domain", capiNativeSpireTrustDomainEnvironmentKey)
+	}
+	if strings.ContainsAny(trustDomain, "&|\"\\") {
+		return "", fmt.Errorf("%s: must not contain native SPIRE configuration metacharacters", capiNativeSpireTrustDomainEnvironmentKey)
+	}
+
+	values := []struct {
+		key   string
+		value string
+	}{
+		{key: capiNativeSpireServerAddressEnvironmentKey, value: serverAddress},
+		{key: capiNativeSpireServerPortEnvironmentKey, value: serverPort},
+		{key: capiNativeSpireTrustDomainEnvironmentKey, value: trustDomain},
+	}
+	if attestationMethod == db.SpireAttestationMethodJoinToken {
+		values = append(values, struct {
+			key   string
+			value string
+		}{key: "SPIRE_JOIN_TOKEN", value: spireJoinToken})
+	}
+
+	var env strings.Builder
+	for _, value := range values {
+		quotedValue, err := quoteCAPINativeSpireEnvironmentValue(value.value)
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", value.key, err)
+		}
+		env.WriteString(value.key)
+		env.WriteByte('=')
+		env.WriteString(quotedValue)
+		env.WriteByte('\n')
+	}
+	return env.String(), nil
+}
+
+func validateCAPINativeSpireServerAddress(address string) error {
+	if net.ParseIP(address) != nil {
+		return nil
+	}
+
+	hostname := strings.ToLower(strings.TrimSuffix(address, "."))
+	if len(validation.IsDNS1123Subdomain(hostname)) != 0 {
+		return fmt.Errorf("must be a valid host name or IP address")
+	}
+	return nil
+}
+
+func validateCAPINativeSpireServerPort(port string) error {
+	parsedPort, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || parsedPort == 0 {
+		return fmt.Errorf("must be a decimal port between 1 and 65535")
+	}
+	return nil
+}
+
+func quoteCAPINativeSpireEnvironmentValue(value string) (string, error) {
+	if strings.ContainsAny(value, "\x00\r\n") {
+		return "", fmt.Errorf("must not contain NUL or line breaks")
+	}
+
+	replacer := strings.NewReplacer(
+		`\`, `\\`,
+		`"`, `\"`,
+		`$`, `\$`,
+		"`", "\\`",
+	)
+	return `"` + replacer.Replace(value) + `"`, nil
 }
