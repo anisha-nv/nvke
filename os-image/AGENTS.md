@@ -63,13 +63,24 @@ repository's `bin/`, and `make version-check` runs it with `--version`.
 - Do not default `nke-agent` to `--disable-mtls`.
 - Pin SPIRE (version + sha256) in `packer/scripts/fetch-artifacts.sh`; do not
   float `latest` for SPIRE.
-- Do not hard-require `/dev/kvm`. `packer/Makefile` and `boot-smoke.sh` probe
-  for it and fall back to `tcg`, because the CI runners are containers without
-  it (https://github.com/NVIDIA/nke/issues/219).
+- Production/native image targets require matching-architecture KVM on Linux
+  or HVF on macOS. Development targets can use `ACCELERATOR=tcg`; the shared
+  QEMU helper checks the selected accelerator before building. CI image jobs
+  require native Linux runners with usable `/dev/kvm`.
 - `nke-agent` is built from this checkout's `agent/` source at bake time
-  (`make -C agent build-amd64` in `fetch-artifacts.sh`); no prebuilt artifact
+  (`make -C agent build-${ARCH}` in `fetch-artifacts.sh`); no prebuilt artifact
   is pulled. Its version is the checkout's `git describe --match 'agent/v*'`.
 - Checker is a SPIFFE **client**. Do not embed a SPIRE server in the binary.
 - New files need the Apache-2.0 SPDX header (`make license`). Cloud-init
   user-data cannot: `#cloud-config` must be line 1, so examples live in
   README/SPEC rather than `*.yaml`.
+
+## Native package and image builds
+
+Use `make -C os-image packages ARCH=amd64|arm64` for the containerized package
+build and `make os-image-native ARCH=... VARIANT=fde|non-fde` for the full native
+build. The optional Docker engine must match the target architecture. Packer tries
+the standalone host package script through `shell-local`. If that attempt
+fails or no debs arrive, the guest builds from the staged locked sources and
+removes its temporary build tools. Verify prepared debs before use; package
+locks are architecture-specific. See README.md.

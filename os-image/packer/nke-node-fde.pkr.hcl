@@ -23,7 +23,7 @@ packer {
 
 variable "iso_url" {
   type        = string
-  default     = "https://releases.ubuntu.com/26.04/ubuntu-26.04-live-server-amd64.iso"
+  default     = "https://releases.ubuntu.com/26.04/ubuntu-26.04.1-live-server-amd64.iso"
   description = "Ubuntu 26.04 Server installer ISO (autoinstall needs the installer, not the cloud image)."
 }
 
@@ -53,13 +53,13 @@ variable "luks_passphrase" {
 variable "accelerator" {
   type        = string
   default     = "kvm"
-  description = "QEMU accelerator: kvm (hardware) or tcg (software emulation)."
+  description = "QEMU accelerator: kvm (Linux), hvf (macOS), or tcg (software emulation)."
 }
 
 variable "cpu_model" {
   type        = string
   default     = "host"
-  description = "QEMU CPU model. Use 'host' with KVM, 'max' with TCG emulation."
+  description = "QEMU CPU model. Use 'host' with KVM/HVF, 'max' with TCG emulation."
 }
 
 variable "ssh_timeout" {
@@ -92,8 +92,32 @@ variable "boot_wait" {
   description = "Delay before boot_command starts typing into GRUB. Comfortably under 300s (the patched GRUB timeout) but past however long BIOS+GRUB take to reach the menu; raise under tcg."
 }
 
+variable "artifacts_dir" {
+  type        = string
+  default     = ""
+  description = "Host directory containing prepared build artifacts."
+}
+
+variable "kernel_package" {
+  type        = string
+  default     = ""
+  description = "Ubuntu kernel package; empty selects the production NVIDIA-tuned default."
+}
+
+variable "efi_firmware_code" {
+  type        = string
+  default     = ""
+  description = "UEFI firmware code blob."
+}
+
+variable "efi_firmware_vars" {
+  type        = string
+  default     = ""
+  description = "UEFI firmware writable variables template."
+}
+
 locals {
-  artifacts = "${path.root}/artifacts"
+  artifacts = coalesce(var.artifacts_dir, "${path.root}/artifacts/${local.arch}")
   ssh_dir   = "${path.root}/.ssh"
   # Deliberately NOT under local.artifacts: the "file" provisioner below
   # uploads local.artifacts/ to the guest wholesale, and this is a
@@ -106,21 +130,21 @@ locals {
   iso_path  = "${local.iso_cache}/${basename(var.iso_url)}.patched.iso"
   # Derived from iso_url rather than a separate variable, so the output
   # filename can't drift out of sync with the ISO actually being built.
-  iso_name_parts = regex("ubuntu-([0-9.]+)-live-server-([a-z0-9_]+)\\.iso$", var.iso_url)
+  iso_name_parts = regex("ubuntu-([0-9.]+)-live-server-(amd64|arm64)\\.iso$", var.iso_url)
   ubuntu_version = local.iso_name_parts[0]
   arch           = local.iso_name_parts[1]
   # Ubuntu's NVIDIA-tuned kernel flavor: linux-nvidia-64k on arm64 (64k page
   # size, matching node-images), linux-nvidia everywhere else.
-  nvidia_kernel_package = local.arch == "arm64" ? "linux-nvidia-64k" : "linux-nvidia"
+  kernel_package = coalesce(var.kernel_package, local.arch == "arm64" ? "linux-nvidia-64k" : "linux-nvidia")
 
   # See the same locals in nke-node-non-fde.pkr.hcl: QEMU on this host only
   # ever runs the guest arch matching its own binary, "virt" is ARM's
   # equivalent of q35/i440fx, and AAVMF is arm64's UEFI firmware, not an
   # interchangeable drop-in for OVMF.
-  qemu_binary       = local.arch == "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64"
-  machine_type      = local.arch == "arm64" ? "virt" : "q35"
-  efi_firmware_code = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_CODE.fd" : "/usr/share/OVMF/OVMF_CODE_4M.fd"
-  efi_firmware_vars = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_VARS.fd" : "/usr/share/OVMF/OVMF_VARS_4M.fd"
+  qemu_binary      = local.arch == "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64"
+  machine_type     = local.arch == "arm64" ? "virt" : "q35"
+  default_efi_code = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_CODE.fd" : "/usr/share/OVMF/OVMF_CODE_4M.fd"
+  default_efi_vars = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_VARS.fd" : "/usr/share/OVMF/OVMF_VARS_4M.fd"
   # Also not under local.artifacts, for the same reason. CI has no way to
   # inspect a stuck build interactively (no VNC/monitor access), so this
   # captures the guest's own boot/install console output to a file the
@@ -177,8 +201,8 @@ source "qemu" "nke-fde" {
   # blocks still look "used" to Packer's post-build compaction step.
   disk_discard = "unmap"
 
-  efi_firmware_code = local.efi_firmware_code
-  efi_firmware_vars = local.efi_firmware_vars
+  efi_firmware_code = coalesce(var.efi_firmware_code, local.default_efi_code)
+  efi_firmware_vars = coalesce(var.efi_firmware_vars, local.default_efi_vars)
   efi_boot          = true
 
   http_content = {
@@ -186,7 +210,8 @@ source "qemu" "nke-fde" {
       ssh_public_key        = file("${local.ssh_dir}/id_ed25519.pub")
       luks_enabled          = true
       luks_passphrase       = var.luks_passphrase
-      nvidia_kernel_package = local.nvidia_kernel_package
+      nvidia_kernel_package = local.kernel_package
+      console_device        = local.arch == "arm64" ? "ttyAMA0" : "ttyS0"
     })
     "/meta-data" = "instance-id: nke-packer-fde\nlocal-hostname: nke-packer-fde\n"
   }
@@ -248,17 +273,17 @@ build {
   }
 
   provisioner "shell" {
-    inline = ["mkdir -p /tmp/nke-image/luks"]
+    inline = ["mkdir -p /var/tmp/nke-image/luks"]
   }
 
   provisioner "file" {
     source      = "${local.artifacts}/"
-    destination = "/tmp/nke-image/"
+    destination = "/var/tmp/nke-image/"
   }
 
   provisioner "file" {
     source      = "${path.root}/../files/luks/"
-    destination = "/tmp/nke-image/luks/"
+    destination = "/var/tmp/nke-image/luks/"
   }
 
   # configure-fde.sh runs before provision.sh: provision.sh's final cleanup

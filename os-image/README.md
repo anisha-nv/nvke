@@ -18,57 +18,100 @@ generic default. The contract is [SPEC.md](SPEC.md).
 
 ## Build the OS image
 
-Prereqs, on a Linux host:
+Packer first tries to build packages in a native Linux container through a
+`shell-local` provisioner. If the container build is unavailable or fails,
+the node-image VM builds from the same staged sources and locks. Packer/QEMU
+uses HVF on Apple Silicon or KVM on dedicated ARM64 and AMD64 Linux hosts.
+The container never needs privileged mode or a Docker socket. The checkout is
+mounted read-only; downloads use a Docker volume, and successful output is
+exported under `packer/artifacts/<arch>/debs/`.
 
-| Tool | Version | Install |
+| Host | Packages | Bake and boot tests |
 |---|---|---|
-| [Packer](https://developer.hashicorp.com/packer) | >= 1.10.0 | https://developer.hashicorp.com/packer/install |
-| [Go](https://go.dev/) | per `go.work` | https://go.dev/dl/ |
-| `curl` | any | via your package manager |
-| `qemu-system-x86_64`, `cloud-localds`, `swtpm`, OVMF | any | via your package manager |
-| `xorriso`, `p7zip-full` (`7z`) | any | via your package manager |
+| Apple Silicon Mac | Native Linux ARM64 container | QEMU ARM64 with HVF |
+| ARM64 Linux | Native Linux ARM64 container | QEMU ARM64 with KVM |
+| AMD64 Linux | Native Linux AMD64 container | QEMU AMD64 with KVM |
 
-Both variants boot the Ubuntu Server installer (not a prebuilt cloud image),
-so all of the above are needed even for a first build — see
-`.github/workflows/os-image-artifact.yml`'s install step for the exact
-package list on Ubuntu. `xorriso`/`7z` are for `prepare-installer-iso.sh`'s
-ISO patching (see its header comment for why).
+On each host, the image VM is the fallback package builder when the container
+attempt does not produce debs.
 
-`/dev/kvm` is preferred, not required. `packer/Makefile` probes for it and picks
-`accelerator = kvm` when it is usable, `tcg` (software emulation) otherwise —
-correct but roughly an order of magnitude slower. Force either mode with
-`make os-image-fde ACCELERATOR=tcg`. `boot-smoke.sh` does the same probe.
-
-`make os-image-fde`/`make os-image-non-fde` check for `go` on `PATH` before
-they boot the build VM and fail fast with the install link above if it's
-missing.
-
-`nke-agent` is built from this checkout's `agent/` source (cross-compiled to
-`linux/amd64` when the host differs), so the baked agent is whatever your
-checkout says — no prebuilt artifact is pulled. To bake a released agent,
-check out its `agent/vX.Y.Z` tag first. SPIRE agent is pinned (version +
-sha256) from GitHub Releases.
-
-Both variants install Ubuntu's NVIDIA-tuned kernel (`kernel.package` in
-`cidata/autoinstall-lvm.pkrtpl`), so the generic kernel never lands on disk in
-the first place — no post-install kernel swap or reboot.
-
-`ARCH=arm64` builds the arm64 image instead (`ARCH=amd64` is the default):
+Required host tools: Go per `go.work`,
+Packer, QEMU, UEFI firmware, `cloud-localds`, `swtpm`, `xorriso`, `7z`, GNU
+coreutils (`sha256sum`, `timeout`), curl and SSH. QEMU's bundled EDK2 firmware
+is discovered automatically on Nix; Ubuntu's OVMF/AAVMF paths also work.
+On a Nix-managed host, declare these tools in your environment; for a one-off
+session with missing image tools:
 
 ```bash
-make os-image-non-fde ARCH=arm64
+nix shell nixpkgs#swtpm nixpkgs#cloud-utils nixpkgs#xorriso nixpkgs#p7zip nixpkgs#coreutils
 ```
 
-This is a first pass, not full arm64 parity with amd64: only the non-FDE
-variant builds for arm64 today (no `os-image-fde ARCH=arm64` yet), and on an
-x86_64 host it always cross-builds under QEMU's `tcg` software emulation —
-there is no way to KVM-accelerate an arm64 guest on x86 hardware regardless
-of `/dev/kvm`. `ARCH` picks the right ISO URL, QEMU binary
-(`qemu-system-aarch64`), machine type (`virt`), and UEFI firmware (AAVMF
-instead of OVMF) automatically; nothing else needs to change per-arch.
+From the repository root:
 
-The build-time cloud-init seed is only for Packer's SSH. The provisioner runs
-`cloud-init clean` and drops the build key, so each qcow2 is a golden image.
+```bash
+# Just build the node packages; ARCH defaults to the host architecture.
+make os-image-packages ARCH=arm64
+
+# Dedicated native Linux host: build packages, then the production node image.
+make os-image-native ARCH=arm64 VARIANT=non-fde
+make os-image-native ARCH=amd64 VARIANT=fde
+
+# Apple Silicon development image; choose the generic guest kernel explicitly.
+make os-image-native ARCH=arm64 VARIANT=non-fde KERNEL_PACKAGE=linux-generic
+
+# Boot checks against the resulting image (FDE has its own test).
+make -C os-image boot-smoke ARCH=arm64 REQUIRE_ACCELERATION=1
+./os-image/demo-fde.sh  # existing amd64 FDE harness
+```
+
+The existing Packer Make targets and direct `packer build` invocations use
+the same `shell-local` package attempt. The root Make targets delegate to
+Packer; they do not run a second package build. Docker is optional for image
+bakes, but required for the standalone container package target.
+
+`os-image-native` requires working native hardware acceleration. An unavailable
+accelerator fails before the bake. A missing, unreachable, or wrong-architecture
+container engine falls back to the guest package build.
+`os-image-fde` and `os-image-non-fde` use the same flow with optional TCG fallback
+for development; `ACCELERATOR=tcg` selects emulation explicitly. Container
+package builds always require a native engine. `CONTAINER_ENGINE` selects a
+Docker-compatible CLI; `BUILDER_IMAGE` overrides the locally built image name.
+The container daemon must be able to bind-mount the checkout and output
+paths (on macOS, keep them in directories shared with the runtime).
+
+`make -C os-image packages` builds the pinned builder image and uses the existing
+package recipes. `K8S_VERSIONS` and `CALICO_VERSIONS` select versions with committed
+locks. OVN is opt-in with `BUILD_OVN=1` and requires its restricted inputs and a
+completed lock; it is not part of the public default build. Standalone package
+build failure preserves the previous successful output. The Packer host
+wrapper preserves the entire previous upload directory outside the next upload
+and stages only allowlisted build sources, so a failed attempt cannot reuse
+stale packages or upload local caches and unrelated files. Replaced successful
+outputs are retained under the host builder cache, outside the directory
+Packer uploads. Downloaded and staged package content
+lives in the Docker volume `nke-package-builder-<arch>` (override with
+`BUILDER_CACHE_VOLUME`), so extraction uses Linux filesystem semantics even
+on a Mac. `BUILDER_CACHE` selects the host directory for retained outputs.
+
+`make -C os-image packages-lock ARCH=arm64` resolves new upstream checksums and
+image digests inside the builder and exports them to `packer/artifacts/arm64/lock`.
+Review and copy the resulting per-package architecture directories into each
+recipe's `lock/` directory. Lock generation never edits the checkout itself.
+
+The bake verifies the exported checksums and architecture, builds `nke-agent`
+from this checkout, and downloads pinned SPIRE and TPM-plugin binaries for the
+**guest** architecture. It stages the debs as a local apt repository; package
+build tools normally stay in the container. If debs are absent, the guest
+uses the shared package script and staged build choices, then removes its
+temporary toolchain. Guest uploads and build scratch space use disk-backed
+`/var/tmp/nke-image`, avoiding Ubuntu’s memory-backed `/tmp` during large
+archive repacks. The entire staging tree is removed before export. Existing debs with failed integrity checks abort the bake.
+Both FDE and non-FDE use this flow.
+
+The default kernel remains `linux-nvidia` on AMD64 and `linux-nvidia-64k` on
+ARM64. `KERNEL_PACKAGE=linux-generic` is an explicit development override, not
+production-kernel validation. Verify production images on the native Linux
+hosts. Build-time identity and SSH keys are cleared before export; see SPEC.md.
 
 ## Full-disk-encryption (FDE) variant
 
@@ -145,8 +188,8 @@ make run-vm QCOW=packer/output-non-fde/nke-node-non-fde-ubuntu-26.04-arm64.qcow2
 
 An `os-image/vX.Y.Z` tag (or `os-image/vX.Y.Z-rc.N`) runs
 `.github/workflows/os-image-artifact.yml`, which builds and validates the
-FDE and non-FDE amd64 images plus the non-FDE arm64 image (see "Build the OS
-image" above for arm64's current limitations) and, only if that succeeds,
+amd64 FDE and non-FDE images and the arm64 non-FDE image and, after each
+architecture passes its checks,
 pushes the qcow2s to GHCR as OCI artifacts under arch-suffixed tags — not
 one multi-platform manifest shared across arches, see the workflow's header
 comment for why — and cuts a GitHub Release for the amd64 build attaching
@@ -171,16 +214,11 @@ build-and-go FDE image without a per-node secret-provisioning story.
 Verify a node closed that window with `luks-tpm-verify` before trusting
 TPM-only unlock in production.
 
-The workflow's amd64 leg runs on `linux-amd64-gpu-l4-latest-1`, chosen
-specifically for real `/dev/kvm` — a container-based pool tried earlier had
-none, forcing every bake onto `tcg` software emulation (confirmed directly: a
-full FDE bake took 1h39m under `tcg` vs a few minutes locally under real
-KVM). The job's "Enable KVM access" step fails immediately if that
-assumption turns out wrong, rather than silently falling back to the
-~10x-slower emulated path. The arm64 leg runs on that same amd64 runner —
-there is no arm64-labeled runner in this org's pool yet — always
-cross-building under `tcg`, since KVM can't accelerate a guest arch that
-doesn't match the host.
+The workflow selects dedicated Linux runners with `OS_IMAGE_AMD64_RUNNER`
+and `OS_IMAGE_ARM64_RUNNER` repository variables (see the workflow README for
+fallback labels). Hosts must provide readable,
+writable `/dev/kvm`. Preflight fails on a missing device or architecture
+mismatch; CI does not fall back to TCG or change host device permissions.
 
 If the FDE/non-FDE build or boot-smoke steps fail in CI, download the
 `fde-install-console-logs` artifact from the run — it's the guest's own

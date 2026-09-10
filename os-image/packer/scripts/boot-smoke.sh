@@ -18,6 +18,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=qemu-arch.sh
+source "${ROOT}/scripts/qemu-arch.sh"
 QCOW="${QCOW:-}"
 if [[ -z "${QCOW}" ]]; then
   shopt -s nullglob
@@ -32,42 +34,12 @@ if [[ -z "${QCOW}" ]]; then
 fi
 SSH_KEY="${SSH_KEY:-${ROOT}/.ssh/id_ed25519}"
 SSH_PORT="${SSH_PORT:-2222}"
-OVMF_CODE="${OVMF_CODE:-}"
-OVMF_VARS_TEMPLATE="${OVMF_VARS_TEMPLATE:-/usr/share/OVMF/OVMF_VARS_4M.fd}"
-# amd64 or arm64. Must match the qcow2 being smoke-tested -- see the same
-# ARCH-vs-host-arch reasoning in packer/Makefile's ACCELERATOR probe.
-ARCH="${ARCH:-amd64}"
-
-case "${ARCH}" in
-  amd64)
-    QEMU_BIN=qemu-system-x86_64
-    ARCH_UNAME=x86_64
-    MACHINE_ARGS=()
-    ;;
-  arm64)
-    QEMU_BIN=qemu-system-aarch64
-    ARCH_UNAME=aarch64
-    # Unlike x86 (which defaults to a sane "pc" machine), QEMU has no
-    # default machine type for aarch64 -- it must be named explicitly.
-    MACHINE_ARGS=(-machine virt)
-    ;;
-  *)
-    echo "boot-smoke: unsupported ARCH=${ARCH} (expected amd64 or arm64)" >&2
-    exit 1
-    ;;
-esac
-
-# Same probe as packer/Makefile, and for the same reason: KVM only
-# accelerates a guest matching the host's own architecture, and the CI
-# runners have no /dev/kvm at all, so -enable-kvm would make QEMU exit
-# instead of booting rather than silently emulating. Emulated boot is
-# minutes rather than seconds, so the timeout moves with the accelerator.
-if [[ "$(uname -m)" == "${ARCH_UNAME}" && -c /dev/kvm && -w /dev/kvm ]]; then
-  ACCEL_ARGS=(-enable-kvm -cpu host)
+nke_qemu_env "$(nke_arch_from_qcow "${QCOW}")"
+OVMF_CODE="${OVMF_CODE:-${EFI_CODE_DEFAULT}}"
+OVMF_VARS_TEMPLATE="${OVMF_VARS_TEMPLATE:-${EFI_VARS_DEFAULT}}"
+if [[ "${NKE_ACCELERATED}" -eq 1 ]]; then
   BOOT_TIMEOUT="${BOOT_TIMEOUT:-180}"
 else
-  echo "boot-smoke: no usable same-arch /dev/kvm, booting under software emulation (slower)" >&2
-  ACCEL_ARGS=(-accel tcg -cpu max)
   BOOT_TIMEOUT="${BOOT_TIMEOUT:-1200}"
 fi
 
@@ -107,26 +79,21 @@ local-hostname: nke-boot-smoke" >"${WORKDIR}/meta-data"
 
 cloud-localds "${SEED}" "${WORKDIR}/user-data" "${WORKDIR}/meta-data"
 
-EFI_ARGS=()
-if [[ -n "${OVMF_CODE}" ]]; then
-  EFIVARS="${WORKDIR}/OVMF_VARS.fd"
-  cp "${OVMF_VARS_TEMPLATE}" "${EFIVARS}"
-  EFI_ARGS=(
-    -drive if=pflash,format=raw,readonly=on,file="${OVMF_CODE}"
-    -drive if=pflash,format=raw,file="${EFIVARS}"
-  )
-fi
+EFIVARS="${WORKDIR}/OVMF_VARS.fd"
+install -m 0600 "${OVMF_VARS_TEMPLATE}" "${EFIVARS}"
 
 echo "boot-smoke: starting VM (ssh on 127.0.0.1:${SSH_PORT})"
 "${QEMU_BIN}" \
+  -machine "type=${QEMU_MACHINE}" \
+  -cpu "${QEMU_CPU}" \
   -m 2048 -smp 2 \
-  "${MACHINE_ARGS[@]}" \
   "${ACCEL_ARGS[@]}" \
   -nographic \
-  "${EFI_ARGS[@]}" \
+  -drive if=pflash,format=raw,readonly=on,file="${OVMF_CODE}" \
+  -drive if=pflash,format=raw,file="${EFIVARS}" \
   -drive if=virtio,file="${DISK}",format=qcow2 \
   -drive if=virtio,file="${SEED}",format=raw \
-  -netdev user,id=net0,hostfwd=tcp::"${SSH_PORT}"-:22 \
+  -netdev user,id=net0,restrict=on,hostfwd=tcp::"${SSH_PORT}"-:22 \
   -device virtio-net,netdev=net0 \
   -pidfile "${PIDFILE}" \
   &
@@ -162,6 +129,15 @@ test -x /usr/local/bin/nke-agent || test -x /usr/bin/nke-agent
 test -x /usr/local/bin/spire-agent
 test -x /usr/lib/nke/spire-configure.sh
 test -x /usr/lib/nke/wait-spiffe-socket.sh
+# /var/tmp survives reboot; bake sources and build scratch must be removed.
+test ! -e /var/tmp/nke-image
 EOF
 
 echo "boot-smoke: nke-agent and spire-agent are installed and enabled"
+
+# The guest network is restricted above. Install every staged distro version
+# using only the baked file: repository, proving the staged packages are usable.
+timeout 1200 ssh -i "${SSH_KEY}" -p "${SSH_PORT}" \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=5 -o BatchMode=yes \
+    ubuntu@127.0.0.1 'sudo bash -s' < "${ROOT}/scripts/check-staged-packages.sh"

@@ -107,7 +107,7 @@ autoinstall:
     # -nographic/serial-only tooling (demo-fde.sh, `virsh console`, real
     # out-of-band/BMC serial access) never sees boot messages or the LUKS
     # unlock prompt — they only ever reach the VGA framebuffer.
-    - curtin in-target --target=/target -- sh -c 'echo "GRUB_CMDLINE_LINUX=\"console=tty0 console=ttyS0,115200\"" > /etc/default/grub.d/99-console.cfg'
+    - curtin in-target --target=/target -- sh -c 'echo "GRUB_CMDLINE_LINUX=\"console=tty0 console=${console_device},115200\"" > /etc/default/grub.d/99-console.cfg'
 %{ if luks_enabled ~}
     # ========================================================================
     # Build-time-only unlock: a temporary keyfile so the post-autoinstall

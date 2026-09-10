@@ -742,3 +742,18 @@ secrets-check: ## Scan the commits on this branch for credentials, as the secret
 	@gitleaks git . --no-banner --redact \
 	  --log-opts="origin/main..HEAD --diff-merges=first-parent"
 	@echo "gitleaks: no credential found in the commits on this branch."
+
+##@ Node images
+
+.PHONY: os-image-packages os-image-fde os-image-non-fde os-image-native
+os-image-packages: ## Build native Linux node packages in a container (ARCH=amd64|arm64).
+	$(MAKE) -C os-image packages
+
+os-image-fde: ## Build packages and bake the FDE node image on this host.
+	$(MAKE) -C os-image image VARIANT=fde
+
+os-image-non-fde: ## Build packages and bake the non-FDE node image on this host.
+	$(MAKE) -C os-image image VARIANT=non-fde
+
+os-image-native: ## Bake with required native acceleration (VARIANT=fde|non-fde).
+	$(MAKE) -C os-image image-native

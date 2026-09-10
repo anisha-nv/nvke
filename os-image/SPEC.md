@@ -14,8 +14,8 @@ TODO:  Need to refine the requirements around spire-agent below
 
 | Item | Requirement |
 |---|---|
-| OS | Ubuntu 26.04 LTS, `linux/amd64` for the first reference image. `linux/arm64` also builds (`make os-image-non-fde ARCH=arm64`), but is a first pass, not full parity — see [README.md](README.md#build-the-os-image) and the `os-image-artifact.yml` header comment for what's not (yet) covered: no FDE variant, CI runs it cross-emulated under `tcg` rather than on real hardware, and it isn't attached to the GitHub Release yet, only GHCR. |
-| Kernel | Ubuntu's NVIDIA-tuned kernel flavor (`linux-nvidia` on amd64, `linux-nvidia-64k` on arm64), not the generic default — set via autoinstall's `kernel.package` (`cidata/autoinstall-lvm.pkrtpl`), so curtin installs it directly at image-build time instead of the generic kernel ever landing on disk. Matches `node-images`' `nvidia-kernel` role. |
+| OS | Ubuntu 26.04 LTS, `linux/amd64` or `linux/arm64`. Native Linux hosts build and test with KVM; Apple Silicon development uses HVF. See README.md for the container package-build boundary and validation commands. |
+| Kernel | Ubuntu's NVIDIA-tuned kernel flavor (`linux-nvidia` on amd64, `linux-nvidia-64k` on arm64), not the generic default — set via autoinstall's `kernel.package` (`cidata/autoinstall-lvm.pkrtpl`), so curtin installs it directly at image-build time instead of the generic kernel ever landing on disk. An explicit `KERNEL_PACKAGE=linux-generic` development override is available for Mac testing; it does not validate the production kernel. |
 | `nke-agent` | Built from this repository's `agent/` source at bake time and installed at `/usr/local/bin/nke-agent`. systemd unit `nke-agent.service` **enabled**. Listens on TCP **15005**. mTLS is on (no `--disable-mtls` in `/etc/default/nke-agent`). The unit waits for the SPIRE workload API before exec. |
 | SPIRE agent | `spire-agent` at `/usr/local/bin/spire-agent`, unit `spire-agent.service` **enabled**. Workload API socket at `unix:///tmp/spire-agent/public/api.sock` (the `nke-agent` default). |
 | Unix workload attestor | SPIRE `WorkloadAttestor "unix"` so root `nke-agent` can fetch an X.509 SVID. |
@@ -77,7 +77,7 @@ It satisfies everything above, plus:
 | Passphrase removal | The build-time LUKS passphrase slot is removed once the TPM bind is verified unsealable. After that, the volume unlocks **only** via that node's TPM — moving the disk to different hardware, or losing the TPM state, makes it unrecoverable by design. |
 | No key material off-image | The only secret on the cidata/autoinstall medium is the shared build-time passphrase (documented default, not a per-node secret); no per-node key, join token, or TPM-derived material is ever written to cloud-init, user-data, or the genesis medium. |
 | Unattended first unlock | `GRUB_CMDLINE_LINUX_DEFAULT` carries `luks.key=<passphrase>` (build-time, same shared default) until `luks-tpm-firstboot.sh` strips it post-bind; `files/luks/luks-cmdline-script` reads it. Matches how production feeds an iPXE `luks.key=` kernel parameter. |
-| Serial console | `GRUB_CMDLINE_LINUX` carries `console=tty0 console=ttyS0,115200`, so boot/kernel messages (including any LUKS prompt) reach a serial console, not only the VGA framebuffer. |
+| Serial console | `GRUB_CMDLINE_LINUX` carries `console=tty0` plus `console=ttyS0,115200` on AMD64 or `console=ttyAMA0,115200` on ARM64, so boot/kernel messages (including any LUKS prompt) reach a serial console, not only the VGA framebuffer. |
 | Node replacement | Each new node image boot re-runs first-boot binding against its own local TPM — no old-TPM/new-TPM migration step exists or is needed. |
 
 ## Must have (non-FDE variant, no encryption)
@@ -95,7 +95,7 @@ layout without opting into encryption.
 |---|---|
 | Root volume | Plain LVM (`ubuntu-vg`/`ubuntu-lv`), no LUKS container. |
 | Storage growth | `lvm-growth-firstboot.service` grows the partition/PV/LV/filesystem to the target disk's full size on first boot — the same growth logic the FDE variant's `luks-tpm-firstboot.sh` runs, minus everything LUKS/TPM. |
-| Serial console | Same `console=tty0 console=ttyS0,115200` GRUB parameter as the FDE variant (installer-based images otherwise carry no `console=` at all). |
+| Serial console | Same architecture-specific GRUB consoles as the FDE variant: `console=tty0` plus `console=ttyS0,115200` on AMD64 or `console=ttyAMA0,115200` on ARM64 (installer-based images otherwise carry no `console=` at all). |
 
 ## Identity rules (runtime)
 

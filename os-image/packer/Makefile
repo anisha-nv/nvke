@@ -3,7 +3,7 @@
 
 PACKER      ?= packer
 SSH_DIR     := $(CURDIR)/.ssh
-ARTIFACTS   := $(CURDIR)/artifacts
+ARTIFACTS_DIR ?= $(CURDIR)/artifacts/$(ARCH)
 # Deliberately separate from ARTIFACTS: the FDE/non-FDE "file" provisioner
 # uploads ARTIFACTS/ to the guest wholesale (it's meant to hold only
 # fetch-artifacts.sh's nke-agent/spire-agent downloads). The installer ISO
@@ -19,6 +19,7 @@ PKR_FILE_FDE := $(CURDIR)/nke-node-fde.pkr.hcl
 PKR_FILE_NON_FDE := $(CURDIR)/nke-node-non-fde.pkr.hcl
 
 LUKS_PASSPHRASE ?= changeit
+KERNEL_PACKAGE ?= $(if $(filter arm64,$(ARCH)),linux-nvidia-64k,linux-nvidia)
 
 # amd64 or arm64. Drives ISO_URL's default below and, through it,
 # local.arch in nke-node-fde.pkr.hcl / nke-node-non-fde.pkr.hcl (parsed back
@@ -40,12 +41,14 @@ ARCH ?= amd64
 # ARCH=arm64 build pointed at it. arm64 (and every other non-amd64 arch)
 # is published under cdimage.ubuntu.com/releases/<version>/release/
 # instead, with its own separate SHA256SUMS there.
-ifeq ($(ARCH),arm64)
-  ISO_URL      ?= https://cdimage.ubuntu.com/releases/26.04/release/ubuntu-26.04-live-server-arm64.iso
+ifeq ($(ARCH),amd64)
+  ISO_URL      ?= https://releases.ubuntu.com/26.04/ubuntu-26.04.1-live-server-amd64.iso
+  ISO_CHECKSUM ?= file:https://releases.ubuntu.com/26.04/SHA256SUMS
+else ifeq ($(ARCH),arm64)
+  ISO_URL      ?= https://cdimage.ubuntu.com/releases/26.04/release/ubuntu-26.04.1-live-server-arm64.iso
   ISO_CHECKSUM ?= file:https://cdimage.ubuntu.com/releases/26.04/release/SHA256SUMS
 else
-  ISO_URL      ?= https://releases.ubuntu.com/26.04/ubuntu-26.04-live-server-$(ARCH).iso
-  ISO_CHECKSUM ?= file:https://releases.ubuntu.com/26.04/SHA256SUMS
+  $(error unsupported ARCH=$(ARCH); expected amd64 or arm64)
 endif
 
 # uname -m spelling of ARCH, to compare against the host below. KVM only
@@ -55,14 +58,8 @@ endif
 # vice versa) always falls back to tcg software emulation, which the CI
 # workflow's own comments clock at roughly 10x slower than KVM for a
 # same-arch build; cross-arch tcg is not expected to be faster.
-ifeq ($(ARCH),amd64)
-  ARCH_UNAME := x86_64
-else ifeq ($(ARCH),arm64)
-  ARCH_UNAME := aarch64
-else
-  $(error unsupported ARCH=$(ARCH); expected amd64 or arm64)
-endif
-HOST_ARCH := $(shell uname -m)
+HOST_OS := $(shell uname -s)
+HOST_ARCH := $(if $(filter arm64 aarch64,$(shell uname -m)),arm64,amd64)
 
 # Hardware acceleration where the host has it for this arch, software
 # emulation otherwise. Probed rather than declared: the CI runners are
@@ -72,10 +69,15 @@ HOST_ARCH := $(shell uname -m)
 #
 # -w as well as -c: a present but unwritable /dev/kvm fails inside QEMU, later
 # and less legibly than falling back here.
-ACCELERATOR ?= $(shell if [ "$(HOST_ARCH)" = "$(ARCH_UNAME)" ] && [ -c /dev/kvm ] && [ -w /dev/kvm ]; then echo kvm; else echo tcg; fi)
+ACCELERATOR ?= $(shell \
+	if [ "$(HOST_ARCH)" != "$(ARCH)" ]; then echo tcg; \
+	elif [ "$(HOST_OS)" = Darwin ] && [ "$$(sysctl -n kern.hv_support 2>/dev/null)" = 1 ]; then echo hvf; \
+	elif [ "$(HOST_OS)" = Linux ] && [ -c /dev/kvm ] && [ -w /dev/kvm ]; then echo kvm; \
+	else echo tcg; fi)
+REQUIRE_ACCELERATION ?= 0
 
 # "host" needs KVM to be meaningful; "max" is the safe choice under TCG.
-CPU_MODEL ?= $(if $(filter kvm,$(ACCELERATOR)),host,max)
+CPU_MODEL ?= $(if $(filter kvm hvf,$(ACCELERATOR)),host,max)
 
 # Emulated boot is minutes, not seconds. Overridable, so a slow runner can
 # raise it without editing this file. 60m wasn't enough under tcg: a real CI
@@ -88,16 +90,23 @@ CPU_MODEL ?= $(if $(filter kvm,$(ACCELERATOR)),host,max)
 # the serial console log, no crash) when it hit that wall at 15m48s — FDE's
 # LUKS/LVM/package-install work is heavier than the boot times this value was
 # originally set from.
-SSH_TIMEOUT ?= $(if $(filter kvm,$(ACCELERATOR)),30m,120m)
+SSH_TIMEOUT ?= $(if $(filter kvm hvf,$(ACCELERATOR)),30m,120m)
 
 # FDE/non-FDE only: how long boot_command waits before typing into GRUB.
 # prepare-installer-iso.sh patches the ISO's own GRUB timeout to 300s, so
 # this just needs to comfortably exceed BIOS+GRUB boot time under tcg — it
 # no longer has to land inside a narrow window. See boot_wait's comment in
 # nke-node-fde.pkr.hcl.
-BOOT_WAIT ?= $(if $(filter kvm,$(ACCELERATOR)),10s,30s)
+BOOT_WAIT ?= $(if $(filter kvm hvf,$(ACCELERATOR)),10s,30s)
 
-.PHONY: os-image-fde os-image-non-fde init-fde init-non-fde ssh-key prepare-installer-iso clean check-deps
+# Ask QEMU for its EDK2 search directory after checking the Linux distro
+# locations. This is needed on Nix and Homebrew, which do not populate
+# /usr/share/{OVMF,AAVMF}.
+_EFI := $(shell ARCH=$(ARCH) bash -c '. $(CURDIR)/scripts/qemu-arch.sh; nke_qemu_env "$$ARCH" >/dev/null 2>&1; printf "%s %s" "$$EFI_CODE_DEFAULT" "$$EFI_VARS_DEFAULT"')
+EFI_CODE ?= $(word 1,$(_EFI))
+EFI_VARS ?= $(word 2,$(_EFI))
+
+.PHONY: os-image-fde os-image-non-fde init-fde init-non-fde ssh-key prepare-installer-iso clean check-deps check-acceleration
 
 ssh-key: $(SSH_DIR)/id_ed25519
 
@@ -126,12 +135,17 @@ check-deps:
 		exit 1; \
 	}
 
+check-acceleration:
+	@ARCH=$(ARCH) ACCELERATOR=$(ACCELERATOR) REQUIRE_ACCELERATION=$(REQUIRE_ACCELERATION) bash -c '\
+		. $(CURDIR)/scripts/qemu-arch.sh; \
+		nke_qemu_env "$$ARCH"'
+
 # Full-disk-encryption variant: boots the Ubuntu Server installer to lay down
 # an LVM-on-LUKS layout via autoinstall, then provisions nke-agent/spire-agent,
 # plus TPM2 binding scaffolding deferred to first boot. See
 # ../docs/full-disk-encryption.md.
-os-image-fde: check-deps ssh-key init-fde prepare-installer-iso
-	mkdir -p $(ARTIFACTS) $(BUILD_LOGS)
+os-image-fde: check-deps check-acceleration ssh-key init-fde prepare-installer-iso
+	mkdir -p $(ARTIFACTS_DIR) $(BUILD_LOGS)
 	@if [ "$(ACCELERATOR)" = "tcg" ]; then \
 		echo "no usable /dev/kvm: building with software emulation, which is far slower"; \
 	fi
@@ -143,12 +157,16 @@ os-image-fde: check-deps ssh-key init-fde prepare-installer-iso
 		-var boot_wait=$(BOOT_WAIT) \
 		-var iso_url=$(ISO_URL) \
 		-var iso_checksum=$(ISO_CHECKSUM) \
+		-var artifacts_dir=$(ARTIFACTS_DIR) \
+		-var kernel_package=$(KERNEL_PACKAGE) \
+		-var efi_firmware_code=$(EFI_CODE) \
+		-var efi_firmware_vars=$(EFI_VARS) \
 		$(PKR_FILE_FDE)
 
 # Non-FDE variant: same installer+autoinstall+LVM flow as os-image-fde,
 # minus LUKS/Clevis/TPM entirely. See nke-node-non-fde.pkr.hcl.
-os-image-non-fde: check-deps ssh-key init-non-fde prepare-installer-iso
-	mkdir -p $(ARTIFACTS) $(BUILD_LOGS)
+os-image-non-fde: check-deps check-acceleration ssh-key init-non-fde prepare-installer-iso
+	mkdir -p $(ARTIFACTS_DIR) $(BUILD_LOGS)
 	@if [ "$(ACCELERATOR)" = "tcg" ]; then \
 		echo "no usable /dev/kvm: building with software emulation, which is far slower"; \
 	fi
@@ -159,7 +177,11 @@ os-image-non-fde: check-deps ssh-key init-non-fde prepare-installer-iso
 		-var boot_wait=$(BOOT_WAIT) \
 		-var iso_url=$(ISO_URL) \
 		-var iso_checksum=$(ISO_CHECKSUM) \
+		-var artifacts_dir=$(ARTIFACTS_DIR) \
+		-var kernel_package=$(KERNEL_PACKAGE) \
+		-var efi_firmware_code=$(EFI_CODE) \
+		-var efi_firmware_vars=$(EFI_VARS) \
 		$(PKR_FILE_NON_FDE)
 
 clean:
-	rm -rf $(CURDIR)/output-fde $(CURDIR)/output-non-fde $(ARTIFACTS) $(ISO_CACHE) $(BUILD_LOGS)
+	rm -rf $(CURDIR)/output-fde $(CURDIR)/output-non-fde $(CURDIR)/artifacts $(ISO_CACHE) $(BUILD_LOGS)

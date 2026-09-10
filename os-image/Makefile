@@ -142,7 +142,7 @@ ARTIFACTS_DIR ?= $(CURDIR)/packer/artifacts/$(ARCH)
 export ARCH ARTIFACTS_DIR
 export CRANE_VERSION NFPM_VERSION
 
-.PHONY: package-builder packages packages-lock test-builder
+.PHONY: package-builder packages packages-lock test-builder image image-native
 package-builder: ## Build the pinned native Linux package-builder container.
 	./packages/builder/build.sh image
 
@@ -154,3 +154,11 @@ packages-lock: package-builder ## Resolve upstream locks into artifacts/<arch>/l
 
 test-builder: ## Test the container/artifact boundary without Docker or network.
 	python3 -m unittest discover -s packages/builder -p 'test_*.py'
+	bash packer/scripts/qemu-arch-test.sh
+
+VARIANT ?= non-fde
+image: ## Bake a node image; Packer tries container packages with guest-build fallback (VARIANT=fde|non-fde).
+	$(MAKE) -C packer os-image-$(VARIANT) ARCH=$(ARCH) ARTIFACTS_DIR=$(ARTIFACTS_DIR)
+
+image-native: ## Require native hardware acceleration for a production image bake.
+	$(MAKE) image REQUIRE_ACCELERATION=1

@@ -2,11 +2,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Guest provisioner. Artifacts are already in /tmp/nke-image.
+# Guest provisioner. Artifacts are already in /var/tmp/nke-image.
 
 set -euo pipefail
 
-SRC=/tmp/nke-image
+SRC=/var/tmp/nke-image
+
+# Use verified host debs when available, otherwise build from staged locks.
+sudo bash "${SRC}/package-source/os-image/packages/builder/guest.sh" "${SRC}"
 
 sudo install -d -m 0755 /usr/lib/nke /etc/nke /var/lib/nke /usr/local/bin
 sudo install -m 0755 "${SRC}/spire-agent" /usr/local/bin/spire-agent
@@ -43,10 +46,10 @@ sudo systemctl enable nke-agent.service
 
 # Stage the CNI debs as a local flat apt repo, so cluster create's `apt-get
 # install nke-cni-...` resolves offline with apt's dependency handling intact.
-# trusted=yes: the content is already on this root fs. amd64 artifacts only.
+# trusted=yes: the content is verified before upload and is already on this root fs.
 if [[ -d "${SRC}/debs" ]]; then
   sudo install -d -m 0755 /usr/lib/nke/debs
-  sudo install -m 0644 "${SRC}"/debs/*.deb "${SRC}/debs/Packages" /usr/lib/nke/debs/
+  sudo install -m 0644 "${SRC}"/debs/*.deb "${SRC}/debs/Packages" "${SRC}/debs/ARCH" "${SRC}/debs/SHA256SUMS" /usr/lib/nke/debs/
   echo 'deb [trusted=yes] file:/usr/lib/nke/debs ./' | sudo tee /etc/apt/sources.list.d/nke-local.list >/dev/null
 fi
 
@@ -90,7 +93,7 @@ if [[ -f /etc/apt/sources.list.d/nke-local.list ]]; then
 fi
 
 # The uploaded artifacts (gigabytes of debs) must not stay in the qcow2.
-sudo rm -rf /tmp/nke-image
+sudo rm -rf /var/tmp/nke-image
 
 sudo fstrim -av || true
 
@@ -112,5 +115,7 @@ if ! sudo lsblk -ln -o FSTYPE | grep -q crypto_LUKS; then
     sudo dd if=/dev/zero of=/EMPTY bs=1M count="${FILL_MB}" || true
     sudo rm -f /EMPTY
     sync
+    # Release the zero-fill allocation before QEMU creates its conversion copy.
+    sudo fstrim -av || true
   fi
 fi
