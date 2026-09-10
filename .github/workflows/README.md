@@ -31,6 +31,19 @@ Preserve these rules when adding or changing a workflow:
    `pull_request.types` list.
 8. Concurrency must not let one `main` commit erase another commit's result.
 
+## OS image native runners
+
+`os-image-artifact.yml` builds each qcow2 on a native Linux KVM host. Configure
+the repository variables `OS_IMAGE_AMD64_RUNNER` and `OS_IMAGE_ARM64_RUNNER`
+with the labels of dedicated hosts that expose a readable and writable
+`/dev/kvm`. A same-architecture Docker Engine is preferred; if unavailable,
+Packer builds packages in the guest. The documented fallback
+labels are `linux-amd64-gpu-l4-latest-1` and `linux-arm64-cpu16`; they are
+conventions, not a claim that an arm64 KVM host has already been provisioned.
+The workflow fails during preflight if the selected host has the wrong
+architecture or lacks usable KVM. amd64 publishes FDE and non-FDE images; arm64
+publishes the non-FDE image only. GitHub Release assets remain amd64-only.
+
 ## Event ownership
 
 | Event | Owner | Expected coverage |
