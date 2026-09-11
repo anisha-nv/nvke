@@ -36,7 +36,33 @@ const (
 	// cluster-api-provider-provisioned/hack/release-manifests.sh does for a
 	// clusterctl provider release.
 	provisionedDefaultImage = "docker.io/library/cluster-api-provider-provisioned:latest"
+
+	// certManagerLabel/certManagerComponents are where a clusterctl local
+	// repository keeps cert-manager: clusterctl reads it through the same
+	// repository client as a provider, under the label "cert-manager" (its
+	// provider name, since it has no type) and the file name it publishes.
+	certManagerLabel      = "cert-manager"
+	certManagerComponents = "cert-manager.yaml"
+	capiMetadataFile      = "metadata.yaml"
 )
+
+// capiLocalRepoProvider is one provider `clusterctl init` installs, and where
+// a clusterctl local repository keeps it: <repo>/<label>/<version>/<components>.
+// The label is clusterctl's ManifestLabel for the provider, which is the bare
+// name for the core provider and <type>-<name> for the others.
+type capiLocalRepoProvider struct {
+	name, providerType, label, components string
+}
+
+// capiLocalRepoProviders are the providers installCAPICore asks for, in the
+// order clusterctl lists them.
+func capiLocalRepoProviders() []capiLocalRepoProvider {
+	return []capiLocalRepoProvider{
+		{name: "cluster-api", providerType: "CoreProvider", label: "cluster-api", components: "core-components.yaml"},
+		{name: "kubeadm", providerType: "BootstrapProvider", label: "bootstrap-kubeadm", components: "bootstrap-components.yaml"},
+		{name: "kubeadm", providerType: "ControlPlaneProvider", label: "control-plane-kubeadm", components: "control-plane-components.yaml"},
+	}
+}
 
 // installCAPI puts Cluster API and the provisioned infrastructure provider on
 // the bootstrap cluster, so that the CAPI objects CWE writes for a tier-0
@@ -54,7 +80,7 @@ const (
 // provider repository to publish, and its image is loaded into the cluster
 // rather than pulled.
 func (e *Engine) installCAPI(ctx context.Context, kubeconfigPath string, cfg Config, timeout time.Duration) error {
-	if err := e.installCAPICore(ctx, kubeconfigPath); err != nil {
+	if err := e.installCAPICore(ctx, kubeconfigPath, cfg); err != nil {
 		return err
 	}
 	if cfg.ProvisionedProviderImage == "" {
@@ -69,26 +95,118 @@ func (e *Engine) installCAPI(ctx context.Context, kubeconfigPath string, cfg Con
 // already there. clusterctl brings cert-manager with it and refuses a second
 // init, so the probe is what makes a re-run of `bootstrap site` against a kept
 // cluster work.
-func (e *Engine) installCAPICore(ctx context.Context, kubeconfigPath string) error {
+//
+// With cfg.CAPILocalRepo set, clusterctl is handed a configuration that points
+// every provider and cert-manager at that directory, so nothing is fetched
+// from GitHub. clusterctl still resolves the ${...} placeholders in the
+// component manifests, which is why this stays a `clusterctl init` rather
+// than becoming a `kubectl apply` of the staged files.
+func (e *Engine) installCAPICore(ctx context.Context, kubeconfigPath string, cfg Config) error {
 	if _, err := e.Runner.Run(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
 		"-n", capiCoreNamespace, "get", "deployment", capiCoreDeployment); err == nil {
 		e.log.Info("cluster api core already installed", "namespace", capiCoreNamespace)
 		return nil
 	}
 
-	e.log.Info("installing cluster api core and the kubeadm providers", "version", capiVersion)
-	if out, err := e.Runner.Run(ctx, "clusterctl", "init",
+	args := []string{
+		"init",
 		"--kubeconfig", kubeconfigPath,
-		"--core", "cluster-api:"+capiVersion,
-		"--bootstrap", "kubeadm:"+capiVersion,
-		"--control-plane", "kubeadm:"+capiVersion,
+		"--core", "cluster-api:" + capiVersion,
+		"--bootstrap", "kubeadm:" + capiVersion,
+		"--control-plane", "kubeadm:" + capiVersion,
 		"--wait-providers",
-	); err != nil {
+	}
+	source := "github.com"
+	if cfg.CAPILocalRepo != "" {
+		body, err := clusterctlLocalRepoConfig(cfg.CAPILocalRepo, capiVersion)
+		if err != nil {
+			return err
+		}
+		configPath, cleanup, err := writeTempFile("nkectl-clusterctl-*.yaml", body)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		args = append(args, "--config", configPath)
+		source = cfg.CAPILocalRepo
+	}
+
+	e.log.Info("installing cluster api core and the kubeadm providers", "version", capiVersion, "source", source)
+	if out, err := e.Runner.Run(ctx, "clusterctl", args...); err != nil {
+		if cfg.CAPILocalRepo != "" {
+			return fmt.Errorf("cwedeploy: clusterctl init: %w\n%s\n"+
+				"clusterctl %s must be on PATH; the providers and cert-manager were read from %s",
+				err, out, capiVersion, cfg.CAPILocalRepo)
+		}
 		return fmt.Errorf("cwedeploy: clusterctl init: %w\n%s\n"+
 			"clusterctl %s must be on PATH and the host must be able to reach "+
 			"github.com and the cert-manager charts", err, out, capiVersion)
 	}
 	return nil
+}
+
+// clusterctlLocalRepoConfig renders the clusterctl configuration that makes
+// `clusterctl init` read the providers at version, and cert-manager, from the
+// local repository at repo. Every file the configuration names is checked
+// first, so a missing or misplaced artifact is reported by path here rather
+// than as clusterctl's fetch error later.
+//
+// A provider entry with the same name and type as a built-in one replaces it,
+// which is how the GitHub URLs clusterctl ships with are taken out of the
+// picture. cert-manager's version is whatever single version is staged: it
+// has to be given to clusterctl explicitly, since a local repository has no
+// "latest" to resolve for it.
+func clusterctlLocalRepoConfig(repo, version string) ([]byte, error) {
+	root, err := filepath.Abs(repo)
+	if err != nil {
+		return nil, fmt.Errorf("cwedeploy: resolving Config.CAPILocalRepo %q: %w", repo, err)
+	}
+
+	var b strings.Builder
+	b.WriteString("providers:\n")
+	for _, p := range capiLocalRepoProviders() {
+		dir := filepath.Join(root, p.label, version)
+		for _, name := range []string{p.components, capiMetadataFile} {
+			if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+				return nil, fmt.Errorf("cwedeploy: Config.CAPILocalRepo %s is missing %s/%s/%s: %w",
+					root, p.label, version, name, err)
+			}
+		}
+		fmt.Fprintf(&b, "- name: %s\n  type: %s\n  url: file://%s\n",
+			p.name, p.providerType, filepath.Join(dir, p.components))
+	}
+
+	certManagerVersion, err := stagedCertManagerVersion(root)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(&b, "cert-manager:\n  url: file://%s\n  version: %s\n",
+		filepath.Join(root, certManagerLabel, certManagerVersion, certManagerComponents), certManagerVersion)
+	return []byte(b.String()), nil
+}
+
+// stagedCertManagerVersion returns the one cert-manager version staged under
+// root. Zero is an incomplete repository; more than one is ambiguous, and
+// picking silently would install a version nobody chose.
+func stagedCertManagerVersion(root string) (string, error) {
+	matches, err := filepath.Glob(filepath.Join(root, certManagerLabel, "v*", certManagerComponents))
+	if err != nil {
+		return "", fmt.Errorf("cwedeploy: listing %s in Config.CAPILocalRepo %s: %w", certManagerLabel, root, err)
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("cwedeploy: Config.CAPILocalRepo %s has no %s/<version>/%s",
+			root, certManagerLabel, certManagerComponents)
+	case 1:
+		return filepath.Base(filepath.Dir(matches[0])), nil
+	default:
+		versions := make([]string, 0, len(matches))
+		for _, m := range matches {
+			versions = append(versions, filepath.Base(filepath.Dir(m)))
+		}
+		return "", fmt.Errorf("cwedeploy: Config.CAPILocalRepo %s stages more than one cert-manager version (%s); keep one",
+			root, strings.Join(versions, ", "))
+	}
 }
 
 // installProvisionedProvider renders cluster-api-provider-provisioned's

@@ -5,6 +5,8 @@ package cwedeploy
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -115,7 +117,7 @@ func TestInstallProvisionedProvider_RejectsAnUnexpectedRender(t *testing.T) {
 func TestInstallCAPICore_SkipsWhenAlreadyInstalled(t *testing.T) {
 	runner := &fakeRunner{outputs: []fakeOutput{{output: "deployment.apps/capi-controller-manager"}}}
 
-	if err := New(runner, nil).installCAPICore(context.Background(), "/tmp/kubeconfig"); err != nil {
+	if err := New(runner, nil).installCAPICore(context.Background(), "/tmp/kubeconfig", Config{}); err != nil {
 		t.Fatalf("installCAPICore returned error: %v", err)
 	}
 	for _, call := range runner.calls {
@@ -144,5 +146,173 @@ func TestDeploy_InstallsCAPIBeforeCWE(t *testing.T) {
 	}
 	if capi > cwe || provider > cwe {
 		t.Errorf("CAPI (%d) and the provider (%d) must be installed before CWE (%d)", capi, provider, cwe)
+	}
+}
+
+// stageCAPILocalRepo lays out a clusterctl local repository under a temp
+// directory with empty files, which is all clusterctlLocalRepoConfig looks at.
+// An empty certManagerVersion stages no cert-manager.
+func stageCAPILocalRepo(t *testing.T, version, certManagerVersion string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, p := range capiLocalRepoProviders() {
+		stageFile(t, filepath.Join(root, p.label, version, p.components))
+		stageFile(t, filepath.Join(root, p.label, version, capiMetadataFile))
+	}
+	if certManagerVersion != "" {
+		stageFile(t, filepath.Join(root, certManagerLabel, certManagerVersion, certManagerComponents))
+	}
+	return root
+}
+
+func stageFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestClusterctlLocalRepoConfig pins the whole rendered configuration: the
+// provider names and types have to match clusterctl's built-ins to replace
+// them, the labels have to match clusterctl's ManifestLabel for the file://
+// URL to parse, and cert-manager has to carry an explicit version.
+func TestClusterctlLocalRepoConfig(t *testing.T) {
+	root := stageCAPILocalRepo(t, "v1.2.3", "v9.8.7")
+
+	got, err := clusterctlLocalRepoConfig(root, "v1.2.3")
+	if err != nil {
+		t.Fatalf("clusterctlLocalRepoConfig returned error: %v", err)
+	}
+	want := "providers:\n" +
+		"- name: cluster-api\n  type: CoreProvider\n  url: file://" + root + "/cluster-api/v1.2.3/core-components.yaml\n" +
+		"- name: kubeadm\n  type: BootstrapProvider\n  url: file://" + root + "/bootstrap-kubeadm/v1.2.3/bootstrap-components.yaml\n" +
+		"- name: kubeadm\n  type: ControlPlaneProvider\n  url: file://" + root + "/control-plane-kubeadm/v1.2.3/control-plane-components.yaml\n" +
+		"cert-manager:\n  url: file://" + root + "/cert-manager/v9.8.7/cert-manager.yaml\n  version: v9.8.7\n"
+	if string(got) != want {
+		t.Errorf("clusterctl config =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// An incomplete repository is reported by the path clusterctl would have
+// looked for, before clusterctl runs. Each case removes or misplaces one
+// thing a staging step could get wrong.
+func TestClusterctlLocalRepoConfig_RejectsAnIncompleteRepository(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		stage func(t *testing.T) string
+		want  string
+	}{
+		{
+			name: "components file missing",
+			stage: func(t *testing.T) string {
+				root := stageCAPILocalRepo(t, "v1.2.3", "v9.8.7")
+				if err := os.Remove(filepath.Join(root, "bootstrap-kubeadm", "v1.2.3", "bootstrap-components.yaml")); err != nil {
+					t.Fatal(err)
+				}
+				return root
+			},
+			want: "bootstrap-kubeadm/v1.2.3/bootstrap-components.yaml",
+		},
+		{
+			name: "metadata missing",
+			stage: func(t *testing.T) string {
+				root := stageCAPILocalRepo(t, "v1.2.3", "v9.8.7")
+				if err := os.Remove(filepath.Join(root, "cluster-api", "v1.2.3", capiMetadataFile)); err != nil {
+					t.Fatal(err)
+				}
+				return root
+			},
+			want: "cluster-api/v1.2.3/metadata.yaml",
+		},
+		{
+			name:  "staged at a different version than the build installs",
+			stage: func(t *testing.T) string { return stageCAPILocalRepo(t, "v1.2.4", "v9.8.7") },
+			want:  "cluster-api/v1.2.3/core-components.yaml",
+		},
+		{
+			name:  "no cert-manager",
+			stage: func(t *testing.T) string { return stageCAPILocalRepo(t, "v1.2.3", "") },
+			want:  "cert-manager/<version>/cert-manager.yaml",
+		},
+		{
+			name: "two cert-manager versions",
+			stage: func(t *testing.T) string {
+				root := stageCAPILocalRepo(t, "v1.2.3", "v9.8.7")
+				stageFile(t, filepath.Join(root, certManagerLabel, "v9.8.8", certManagerComponents))
+				return root
+			},
+			want: "more than one cert-manager version",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := tt.stage(t)
+			_, err := clusterctlLocalRepoConfig(root, "v1.2.3")
+			if err == nil {
+				t.Fatal("clusterctlLocalRepoConfig accepted an incomplete repository")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error %q does not name %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestInstallCAPICore_ReadsFromTheLocalRepository: with a local repository
+// clusterctl gets a --config whose contents point at it; without one the
+// invocation is unchanged and no configuration file is written.
+func TestInstallCAPICore_ReadsFromTheLocalRepository(t *testing.T) {
+	previousCAPIVersion := capiVersion
+	capiVersion = "v1.2.3"
+	t.Cleanup(func() { capiVersion = previousCAPIVersion })
+
+	for _, tt := range []struct {
+		name       string
+		repo       func(t *testing.T) string
+		wantConfig bool
+	}{
+		{name: "default fetches from GitHub", repo: func(*testing.T) string { return "" }},
+		{name: "local repository is handed to clusterctl", repo: func(t *testing.T) string { return stageCAPILocalRepo(t, "v1.2.3", "v9.8.7") }, wantConfig: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeRunner{}
+			repo := tt.repo(t)
+			if err := New(runner, nil).installCAPICore(context.Background(), "/tmp/kubeconfig", Config{CAPILocalRepo: repo}); err != nil {
+				t.Fatalf("installCAPICore returned error: %v", err)
+			}
+
+			init := ""
+			for _, call := range runner.calls {
+				if call.name == "clusterctl" {
+					init = joinArgs(call.args)
+				}
+			}
+			if !strings.Contains(init, "init --kubeconfig /tmp/kubeconfig --core cluster-api:v1.2.3") {
+				t.Errorf("clusterctl init = %q, want the same init as before", init)
+			}
+			if got := strings.Contains(init, " --config "); got != tt.wantConfig {
+				t.Errorf("clusterctl init = %q, has --config = %v, want %v", init, got, tt.wantConfig)
+			}
+			if !tt.wantConfig {
+				if len(runner.applied) != 0 {
+					t.Errorf("a configuration file was written without a local repository: %q", runner.applied)
+				}
+				return
+			}
+			if len(runner.applied) != 1 {
+				t.Fatalf("expected the clusterctl configuration to be captured, got %d files", len(runner.applied))
+			}
+			for _, want := range []string{
+				"url: file://" + repo + "/cluster-api/v1.2.3/core-components.yaml",
+				"url: file://" + repo + "/cert-manager/v9.8.7/cert-manager.yaml",
+				"version: v9.8.7",
+			} {
+				if !strings.Contains(runner.applied[0], want) {
+					t.Errorf("clusterctl configuration lacks %q:\n%s", want, runner.applied[0])
+				}
+			}
+		})
 	}
 }

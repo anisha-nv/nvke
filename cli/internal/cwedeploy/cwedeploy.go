@@ -260,6 +260,21 @@ type Config struct {
 	// repo-root discovery, with the same standalone-binary caveat as ChartPath.
 	ProvisionedProviderPath string
 
+	// CAPILocalRepo is a directory laid out as a clusterctl local repository,
+	// from which `clusterctl init` reads the Cluster API providers and
+	// cert-manager instead of fetching them from GitHub:
+	//
+	//	<repo>/cluster-api/<version>/core-components.yaml
+	//	<repo>/bootstrap-kubeadm/<version>/bootstrap-components.yaml
+	//	<repo>/control-plane-kubeadm/<version>/control-plane-components.yaml
+	//	<repo>/cert-manager/<cert-manager version>/cert-manager.yaml
+	//
+	// with a metadata.yaml beside each components file. <version> is the
+	// Cluster API version this build installs; exactly one cert-manager
+	// version may be present. hack/stage-bootstrap-artifacts.sh produces the
+	// layout. Empty fetches everything from GitHub.
+	CAPILocalRepo string
+
 	// NodeAgentPort is the port CWE dials nke-agent on. Empty leaves CWE's own
 	// default (15005) alone. It comes from the site spec, because it describes
 	// how the site's hosts were configured long before this cluster existed.
@@ -313,6 +328,7 @@ func DefaultConfig() Config {
 
 		ProvisionedProviderImage: os.Getenv("NKECTL_CAPI_PROVISIONED_IMAGE"),
 		ProvisionedProviderPath:  os.Getenv("NKECTL_CAPI_PROVISIONED_PATH"),
+		CAPILocalRepo:            os.Getenv("NKECTL_CAPI_LOCAL_REPO"),
 		CWEPort:                  envPort("NKECTL_CWE_PORT", DefaultCWEPort),
 
 		HelmTimeout:  envDuration("NKECTL_CWE_HELM_TIMEOUT", 5*time.Minute),

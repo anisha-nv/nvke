@@ -40,17 +40,23 @@ type fakeOutput struct {
 	err    error
 }
 
-// appliedManifests holds the contents of every file a `kubectl apply -f` was
-// pointed at, captured while the file still exists: the callers remove theirs
-// as soon as the apply returns, so a test that looked afterwards would find
-// nothing. This is the only way to assert on what was actually sent to the
-// cluster rather than on the command line that sent it.
+// captureApply records the contents of every file a `kubectl apply -f` or a
+// `clusterctl --config` was pointed at, captured while the file still exists:
+// the callers remove theirs as soon as the command returns, so a test that
+// looked afterwards would find nothing. This is the only way to assert on
+// what was actually sent rather than on the command line that sent it.
 func (f *fakeRunner) captureApply(name string, args []string) {
-	if name != "kubectl" {
+	var flag string
+	switch name {
+	case "kubectl":
+		flag = "-f"
+	case "clusterctl":
+		flag = "--config"
+	default:
 		return
 	}
 	for i, arg := range args {
-		if arg == "-f" && i+1 < len(args) {
+		if arg == flag && i+1 < len(args) {
 			body, err := os.ReadFile(args[i+1])
 			if err == nil {
 				f.applied = append(f.applied, string(body))
