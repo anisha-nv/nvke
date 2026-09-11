@@ -100,3 +100,100 @@ func TestDefaultConfig_DockerHubMirrorFromEnv(t *testing.T) {
 		t.Errorf("DockerHubMirror = %q, want empty when unset", got)
 	}
 }
+
+// TestCreate_ConfiguresRegistryMirror: one mirror covers every registry the
+// bootstrap pulls from, in a fixed order; with a Docker Hub mirror beside it,
+// the Docker Hub hosts keep going to that one.
+func TestCreate_ConfiguresRegistryMirror(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		cfg  Config
+		want map[string]string // registry -> mirror it is routed to
+	}{
+		{
+			name: "registry mirror alone covers every registry",
+			cfg:  Config{ClusterName: "test-cluster", RegistryMirror: "mirror.example.com:5000"},
+			want: map[string]string{
+				"docker.io": "mirror.example.com:5000", "registry-1.docker.io": "mirror.example.com:5000",
+				"ghcr.io": "mirror.example.com:5000", "registry.k8s.io": "mirror.example.com:5000",
+				"quay.io": "mirror.example.com:5000", "cgr.dev": "mirror.example.com:5000",
+			},
+		},
+		{
+			name: "docker hub mirror keeps the docker hub hosts",
+			cfg:  Config{ClusterName: "test-cluster", RegistryMirror: "mirror.example.com:5000", DockerHubMirror: "hub.example.com"},
+			want: map[string]string{
+				"docker.io": "hub.example.com", "registry-1.docker.io": "hub.example.com",
+				"ghcr.io": "mirror.example.com:5000", "registry.k8s.io": "mirror.example.com:5000",
+				"quay.io": "mirror.example.com:5000", "cgr.dev": "mirror.example.com:5000",
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			outputs := []fakeOutput{
+				{output: "No kind clusters found.\n", err: errors.New("exit status 1")}, // get clusters
+				{output: ""}, // create cluster
+			}
+			for range tt.want {
+				outputs = append(outputs, fakeOutput{output: ""}) // one exec per registry
+			}
+			outputs = append(outputs, fakeOutput{output: ""}) // export kubeconfig
+			runner := &fakeRunner{outputs: outputs}
+
+			if _, err := New(runner, nil).Create(context.Background(), tt.cfg); err != nil {
+				t.Fatalf("Create returned error: %v", err)
+			}
+			if len(runner.calls) != len(outputs) {
+				t.Fatalf("got %d calls, want %d: %v", len(runner.calls), len(outputs), runner.calls)
+			}
+
+			got := map[string]string{}
+			for _, call := range runner.calls[2 : 2+len(tt.want)] {
+				if call.name != RuntimeCLI {
+					t.Fatalf("expected a %s exec, got %s %s", RuntimeCLI, call.name, joinArgs(call.args))
+				}
+				args := joinArgs(call.args)
+				for registry, mirror := range tt.want {
+					if strings.Contains(args, "/etc/containerd/certs.d/"+registry+"/hosts.toml") {
+						if !strings.Contains(args, `server = "https://`+mirror+`"`) {
+							t.Errorf("%s routed elsewhere than %s:\n%s", registry, mirror, args)
+						}
+						got[registry] = mirror
+					}
+				}
+			}
+			for registry := range tt.want {
+				if _, ok := got[registry]; !ok {
+					t.Errorf("no hosts.toml was written for %s", registry)
+				}
+			}
+			if last := runner.calls[len(runner.calls)-1]; last.name != "kind" || last.args[0] != "export" {
+				t.Errorf("last call = %s %s, want the kubeconfig export after the mirror setup", last.name, joinArgs(last.args))
+			}
+		})
+	}
+}
+
+func TestCreate_RejectsAMalformedRegistryMirror(t *testing.T) {
+	runner := &fakeRunner{}
+	_, err := New(runner, nil).Create(context.Background(), Config{
+		ClusterName:    "test-cluster",
+		RegistryMirror: "https://mirror.example.com/v2/",
+	})
+	if err == nil {
+		t.Fatal("Create accepted a registry mirror with a scheme and a path")
+	}
+	if !strings.Contains(err.Error(), "RegistryMirror") {
+		t.Errorf("error %q does not name the field", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Errorf("Create ran %d commands before rejecting the mirror, want 0", len(runner.calls))
+	}
+}
+
+func TestDefaultConfig_RegistryMirrorFromEnv(t *testing.T) {
+	t.Setenv("NKECTL_BOOTSTRAP_REGISTRY_MIRROR", "mirror.example.com")
+	if got := DefaultConfig().RegistryMirror; got != "mirror.example.com" {
+		t.Errorf("RegistryMirror = %q, want %q", got, "mirror.example.com")
+	}
+}

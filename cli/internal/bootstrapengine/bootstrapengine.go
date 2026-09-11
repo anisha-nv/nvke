@@ -96,6 +96,15 @@ type Config struct {
 	// mirror, given as a host with an optional port. Empty leaves the pulls
 	// going to Docker Hub directly.
 	DockerHubMirror string
+
+	// RegistryMirror routes the node's pulls from every registry the
+	// bootstrap releases use -- Docker Hub, ghcr.io, registry.k8s.io, quay.io
+	// and cgr.dev -- through one registry mirror, given as a host with an
+	// optional port. The mirror holds each image under its upstream path, as
+	// hack/mirror-bootstrap-images.sh lays it out. DockerHubMirror, when also
+	// set, still takes the Docker Hub hosts. Empty leaves the pulls going to
+	// each upstream registry directly.
+	RegistryMirror string
 }
 
 // DefaultConfig reads the engine's knobs from the environment, mirroring
@@ -108,6 +117,7 @@ func DefaultConfig() Config {
 		WaitReady:   envDuration("NKECTL_BOOTSTRAP_WAIT_READY", 3*time.Minute),
 
 		DockerHubMirror: os.Getenv("NKECTL_BOOTSTRAP_DOCKERHUB_MIRROR"),
+		RegistryMirror:  os.Getenv("NKECTL_BOOTSTRAP_REGISTRY_MIRROR"),
 	}
 }
 
@@ -171,7 +181,10 @@ func (e *Engine) Create(ctx context.Context, cfg Config) (*Cluster, error) {
 	if cfg.ClusterName == "" {
 		return nil, fmt.Errorf("bootstrapengine: Config.ClusterName is required")
 	}
-	if err := validateRegistryMirror(cfg.DockerHubMirror); err != nil {
+	if err := validateRegistryMirror("DockerHubMirror", cfg.DockerHubMirror); err != nil {
+		return nil, err
+	}
+	if err := validateRegistryMirror("RegistryMirror", cfg.RegistryMirror); err != nil {
 		return nil, err
 	}
 
@@ -205,9 +218,9 @@ func (e *Engine) Create(ctx context.Context, cfg Config) (*Cluster, error) {
 
 	// Before anything pulls: the cluster exists from here on, so a failure
 	// leaves it for the caller's Delete, like a failed kubeconfig fetch does.
-	if cfg.DockerHubMirror != "" {
-		if err := e.configureDockerHubMirror(ctx, cfg); err != nil {
-			return nil, fmt.Errorf("bootstrap kind cluster %s created but the docker.io mirror was not configured: %w", cfg.ClusterName, err)
+	for _, m := range registryMirrors(cfg) {
+		if err := e.configureRegistryMirror(ctx, cfg, m); err != nil {
+			return nil, fmt.Errorf("bootstrap kind cluster %s created but the registry mirror was not configured: %w", cfg.ClusterName, err)
 		}
 	}
 
