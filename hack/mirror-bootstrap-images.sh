@@ -2,19 +2,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Mirror the third-party container images the `nkectl bootstrap site` Helm
-# releases pull -- Postgres, Temporal, and the SPIRE stack -- into a local or
-# private registry, so a bootstrap can pull them offline. Point the bootstrap at
-# the mirror by setting registry.imageRegistry (REGISTRY_IMAGE_REGISTRY) to the
-# same registry; each image keeps its upstream path under it, which is what that
-# override rewrites references to.
+# Mirror the third-party container images `nkectl bootstrap site` pulls onto
+# the bootstrap cluster -- Postgres, Temporal, the SPIRE stack, Cluster API and
+# cert-manager -- into a local or private registry, so a bootstrap can pull
+# them offline. Point the bootstrap at the mirror with
+# NKECTL_BOOTSTRAP_REGISTRY_MIRROR=<host[:port]>: the bootstrap cluster's
+# containerd then sends every pull from those registries to the mirror, keeping
+# each image's upstream path in the request, which is why each image is
+# mirrored under that path here. The charts and provider manifests are
+# hack/stage-bootstrap-artifacts.sh's job.
 #
 # Usage:
 #   hack/mirror-bootstrap-images.sh [TARGET_REGISTRY]
 #
 #   TARGET_REGISTRY  registry host, with an optional path prefix, to mirror into.
 #                    Defaults to localhost:5000. Examples: localhost:5000,
-#                    10.0.0.1:5000, nvcr.io/myorg.
+#                    10.0.0.1:5000, nvcr.io/myorg. NKECTL_BOOTSTRAP_REGISTRY_MIRROR
+#                    takes a bare host, so a path prefix suits a registry the
+#                    node reaches some other way, not the containerd route.
 #
 # Env:
 #   INSECURE=1       copy over plain HTTP / skip TLS verification. Defaults on
@@ -33,7 +38,10 @@
 # Image versions track the chart pins in cli/internal/cwedeploy/cwedeploy.go
 # (postgresql 18.5.15, temporal 0.74.0, spire 0.30.1 / spire-crds 0.6.1) and the
 # tags those charts resolve. After a chart bump, refresh this list from
-# `helm template <chart> --version <pin> | grep 'image:'`.
+# `helm template <chart> --version <pin> | grep 'image:'`. The Cluster API rows
+# track CAPI_VERSION in make/tool-versions.mk and the cert-manager rows the
+# CERT_MANAGER_VERSION in hack/stage-bootstrap-artifacts.sh; refresh them from
+# `grep image: <the staged components files>`.
 
 set -Eeuo pipefail
 
@@ -80,6 +88,17 @@ MAPPINGS=(
   # Only pulled when TPM node attestation is enabled (the site spec lists a
   # tpmEkThumbprint); harmless to mirror unconditionally.
   "ghcr.io/spiffe/spire-tpm-plugin-tpm-attestor-server:v1.9.0|spiffe/spire-tpm-plugin-tpm-attestor-server:v1.9.0"
+
+  # Cluster API (CAPI_VERSION v1.12.3): core and the kubeadm providers that
+  # `clusterctl init` installs.
+  "registry.k8s.io/cluster-api/cluster-api-controller:v1.12.3|cluster-api/cluster-api-controller:v1.12.3"
+  "registry.k8s.io/cluster-api/kubeadm-bootstrap-controller:v1.12.3|cluster-api/kubeadm-bootstrap-controller:v1.12.3"
+  "registry.k8s.io/cluster-api/kubeadm-control-plane-controller:v1.12.3|cluster-api/kubeadm-control-plane-controller:v1.12.3"
+
+  # cert-manager (v1.19.3), which clusterctl init brings with it.
+  "quay.io/jetstack/cert-manager-controller:v1.19.3|jetstack/cert-manager-controller:v1.19.3"
+  "quay.io/jetstack/cert-manager-webhook:v1.19.3|jetstack/cert-manager-webhook:v1.19.3"
+  "quay.io/jetstack/cert-manager-cainjector:v1.19.3|jetstack/cert-manager-cainjector:v1.19.3"
 )
 
 echo "Mirroring ${#MAPPINGS[@]} bootstrap images to ${TARGET} (insecure=${INSECURE})"
