@@ -92,7 +92,7 @@ nkectl config view
 `--url` is the CWE API. `--kubeconfig` is the site cluster's kubeconfig; `get
 providers` and `get kubeconfig` read the cluster directly and need it.
 
-CWE API commands (`get`/`create`/`describe`/`delete` clusters) use that
+CWE API commands (`get`/`create`/`update`/`delete` clusters) use that
 kubeconfig to authenticate: they read the audience from ConfigMap
 `cloud-workflow-engine/nke-auth-config` and mint a TokenRequest for
 `nke-clients/nke-client`. If the ConfigMap is absent, authentication is off
@@ -157,7 +157,21 @@ Without `--output-file`, the kubeconfig is written to stdout. This reads the
 site cluster directly, the same as `get providers`, so it needs the site
 kubeconfig from step 4.
 
-### 9. Delete the tenant cluster
+### 9. Update the tenant cluster
+
+```bash
+# Bump the Kubernetes version
+nkectl update cluster <cluster-name> --set controlPlaneKubernetesVersion=1.31.0
+
+# From a patch file, or a patch file plus an inline override
+nkectl update cluster <cluster-name> -f patch.yaml
+nkectl update cluster <cluster-name> -f patch.yaml --set controlPlaneConfig.desiredCount=5
+```
+
+Only the fields supplied are changed. `nkectl update cluster --help` covers
+`--set`, `--set-string`, and field clearing in full.
+
+### 10. Delete the tenant cluster
 
 ```bash
 nkectl delete cluster <cluster-name>
