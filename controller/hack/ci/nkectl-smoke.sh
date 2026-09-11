@@ -7,7 +7,7 @@
 #
 # The Ginkgo suite proves the server. This proves the CLI can talk to it: read
 # commands and their negatives, provider inspection, rejected creates, and one
-# create, list, delete round trip.
+# create, list, update, delete round trip.
 #
 # Needs from the caller: log, runner_exec, RUNNER_NAME, NKECTL_BIN, TMP_DIR,
 # BACKEND, CAPD_NODE_IMAGE.
@@ -151,6 +151,16 @@ EOF
   fi
   if ! grep -q 'not found' <<<"${out}"; then
     log "nkectl smoke: 'get kubeconfig' failed without a not-found message" >&2
+    return 1
+  fi
+
+  # The same FindClusterByName lookup update cluster shares with delete.
+  if out="$(nkectl_exec update cluster "${NKECTL_SMOKE_ABSENT}" --set teleportEnabled=true 2>&1)"; then
+    log "nkectl smoke: 'update cluster ${NKECTL_SMOKE_ABSENT}' succeeded against a name that does not exist" >&2
+    return 1
+  fi
+  if ! grep -q 'not found' <<<"${out}"; then
+    log "nkectl smoke: 'update cluster' failed without a not-found message" >&2
     return 1
   fi
 
@@ -368,7 +378,7 @@ EOF
     nkectl_smoke_write_cleanup
     return "${rc}"
   fi
-  log "PASS: nkectl created, listed and deleted a cluster through CWE"
+  log "PASS: nkectl created, listed, updated and deleted a cluster through CWE"
 }
 
 # Best-effort delete; never fails the caller.
@@ -396,6 +406,27 @@ nkectl_smoke_write_assertions() {
   fi
   if ! jq -e --arg n "${name}" 'length == 1 and .[0].name == $n' <<<"${out}" >/dev/null; then
     log "nkectl smoke: 'get clusters -c ${name} -o json' did not return exactly our cluster: ${out}" >&2
+    return 1
+  fi
+
+  # PATCH an ungated field. teleportEnabled has no provisioning-state gate, so
+  # this exercises the update path (FindClusterByName -> UpdateCluster) even
+  # though the write round trip never provisions a real node.
+  if ! out="$(nkectl_exec update cluster "${name}" --set teleportEnabled=true 2>&1)"; then
+    log "nkectl smoke: 'update cluster ${name}' failed: ${out}" >&2
+    return 1
+  fi
+  if ! grep -q 'updated (id: ' <<<"${out}"; then
+    log "nkectl smoke: 'update cluster ${name}' succeeded without reporting the id: ${out}" >&2
+    return 1
+  fi
+
+  if ! out="$(nkectl_exec get clusters -c "${name}" -o json 2>&1)"; then
+    log "nkectl smoke: 'get clusters -c ${name} -o json' failed after update: ${out}" >&2
+    return 1
+  fi
+  if ! jq -e '.[0].teleportEnabled == true' <<<"${out}" >/dev/null; then
+    log "nkectl smoke: 'update cluster' did not apply teleportEnabled=true: ${out}" >&2
     return 1
   fi
 
