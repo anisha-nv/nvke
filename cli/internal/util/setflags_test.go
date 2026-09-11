@@ -6,6 +6,7 @@ package util
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
@@ -463,7 +464,7 @@ func TestParseSetValueRejectsEmptyCommaElement(t *testing.T) {
 		"a,,b",
 	}
 	for _, raw := range tests {
-		if _, err := parseSetValue(raw, true); err == nil {
+		if _, err := parseSetValue(raw, true, false); err == nil {
 			t.Errorf("parseSetValue(%q, true) accepted an empty element", raw)
 		}
 	}
@@ -611,7 +612,7 @@ func TestMergePatchesReplacesArraysWhole(t *testing.T) {
 // literal comma inside one list element instead of splitting there, as an
 // alternative to the YAML sequence escape hatch.
 func TestParseSetValueEscapedCommaStaysOneElement(t *testing.T) {
-	got, err := parseSetValue(`mount -o rw\,noatime /x,second`, true)
+	got, err := parseSetValue(`mount -o rw\,noatime /x,second`, true, false)
 	if err != nil {
 		t.Fatalf("parseSetValue: %v", err)
 	}
@@ -657,7 +658,7 @@ func TestBuildPatchStringsRejectsEmptyElement(t *testing.T) {
 	}
 }
 
-func TestIsArrayField(t *testing.T) {
+func TestResolveFieldKind(t *testing.T) {
 	tests := []struct {
 		path []string
 		want bool
@@ -671,8 +672,8 @@ func TestIsArrayField(t *testing.T) {
 		{[]string{"bogusField"}, false},
 	}
 	for _, tt := range tests {
-		if got := isArrayField[api.UpdateClusterRequest](tt.path); got != tt.want {
-			t.Errorf("isArrayField(%v) = %v, want %v", tt.path, got, tt.want)
+		if _, kind := resolveField[api.UpdateClusterRequest](tt.path); (kind == reflect.Slice) != tt.want {
+			t.Errorf("resolveField(%v) kind = %v, want slice=%v", tt.path, kind, tt.want)
 		}
 	}
 }
