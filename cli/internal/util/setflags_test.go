@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -651,10 +652,27 @@ func TestBuildPatchStringsBypassesYAMLCoercion(t *testing.T) {
 }
 
 // TestBuildPatchStringsRejectsEmptyElement mirrors
-// TestParseSetValueRejectsEmptyCommaElement for the --set-string path.
+// TestParseSetValueRejectsEmptyCommaElement for the --set-string path, and
+// checks the error's hint only offers the \, escape: --set-string never
+// tries YAML sequence syntax, so suggesting [a,b] there would mislead.
 func TestBuildPatchStringsRejectsEmptyElement(t *testing.T) {
-	if _, err := BuildPatchStrings[api.UpdateClusterRequest]([]string{"controlPlaneConfig.nodeLabels=a,,b"}); err == nil {
+	_, err := BuildPatchStrings[api.UpdateClusterRequest]([]string{"controlPlaneConfig.nodeLabels=a,,b"})
+	if err == nil {
 		t.Fatal("BuildPatchStrings accepted an empty element")
+	}
+	if strings.Contains(err.Error(), "YAML sequence") {
+		t.Errorf("--set-string error suggests YAML sequence syntax, which that path never parses: %v", err)
+	}
+	if !strings.Contains(err.Error(), `\,`) {
+		t.Errorf("--set-string error should still offer the \\, escape: %v", err)
+	}
+
+	_, err = BuildPatch[api.UpdateClusterRequest]([]string{"controlPlaneConfig.nodeLabels=a,,b"})
+	if err == nil {
+		t.Fatal("BuildPatch accepted an empty element")
+	}
+	if !strings.Contains(err.Error(), "YAML sequence") {
+		t.Errorf("--set error should offer YAML sequence syntax: %v", err)
 	}
 }
 

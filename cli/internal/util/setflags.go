@@ -204,7 +204,11 @@ func parseSetValue(raw string, isArray, forceString bool) (interface{}, error) {
 			return nil, err
 		}
 		if v == nil {
-			return nil, fmt.Errorf("empty element at position %d in %q; wrap the value in YAML sequence syntax [a,b] if an element contains a comma, or escape it as \\,", i, raw)
+			hint := `escape it as \, if an element contains a comma`
+			if !forceString {
+				hint = `wrap the value in YAML sequence syntax [a,b] if an element contains a comma, or escape it as \,`
+			}
+			return nil, fmt.Errorf("empty element at position %d in %q; %s", i, raw, hint)
 		}
 		out[i] = v
 	}
