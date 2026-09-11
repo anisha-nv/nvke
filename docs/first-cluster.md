@@ -291,12 +291,11 @@ Where Docker Hub is slow or blocked, point the seed cluster at a mirror:
 chart pull is the step that times out. The Temporal and SPIRE charts have the
 same knob — `NKECTL_CWE_TEMPORAL_CHART`, `NKECTL_CWE_SPIRE_CHART` and
 `NKECTL_CWE_SPIRE_CRDS_CHART`, each an OCI reference or a local path — so every
-Helm chart the bootstrap installs can come from a mirror or from disk.
-`clusterctl init` still fetches Cluster API and cert-manager from `github.com`.
-For the full set of third-party images
-the bootstrap pulls — Postgres, Temporal, and the SPIRE stack — and to mirror
-them into a local or private registry,
-see [`hack/mirror-bootstrap-images.sh`](../hack/mirror-bootstrap-images.sh).
+Helm chart the bootstrap installs can come from a mirror or from disk, and
+`NKECTL_CAPI_LOCAL_REPO` does the same for what `clusterctl init` installs. For
+a site with no route out at all — staging every chart, manifest and image, and
+the variables that consume them — see
+[site-bootstrap/air-gapped.md](site-bootstrap/air-gapped.md).
 
 It creates a throwaway kind cluster, installs Postgres, Temporal, SPIRE, CAPI and
 CWE into it, builds the site cluster on your hosts through `nke-agent`, and

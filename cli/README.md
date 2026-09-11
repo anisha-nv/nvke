@@ -172,16 +172,19 @@ ever disagree.
 | `NKECTL_CWE_TEMPORAL_CHART` | `temporal` from `https://go.temporal.io/helm-charts` | Temporal chart, as an OCI reference or a local path. Set, it replaces the repo lookup. |
 | `NKECTL_CWE_SPIRE_CHART` | `spire` from `https://spiffe.github.io/helm-charts-hardened/` | SPIRE chart, same semantics |
 | `NKECTL_CWE_SPIRE_CRDS_CHART` | `spire-crds` from `https://spiffe.github.io/helm-charts-hardened/` | SPIRE CRDs chart, same semantics |
+| `NKECTL_CAPI_LOCAL_REPO` | fetch from GitHub | A clusterctl local repository holding the Cluster API providers and cert-manager, for `clusterctl init` to read instead of GitHub |
+| `NKECTL_BOOTSTRAP_DOCKERHUB_MIRROR` | direct | Registry mirror, as `host[:port]`, for the bootstrap cluster's Docker Hub pulls |
+| `NKECTL_BOOTSTRAP_REGISTRY_MIRROR` | direct | Registry mirror, as `host[:port]`, for the bootstrap cluster's pulls from every registry the releases use |
 | `NKECTL_CWE_HELM_TIMEOUT` | `5m` | Bounds each `helm upgrade --install --wait` |
 | `NKECTL_CWE_READY_TIMEOUT` | `5m` | Bounds the wait for CWE's `/readyz` |
 | `NKECTL_BOOTSTRAP_DIAGNOSTICS_DIR` | `cluster-diagnostics` | Where a failed bootstrap writes a cluster dump before tearing the cluster down (`--diagnostics-dir`) |
 
 The chart versions stay pinned in `nkectl` whichever source a chart comes
 from. Helm does not check a local path against the pin, so a tarball has to be
-the pinned version. With the four chart variables set, no Helm chart is
-pulled from the internet. The images those charts run still come from their
-registries (`NKECTL_BOOTSTRAP_DOCKERHUB_MIRROR` covers Docker Hub), and
-`clusterctl init` still fetches Cluster API and cert-manager from `github.com`.
+the pinned version. `hack/stage-bootstrap-artifacts.sh` stages the charts and
+the clusterctl repository, `hack/mirror-bootstrap-images.sh` the images; with
+those and the variables above set, the bootstrap needs no route to the
+internet. See [docs/site-bootstrap/air-gapped.md](../docs/site-bootstrap/air-gapped.md).
 
 ## When a bootstrap fails
 
