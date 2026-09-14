@@ -301,9 +301,10 @@ func drainNode(ctx workflow.Context, input TeardownNodeInput, node db.Node, isCo
 		StartToCloseTimeout: drainNodeActivityTimeout,
 		HeartbeatTimeout:    1 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval: 1 * time.Minute,
-			MaximumInterval: 5 * time.Minute,
-			MaximumAttempts: 3,
+			InitialInterval:    1 * time.Minute,
+			MaximumInterval:    5 * time.Minute,
+			BackoffCoefficient: 2,
+			MaximumAttempts:    0, // drain until pods can leave (PDB); don't fail the teardown
 		},
 	}
 	if err := workflow.ExecuteActivity(
