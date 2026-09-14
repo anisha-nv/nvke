@@ -9,12 +9,9 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
-	"go.temporal.io/api/enums/v1"
-	"go.temporal.io/sdk/client"
 
 	"github.com/NVIDIA/nke/controller/internal/constants"
 	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/temporal/workflows"
 )
 
 func cpNodePoolMaxSurgeEnabled(pools []db.NodePool) bool {
@@ -129,12 +126,11 @@ func (r *reconciler) reconcileNodesNeedingRollout(ctx context.Context, cluster d
 		}
 	}
 
-	teardownInFlight, err := r.handleNodesAlreadyDeleting(ctx, nodesNeedingRollout, "os-version-upgrade", logger)
-	if err != nil {
-		return err
-	}
-	if teardownInFlight {
-		return nil
+	for _, nodeNeedingRollout := range nodesNeedingRollout {
+		if nodeNeedingRollout.Conditions.Deleting.Status == db.ConditionStatusTrue {
+			logger.Info("Skipping node for deletion - node delete already in progress", "nodeID", nodeNeedingRollout.ID, "nodeName", nodeNeedingRollout.Name)
+			return nil
+		}
 	}
 
 	// Select the first node needing rollout for teardown
@@ -163,117 +159,6 @@ func (r *reconciler) reconcileNodesNeedingRollout(ctx context.Context, cluster d
 
 	nodeLogger.Info("Node marked for deletion - will be replaced on next reconcile")
 
-	return nil
-}
-
-// handleNodesAlreadyDeleting reports whether a rollout node already marked
-// Deleting holds the serial teardown slot, so recycling should wait.
-//
-// Recycling tears down one control-plane node at a time, so a teardown in
-// flight must stop us from starting another. But Deleting=True outlives the
-// workflow that set it: TeardownNode marks the node before doing any work and
-// deliberately leaves the condition set when it fails, so treating the
-// condition alone as "in progress" wedges the whole rollout on the first failed
-// teardown — no further node is ever considered, and the cluster never
-// converges without an operator clearing the condition by hand.
-//
-// Only an open TeardownNode workflow counts as in flight. When the workflow is
-// closed (failed, timed out, canceled, or completed without removing the node)
-// and the node is still here, start TeardownNode again with the same
-// AllowCPNode so the rollout retries instead of stalling. USE_EXISTING plus
-// ALLOW_DUPLICATE makes that start idempotent: it attaches to a run that opened
-// since we described it, rather than erroring.
-func (r *reconciler) handleNodesAlreadyDeleting(
-	ctx context.Context,
-	nodesNeedingRollout []db.Node,
-	workflowReason string,
-	logger *slog.Logger,
-) (bool, error) {
-	for _, node := range nodesNeedingRollout {
-		if node.Conditions.Deleting.Status != db.ConditionStatusTrue {
-			continue
-		}
-
-		// Without a Temporal client we cannot tell a running teardown from a
-		// failed one, so keep the conservative behavior and wait.
-		if r.cweTemporalClient == nil {
-			logger.Info("Skipping node for deletion - node delete already in progress", "nodeID", node.ID, "nodeName", node.Name)
-			return true, nil
-		}
-
-		open, err := r.teardownWorkflowOpen(ctx, node)
-		if err != nil {
-			return false, err
-		}
-		if open {
-			logger.Info("Skipping node for deletion - node delete already in progress", "nodeID", node.ID, "nodeName", node.Name)
-			return true, nil
-		}
-
-		logger.Warn("Node is marked for deletion but no TeardownNode workflow is running - restarting teardown",
-			"nodeID", node.ID,
-			"nodeName", node.Name,
-			"deletingMessage", node.Conditions.Deleting.Message,
-		)
-		if err := r.restartTeardownNode(ctx, node, workflowReason, logger); err != nil {
-			return false, err
-		}
-		return true, nil
-	}
-
-	return false, nil
-}
-
-// teardownWorkflowOpen reports whether the node's TeardownNode workflow is
-// still running. A workflow that was never started, or that has closed in any
-// status, is not open.
-func (r *reconciler) teardownWorkflowOpen(ctx context.Context, node db.Node) (bool, error) {
-	workflowID := constants.TeardownNodeWorkflowPrefix + node.ID.String()
-	desc, err := r.cweTemporalClient.DescribeWorkflowExecution(ctx, workflowID, "")
-	if err != nil {
-		if isWorkflowNotFoundError(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("describing teardown workflow for node %s: %w", node.ID, err)
-	}
-
-	return desc.GetWorkflowExecutionInfo().GetCloseTime() == nil, nil
-}
-
-// restartTeardownNode re-drives TeardownNode for a node that is already marked
-// Deleting. It does not touch the node record — the condition is already set —
-// and it starts the workflow directly rather than through the outbox so the
-// retry is deduplicated by Temporal instead of accumulating an outbox row per
-// reconcile while the new run is still being picked up.
-func (r *reconciler) restartTeardownNode(
-	ctx context.Context,
-	node db.Node,
-	workflowReason string,
-	logger *slog.Logger,
-) error {
-	workflowID := constants.TeardownNodeWorkflowPrefix + node.ID.String()
-	options := client.StartWorkflowOptions{
-		ID:                       workflowID,
-		TaskQueue:                r.cfg.TemporalTaskQueue,
-		WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING,
-		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-	}
-	run, err := r.cweTemporalClient.ExecuteWorkflow(ctx, options, workflows.TeardownNode, workflows.TeardownNodeInput{
-		NodeID:                node.ID,
-		SkipRemoveFromCluster: false,
-		AllowCPNode:           true,
-		Reason:                workflowReason,
-	})
-	if err != nil {
-		return fmt.Errorf("restarting TeardownNode workflow for node %s: %w", node.Name, err)
-	}
-
-	logger.Info("Restarted TeardownNode workflow",
-		"nodeID", node.ID,
-		"nodeName", node.Name,
-		"workflowID", run.GetID(),
-		"runID", run.GetRunID(),
-	)
 	return nil
 }
 
