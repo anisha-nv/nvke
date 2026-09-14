@@ -6,6 +6,7 @@ package activities
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +29,10 @@ const (
 	drainGracePeriodSeconds = int64(60)
 	drainPodPollInterval    = time.Second
 	drainPodDeletionTimeout = 100 * time.Second
+
+	// maxNamedRemainingPods bounds how many pods the drain-timeout error names
+	// individually before it summarizes the rest as a count.
+	maxNamedRemainingPods = 10
 )
 
 type DrainKubeNodeInput struct {
@@ -123,11 +128,17 @@ func drainKubeNodePods(
 	pollInterval time.Duration,
 	timeout time.Duration,
 ) error {
+	logger := activity.GetLogger(ctx)
+
 	drainCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
+
+	// The most recent set of drain-eligible pods, named in the timeout error so a
+	// drain that never converges says which pods it was still waiting on.
+	var remaining []corev1.Pod
 
 	for {
 		activity.RecordHeartbeat(ctx)
@@ -144,6 +155,7 @@ func drainKubeNodePods(
 		if len(pods) == 0 {
 			return nil
 		}
+		remaining = pods
 
 		for i := range pods {
 			pod := &pods[i]
@@ -161,7 +173,20 @@ func drainKubeNodePods(
 				},
 			}
 			if err := tenantClient.SubResource("eviction").Create(drainCtx, pod, eviction); err != nil {
-				if apierrors.IsNotFound(err) || apierrors.IsTooManyRequests(err) {
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				if apierrors.IsTooManyRequests(err) {
+					// A PodDisruptionBudget is refusing the eviction. Retried on
+					// the next poll, but name the pod: this is the usual reason a
+					// drain times out, and the API server does not say which
+					// budget blocked it anywhere else we can see.
+					logger.Info("Pod eviction rejected, retrying",
+						"node", nodeName,
+						"namespace", pod.Namespace,
+						"pod", pod.Name,
+						"reason", err.Error(),
+					)
 					continue
 				}
 				return fmt.Errorf("failed to evict pod %s/%s: %w", pod.Namespace, pod.Name, err)
@@ -173,10 +198,27 @@ func drainKubeNodePods(
 			if err := ctx.Err(); err != nil {
 				return fmt.Errorf("context canceled while draining Kubernetes node %s: %w", nodeName, err)
 			}
-			return fmt.Errorf("timed out after %s waiting for pods to leave Kubernetes node %s", timeout, nodeName)
+			return fmt.Errorf("timed out after %s waiting for %d pod(s) to leave Kubernetes node %s: %s",
+				timeout, len(remaining), nodeName, formatPodRefs(remaining))
 		case <-ticker.C:
 		}
 	}
+}
+
+// formatPodRefs renders pods as namespace/name for an error message, capped so
+// that a node with hundreds of stuck pods does not produce an error nobody can
+// read (or that Temporal truncates).
+func formatPodRefs(pods []corev1.Pod) string {
+	refs := make([]string, 0, min(len(pods), maxNamedRemainingPods)+1)
+	for i := range pods {
+		if i == maxNamedRemainingPods {
+			refs = append(refs, fmt.Sprintf("and %d more", len(pods)-maxNamedRemainingPods))
+			break
+		}
+		refs = append(refs, pods[i].Namespace+"/"+pods[i].Name)
+	}
+
+	return strings.Join(refs, ", ")
 }
 
 func podsEligibleForEviction(pods []corev1.Pod) ([]corev1.Pod, error) {
