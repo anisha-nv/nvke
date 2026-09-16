@@ -3,10 +3,10 @@
 
 PACKER      ?= packer
 SSH_DIR     := $(CURDIR)/.ssh
-ARTIFACTS   := $(CURDIR)/artifacts
-# Deliberately separate from ARTIFACTS: the FDE/non-FDE "file" provisioner
-# uploads ARTIFACTS/ to the guest wholesale (it's meant to hold only
-# fetch-artifacts.sh's nke-agent/spire-agent downloads). The installer ISO
+ARTIFACTS_DIR ?= $(CURDIR)/artifacts/$(ARCH)
+# Deliberately separate from ARTIFACTS_DIR: the FDE/non-FDE "file" provisioner
+# uploads ARTIFACTS_DIR/ to the guest wholesale (it's meant to hold only
+# fetch-artifacts.sh's binaries and packages). The installer ISO
 # (GBs, cached across builds) must never land in that directory, or it gets
 # uploaded too -- this is exactly what caused an FDE build to try uploading
 # 5.8GB instead of ~120MB and fail with a misleading "Disk quota exceeded".
@@ -19,6 +19,7 @@ PKR_FILE_FDE := $(CURDIR)/nke-node-fde.pkr.hcl
 PKR_FILE_NON_FDE := $(CURDIR)/nke-node-non-fde.pkr.hcl
 
 LUKS_PASSPHRASE ?= changeit
+REQUIRE_ACCELERATION ?= 0
 # Label applied to the root filesystem. Cloud-image importers can use this
 # stable identifier instead of depending on a partition or device path.
 ROOT_FS_LABEL ?= cloudimg-rootfs
@@ -116,7 +117,15 @@ CPUS ?= 4
 # nke-node-fde.pkr.hcl.
 BOOT_WAIT ?= $(if $(filter kvm,$(ACCELERATOR)),10s,30s)
 
-.PHONY: os-image-fde os-image-non-fde init-fde init-non-fde ssh-key prepare-installer-iso clean check-deps
+# Firmware and acceleration checks share the boot harness selection, including
+# QEMU's firmware directory on hosts without /usr/share/OVMF or AAVMF.
+PACKER_BUILD = ARCH=$(ARCH) ACCELERATOR=$(ACCELERATOR) REQUIRE_ACCELERATION=$(REQUIRE_ACCELERATION) \
+	bash -ec '. ./scripts/qemu-arch.sh; nke_qemu_env "$$ARCH"; \
+	packer="$$1"; shift; exec "$$packer" build -var "efi_firmware_code=$${OVMF_CODE:-$$EFI_CODE_DEFAULT}" \
+	-var "efi_firmware_vars=$${OVMF_VARS_TEMPLATE:-$$EFI_VARS_DEFAULT}" "$$@"' \
+	bash $(PACKER)
+
+.PHONY: os-image-fde os-image-non-fde init-fde init-non-fde ssh-key prepare-installer-iso clean check-deps check-acceleration
 
 ssh-key: $(SSH_DIR)/id_ed25519
 
@@ -138,7 +147,15 @@ prepare-installer-iso:
 	mkdir -p $(ISO_CACHE)
 	ISO_URL=$(ISO_URL) ISO_CHECKSUM=$(ISO_CHECKSUM) OUT_DIR=$(ISO_CACHE) ./scripts/prepare-installer-iso.sh
 
+check-acceleration:
+	@ARCH=$(ARCH) ACCELERATOR=$(ACCELERATOR) REQUIRE_ACCELERATION=$(REQUIRE_ACCELERATION) bash -ec '\
+		. ./scripts/qemu-arch.sh; nke_qemu_env "$$ARCH"'
+
 check-deps:
+	@test "$$(uname -s)" = Linux && test "$$(uname -m)" = "$(ARCH_UNAME)" || { \
+		echo "Image packages require a matching-architecture Linux host ($(ARCH_UNAME))." >&2; \
+		exit 1; \
+	}
 	@command -v go >/dev/null 2>&1 || { \
 		echo "go is required to build nke-agent and the pinned nfpm" >&2; \
 		exit 1; \
@@ -152,13 +169,12 @@ test: ## Check artifact staging without downloading or building bundles.
 # an LVM-on-LUKS layout via autoinstall, then provisions nke-agent/spire-agent,
 # plus TPM2 binding scaffolding deferred to first boot. See
 # ../docs/full-disk-encryption.md.
-os-image-fde: check-deps ssh-key init-fde prepare-installer-iso
-	mkdir -p $(ARTIFACTS) $(BUILD_LOGS)
+os-image-fde: check-deps check-acceleration ssh-key init-fde prepare-installer-iso
+	mkdir -p $(ARTIFACTS_DIR) $(BUILD_LOGS)
 	@if [ "$(ACCELERATOR)" = "tcg" ]; then \
 		echo "no usable /dev/kvm: building with software emulation, which is far slower"; \
 	fi
-	PKR_VAR_luks_passphrase=$(LUKS_PASSPHRASE) \
-	$(PACKER) build \
+	PKR_VAR_luks_passphrase=$(LUKS_PASSPHRASE) $(PACKER_BUILD) \
 		-var accelerator=$(ACCELERATOR) \
 		-var cpu_model=$(CPU_MODEL) \
 		-var cpus=$(CPUS) \
@@ -167,16 +183,17 @@ os-image-fde: check-deps ssh-key init-fde prepare-installer-iso
 		-var iso_url=$(ISO_URL) \
 		-var iso_checksum=$(ISO_CHECKSUM) \
 		-var root_fs_label=$(ROOT_FS_LABEL) \
+		-var artifacts_dir=$(ARTIFACTS_DIR) \
 		$(PKR_FILE_FDE)
 
 # Non-FDE variant: LVM-backed ext4 without LUKS. See
 # nke-node-non-fde.pkr.hcl.
-os-image-non-fde: check-deps ssh-key init-non-fde prepare-installer-iso
-	mkdir -p $(ARTIFACTS) $(BUILD_LOGS)
+os-image-non-fde: check-deps check-acceleration ssh-key init-non-fde prepare-installer-iso
+	mkdir -p $(ARTIFACTS_DIR) $(BUILD_LOGS)
 	@if [ "$(ACCELERATOR)" = "tcg" ]; then \
 		echo "no usable /dev/kvm: building with software emulation, which is far slower"; \
 	fi
-	$(PACKER) build \
+	$(PACKER_BUILD) \
 		-var accelerator=$(ACCELERATOR) \
 		-var cpu_model=$(CPU_MODEL) \
 		-var cpus=$(CPUS) \
@@ -185,7 +202,8 @@ os-image-non-fde: check-deps ssh-key init-non-fde prepare-installer-iso
 		-var iso_url=$(ISO_URL) \
 		-var iso_checksum=$(ISO_CHECKSUM) \
 		-var root_fs_label=$(ROOT_FS_LABEL) \
+		-var artifacts_dir=$(ARTIFACTS_DIR) \
 		$(PKR_FILE_NON_FDE)
 
 clean:
-	rm -rf $(CURDIR)/output-fde $(CURDIR)/output-non-fde $(ARTIFACTS) $(ISO_CACHE) $(BUILD_LOGS)
+	rm -rf $(CURDIR)/output-fde $(CURDIR)/output-non-fde $(ARTIFACTS_DIR) $(ISO_CACHE) $(BUILD_LOGS)

@@ -64,7 +64,7 @@ variable "root_fs_label" {
 variable "accelerator" {
   type        = string
   default     = "kvm"
-  description = "QEMU accelerator: kvm (hardware) or tcg (software emulation)."
+  description = "QEMU accelerator: kvm (Linux) or tcg (software emulation)."
 }
 
 variable "cpu_model" {
@@ -109,8 +109,26 @@ variable "boot_wait" {
   description = "Delay before boot_command starts typing into GRUB. Comfortably under 300s (the patched GRUB timeout) but past however long BIOS+GRUB take to reach the menu; raise under tcg."
 }
 
+variable "artifacts_dir" {
+  type        = string
+  default     = ""
+  description = "Host directory containing prepared build artifacts."
+}
+
+variable "efi_firmware_code" {
+  type        = string
+  default     = ""
+  description = "UEFI firmware code blob."
+}
+
+variable "efi_firmware_vars" {
+  type        = string
+  default     = ""
+  description = "UEFI firmware writable variables template."
+}
+
 locals {
-  artifacts = "${path.root}/artifacts"
+  artifacts = coalesce(var.artifacts_dir, "${path.root}/artifacts/${local.arch}")
   ssh_dir   = "${path.root}/.ssh"
   # Deliberately NOT under local.artifacts: the "file" provisioner below
   # uploads local.artifacts/ to the guest wholesale, and this is a
@@ -123,7 +141,7 @@ locals {
   iso_path  = "${local.iso_cache}/${basename(var.iso_url)}.patched.iso"
   # Derived from iso_url rather than a separate variable, so the output
   # filename can't drift out of sync with the ISO actually being built.
-  iso_name_parts = regex("ubuntu-([0-9.]+)-live-server-([a-z0-9_]+)\\.iso$", var.iso_url)
+  iso_name_parts = regex("ubuntu-([0-9.]+)-live-server-(amd64|arm64)\\.iso$", var.iso_url)
   ubuntu_version = local.iso_name_parts[0]
   arch           = local.iso_name_parts[1]
   # Ubuntu's NVIDIA-tuned kernel flavor: linux-nvidia-64k on arm64 (64k page
@@ -134,10 +152,10 @@ locals {
   # ever runs the guest arch matching its own binary, "virt" is ARM's
   # equivalent of q35/i440fx, and AAVMF is arm64's UEFI firmware, not an
   # interchangeable drop-in for OVMF.
-  qemu_binary       = local.arch == "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64"
-  machine_type      = local.arch == "arm64" ? "virt" : "q35"
-  efi_firmware_code = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_CODE.fd" : "/usr/share/OVMF/OVMF_CODE_4M.fd"
-  efi_firmware_vars = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_VARS.fd" : "/usr/share/OVMF/OVMF_VARS_4M.fd"
+  qemu_binary      = local.arch == "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64"
+  machine_type     = local.arch == "arm64" ? "virt" : "q35"
+  default_efi_code = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_CODE.fd" : "/usr/share/OVMF/OVMF_CODE_4M.fd"
+  default_efi_vars = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_VARS.fd" : "/usr/share/OVMF/OVMF_VARS_4M.fd"
   # Also not under local.artifacts, for the same reason. CI has no way to
   # inspect a stuck build interactively (no VNC/monitor access), so this
   # captures the guest's own boot/install console output to a file the
@@ -188,8 +206,8 @@ source "qemu" "nke-fde" {
   # See the same setting in nke-node-non-fde.pkr.hcl.
   disk_cache = "unsafe"
 
-  efi_firmware_code = local.efi_firmware_code
-  efi_firmware_vars = local.efi_firmware_vars
+  efi_firmware_code = coalesce(var.efi_firmware_code, local.default_efi_code)
+  efi_firmware_vars = coalesce(var.efi_firmware_vars, local.default_efi_vars)
   efi_boot          = true
 
   http_content = {
@@ -232,9 +250,9 @@ source "qemu" "nke-fde" {
     ]
   )
 
-  ssh_username           = "ubuntu"
-  ssh_private_key_file   = "${local.ssh_dir}/id_ed25519"
-  ssh_timeout            = var.ssh_timeout
+  ssh_username         = "ubuntu"
+  ssh_private_key_file = "${local.ssh_dir}/id_ed25519"
+  ssh_timeout          = var.ssh_timeout
   # See the same setting in nke-node-non-fde.pkr.hcl.
   ssh_handshake_attempts = 10000
 
@@ -261,17 +279,17 @@ build {
   }
 
   provisioner "shell" {
-    inline = ["mkdir -p /tmp/nke-image/luks"]
+    inline = ["mkdir -p /var/tmp/nke-image/luks"]
   }
 
   provisioner "file" {
     source      = "${local.artifacts}/"
-    destination = "/tmp/nke-image/"
+    destination = "/var/tmp/nke-image/"
   }
 
   provisioner "file" {
     source      = "${path.root}/../files/luks/"
-    destination = "/tmp/nke-image/luks/"
+    destination = "/var/tmp/nke-image/luks/"
   }
 
   # configure-fde.sh runs before provision.sh: provision.sh's final cleanup
