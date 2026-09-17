@@ -21,12 +21,23 @@ EOF
 chmod +x "${workdir}/qemu"
 
 QEMU_BIN="${workdir}/qemu"
+# Exercise firmware search with controlled candidates, independent of OVMF/AAVMF
+# installed on the host. An existing distro candidate must beat QEMU's fallback.
+touch "${workdir}/distro-code.fd"
+[[ "$(nke_find_firmware "$QEMU_BIN" edk2-aarch64-code.fd "${workdir}/distro-code.fd")" == "${workdir}/distro-code.fd" ]]
+[[ "$(nke_find_firmware "$QEMU_BIN" edk2-aarch64-code.fd "${workdir}/missing.fd")" == "${workdir}/firmware/edk2-aarch64-code.fd" ]]
+if nke_find_firmware "$QEMU_BIN" missing.fd "${workdir}/missing.fd" >/dev/null; then
+  echo 'missing firmware unexpectedly found' >&2
+  exit 1
+fi
+
 unset OVMF_CODE OVMF_VARS_TEMPLATE
 uname() { case "$1" in -m) printf '%s\n' arm64 ;; -s) printf '%s\n' Darwin ;; esac; }
 sysctl() { printf '%s\n' 1; }
 nke_qemu_env arm64
-[[ "${EFI_CODE_DEFAULT}" == "${workdir}/firmware/edk2-aarch64-code.fd" ]]
-[[ "${EFI_VARS_DEFAULT}" == "${workdir}/firmware/edk2-arm-vars.fd" ]]
+# Architecture selection may use the host's distro firmware or our QEMU fixture.
+[[ -f "${EFI_CODE_DEFAULT}" ]]
+[[ -f "${EFI_VARS_DEFAULT}" ]]
 [[ "${TPM_DEVICE}" == tpm-tis-device ]]
 [[ "${ACCEL_ARGS[*]}" == '-accel hvf' ]]
 [[ "${TPM_DEVICE_SPEC}" == 'tpm-tis-device,tpmdev=tpm0,ppi=off' ]]
