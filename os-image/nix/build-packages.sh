@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Included by the flake's writeShellApplication; arch, launcher and guest_script
+# are supplied by Nix, along with every host command used below.
+set -euo pipefail
+source_dir=$PWD
+artifacts=
+while (($#)); do
+  case "$1" in
+    --source) source_dir=${2:?--source requires a path}; shift 2 ;;
+    --output) artifacts=${2:?--output requires a path}; shift 2 ;;
+    --help|-h) echo 'Usage: build-packages --output PATH [--source CHECKOUT]'; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+: "${artifacts:?--output is required}" "${arch:?}" "${launcher:?}" "${guest_script:?}"
+repo=$(git -C "$source_dir" rev-parse --show-toplevel)
+mkdir -p "$artifacts"
+artifacts=$(cd "$artifacts" && pwd -P)
+state=${NKE_BUILDER_STATE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/nke/builders/$arch}
+mkdir -p "$state/runtime"
+state=$(cd "$state" && pwd -P)
+exec 9>"$state/build.lock"
+flock -n 9 || { echo "Builder state is already in use: $state" >&2; exit 1; }
+key=$state/client-key
+[[ -e "$key" ]] || ssh-keygen -q -t ed25519 -N '' -f "$key"
+export NKE_BUILDER_STATE_DIR=$state NKE_BUILDER_SSH_KEY=$key.pub
+export NIX_DISK_IMAGE=$state/root.qcow2 TMPDIR=$state/runtime USE_TMPDIR=1
+# Stable, separate default ports for each architecture; override for other instances.
+if [[ "$arch" == arm64 ]]; then default_port=2222; else default_port=2223; fi
+export SSH_PORT=${SSH_PORT:-$default_port}
+unset ACCELERATOR
+if [[ -n "${NKE_BUILDER_ACCELERATOR:-}" ]]; then export ACCELERATOR=$NKE_BUILDER_ACCELERATOR; fi
+run_id=$(date +%s)-$$
+log=$state/console-$run_id.log
+ready=0
+cleanup() {
+  status=$?
+  trap - EXIT INT TERM
+  if [[ "$ready" == 1 ]]; then
+    timeout 15 nke-builder-ssh root@127.0.0.1 poweroff >/dev/null 2>&1 || true
+  fi
+  for ((i=0; i<60; i++)); do
+    kill -0 "$vm_pid" 2>/dev/null || break
+    sleep 1
+  done
+  if kill -0 "$vm_pid" 2>/dev/null; then
+    echo "Stopping unresponsive builder; disk retained at $state" >&2
+    kill -TERM -- "-$vm_pid" 2>/dev/null || true
+  fi
+  wait "$vm_pid" 2>/dev/null || true
+  exit "$status"
+}
+# Job control gives the launcher and its QEMU child their own process group.
+set -m
+"$launcher" </dev/null >"$log" 2>&1 9>&- &
+vm_pid=$!
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+echo "Builder console: $log"
+deadline=$((SECONDS + ${NKE_BUILDER_BOOT_TIMEOUT:-900}))
+until nke-builder-ssh root@127.0.0.1 true >/dev/null 2>&1; do
+  if ! kill -0 "$vm_pid" 2>/dev/null || ((SECONDS >= deadline)); then
+    echo "Builder failed to become ready; see $log" >&2
+    exit 1
+  fi
+  sleep 2
+done
+ready=1
+work=/root/nke-builds/$run_id
+nke-builder-ssh root@127.0.0.1 "mkdir -p $work/src $work/artifacts"
+# Skip deleted tracked paths and ignored host outputs; preserve unusual filenames.
+while IFS= read -r -d '' file; do
+  if [[ -e "$repo/$file" || -L "$repo/$file" ]]; then printf '%s\0' "$file"; fi
+done < <(git -C "$repo" ls-files -z --cached --others --exclude-standard) |
+  rsync -a --from0 --files-from=- -e nke-builder-ssh "$repo/" "root@127.0.0.1:$work/src/"
+version=${VERSION:-$(git -C "$repo" describe --match 'agent/v*' --tags --always --dirty)}
+# Send shell-quoted assignments over SSH stdin, including optional credentials.
+{
+  printf 'export ARCH=%q ARTIFACTS_DIR=%q REPO_ROOT=%q VERSION=%q\n' \
+    "$arch" "$work/artifacts" "$work/src" "${version#agent/}"
+  for name in K8S_VERSIONS CALICO_VERSIONS OVN_STREAMS NGC_API_KEY SPIRE_VERSION TPM_PLUGIN_VERSION; do
+    if [[ -v "$name" ]]; then printf 'export %s=%q\n' "$name" "${!name}"; fi
+  done
+  cat "$guest_script"
+} | nke-builder-ssh root@127.0.0.1 'bash -s'
+rsync -a --checksum -e nke-builder-ssh "root@127.0.0.1:$work/artifacts/" "$artifacts/"
+echo "Packages returned to $artifacts; guest work retained at $work"

@@ -31,12 +31,15 @@ if [[ "$2" == */agent ]]; then
 fi
 ''')
                 make.chmod(0o755)
+                uname = tools / "uname"
+                uname.write_text('#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo "$ARCH";; esac\n')
+                uname.chmod(0o755)
                 artifacts = root / "artifacts"
                 result = subprocess.run(
                     ["bash", str(script)],
                     env={**os.environ, "PATH": f"{tools}:{os.environ['PATH']}",
                          "ARCH": arch, "ARTIFACTS_DIR": str(artifacts),
-                         "NGC_API_KEY": ""},
+                         "NGC_API_KEY": "", "NKE_PACKAGE_BUILDER": "host"},
                     capture_output=True, text=True, check=False,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)

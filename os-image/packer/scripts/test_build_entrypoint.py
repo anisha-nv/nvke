@@ -4,6 +4,7 @@
 """Exercise Make's Packer argv and early failures without downloading or booting."""
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -68,13 +69,63 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
         self.assertIn("cannot be hardware accelerated", result.stderr)
         self.assertFalse(Path(self.env['PACKER_ARGS']).exists())
 
-    def test_package_preflight_rejects_macos_and_mismatched_linux(self):
+    def test_package_preflight_selects_vm_for_macos_and_mismatched_linux(self):
+        self.script("nix", "#!/bin/sh\nexit 0\n")
         for system, arch in (("Darwin", "arm64"), ("Linux", "x86_64")):
             with self.subTest(system=system, arch=arch):
                 self.script("uname", f'#!/bin/sh\ncase "$1" in -m) echo {arch};; -s) echo {system};; esac\n')
                 result = self.make("check-deps")
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn("matching-architecture Linux host", result.stderr)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("package builder: nix", result.stdout)
+
+    def test_explicit_host_builder_rejects_mismatched_linux(self):
+        self.script("uname", '#!/bin/sh\ncase "$1" in -m) echo x86_64;; -s) echo Linux;; esac\n')
+        result = self.make("check-deps", "NKE_PACKAGE_BUILDER=host")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("matching Linux host", result.stderr)
+
+    def test_missing_nix_explains_setup_but_native_build_does_not_require_it(self):
+        bash = shutil.which("bash")
+        self.script("go", "#!/bin/sh\nexit 0\n")
+        for mode, expected_status in (("nix", 1), ("auto", 0)):
+            with self.subTest(mode=mode):
+                result = subprocess.run(
+                    [bash, str(PACKER_DIR / "scripts/package-builder.sh"), "--check"],
+                    env=self.env | {"PATH": str(self.root), "ARCH": "arm64",
+                                    "NKE_PACKAGE_BUILDER": mode},
+                    text=True, capture_output=True,
+                )
+                self.assertEqual(result.returncode, expected_status, result.stderr)
+                if mode == "nix":
+                    self.assertIn("nix is required", result.stderr)
+                    self.assertIn("Install Nix", result.stderr)
+                    self.assertIn("os-image/nix/README.md", result.stderr)
+                else:
+                    self.assertIn("package builder: host", result.stdout)
+
+    def test_unknown_package_builder_fails_before_packer(self):
+        result = self.make("check-deps", "NKE_PACKAGE_BUILDER=invalid")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NKE_PACKAGE_BUILDER", result.stderr)
+
+    def test_vm_adapter_invokes_nix_app_with_checkout_and_output(self):
+        self.script("nix", '''#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
+''')
+        artifacts = self.root / "artifacts with spaces"
+        result = subprocess.run(
+            ["bash", str(PACKER_DIR / "scripts/package-builder.sh")],
+            env=self.env | {"ARCH": "arm64", "NKE_PACKAGE_BUILDER": "nix",
+                            "ARTIFACTS_DIR": str(artifacts)},
+            text=True, capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(Path(self.env["PACKER_ARGS"]).read_text()), [
+            "run", f"{PACKER_DIR.parent}#build-packages-arm64", "--",
+            "--source", str(PACKER_DIR.parent.parent), "--output", str(artifacts),
+        ])
 
 
 if __name__ == "__main__":

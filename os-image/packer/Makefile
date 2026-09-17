@@ -20,6 +20,7 @@ PKR_FILE_NON_FDE := $(CURDIR)/nke-node-non-fde.pkr.hcl
 
 LUKS_PASSPHRASE ?= changeit
 REQUIRE_ACCELERATION ?= 0
+export NKE_PACKAGE_BUILDER ?= auto
 # Label applied to the root filesystem. Cloud-image importers can use this
 # stable identifier instead of depending on a partition or device path.
 ROOT_FS_LABEL ?= cloudimg-rootfs
@@ -152,14 +153,7 @@ check-acceleration:
 		. ./scripts/qemu-arch.sh; nke_qemu_env "$$ARCH"'
 
 check-deps:
-	@test "$$(uname -s)" = Linux && test "$$(uname -m)" = "$(ARCH_UNAME)" || { \
-		echo "Image packages require a matching-architecture Linux host ($(ARCH_UNAME))." >&2; \
-		exit 1; \
-	}
-	@command -v go >/dev/null 2>&1 || { \
-		echo "go is required to build nke-agent and the pinned nfpm" >&2; \
-		exit 1; \
-	}
+	@ARCH=$(ARCH) bash ./scripts/package-builder.sh --check
 
 .PHONY: test
 test: ## Check artifact staging without downloading or building bundles.

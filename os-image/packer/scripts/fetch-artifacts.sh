@@ -9,6 +9,10 @@
 
 set -euo pipefail
 
+if [[ "${NKE_BUILD_IN_PLACE:-0}" != 1 ]]; then
+  exec bash "$(dirname "${BASH_SOURCE[0]}")/package-builder.sh"
+fi
+
 ARTIFACTS_DIR="${ARTIFACTS_DIR:?ARTIFACTS_DIR is required}"
 # Set by the shell-local provisioner from local.arch (nke-node-fde.pkr.hcl /
 # nke-node-non-fde.pkr.hcl), which is itself derived from the ISO filename --
