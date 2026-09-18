@@ -128,8 +128,9 @@ without booting a VM.
 
 The build checks package-builder prerequisites before starting Packer — Go for
 host builds, Nix for VM builds; `make -C os-image/packer check-deps ARCH=arm64`
-runs that check on its own. The agent package uses nfpm, pinned in
-`make/tool-versions.mk`.
+runs that check on its own. On Apple Silicon the check also bootstraps a
+temporary Linux builder when needed; see [builder setup](nix/README.md). The
+agent package uses nfpm, pinned in `make/tool-versions.mk`.
 
 `nke-agent` is built as a Debian package from this checkout's `agent/` source
 using `make -C agent deb-<arch>` and installed with dpkg during provisioning.

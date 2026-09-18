@@ -30,14 +30,27 @@ or enable the equivalent setting in your existing NixOS/nix-darwin configuration
 experimental-features = nix-command flakes
 ```
 
-**On macOS or a different CPU architecture, one more setup step is required:**
-Nix needs access to a Linux builder matching the target architecture to prepare
-the VM, unless all its build outputs are available in a binary cache. A fresh
-Nix installation alone does not configure that builder. See Nix's
-[remote builder setup](https://nix.dev/manual/nix/stable/advanced-topics/distributed-builds).
-On a nix-darwin Mac, `nix.linux-builder` is one way to get a matching
-aarch64-linux builder without a separate machine. QEMU's software emulation
-applies when running the prepared VM.
+**On macOS, the build command bootstraps its own Linux builder when needed.**
+Nix first checks the local store and configured binary caches. If Linux builds
+remain, the command downloads a standard upstream NixOS guest, starts it,
+uses it to prepare the NKE package VM, and shuts it down before package building.
+Repeated runs skip that bootstrap VM when the required outputs are already built
+or cached. No permanent builder service or system configuration is installed.
+
+That upstream guest must come from the binary cache: no Linux builder exists
+yet to build it, so a nixpkgs pin whose `darwin.linux-builder` is uncached
+cannot bootstrap. Its host key is nixpkgs' public test key, so it identifies the
+guest type but does not authenticate the VM against a local process squatting
+its port — the same trade-off as upstream `darwin.linux-builder`.
+
+The initial download needs access to the public Nix cache. On multi-user Nix,
+your account must be a **trusted Nix user** to select the temporary builder.
+Configure this through your existing Nix/nix-darwin installation; the command
+checks permission before starting a VM and does not change it automatically.
+
+Linux hosts retain their existing behavior. A mismatched Linux host still needs
+a matching Linux Nix builder or cached custom guest outputs; automatic bootstrap
+currently applies to Apple Silicon macOS.
 
 ### 2. Build packages
 
@@ -60,10 +73,12 @@ To check the prerequisites without building anything:
 make -C os-image/packer check-deps ARCH=arm64
 ```
 
-In Nix mode this realizes the VM runner (`nix build --no-link
-./os-image#builder-<arch>`), which may download the guest closure. Without a
-matching Linux builder and without a cache hit it fails right there, with Nix's
-own error, rather than part-way through an image bake.
+In Nix mode this realizes the VM runner, which may download the guest closure.
+Linux hosts run `nix build --no-link ./os-image#builder-<arch>` and fail right
+there, with Nix's own error, when there is no matching Linux builder and no
+cache hit. macOS runs `nix run ./os-image#build-packages-<arch> -- --check`,
+which bootstraps a temporary Linux builder if the outputs are missing, then
+stops without building packages.
 
 ### 3. Build the OS image
 

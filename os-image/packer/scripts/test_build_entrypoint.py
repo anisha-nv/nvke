@@ -200,12 +200,20 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
 import json, os, sys
 from pathlib import Path
 Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
-sys.exit(1 if sys.argv[1] == "build" else 0)
+sys.exit(1 if sys.argv[1] in ("build", "run") else 0)
 ''')
-        result = self.make("check-deps", "NKE_PACKAGE_BUILDER=nix")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(json.loads(Path(self.env["PACKER_ARGS"]).read_text()),
-                         ["build", "--no-link", f"{PACKER_DIR.parent}#builder-arm64"])
+        # macOS defers to the entrypoint, which can bootstrap a Linux builder.
+        cases = (
+            ("Linux", ["build", "--no-link", f"{PACKER_DIR.parent}#builder-arm64"]),
+            ("Darwin", ["run", f"{PACKER_DIR.parent}#build-packages-arm64", "--", "--check"]),
+        )
+        for system, expected in cases:
+            with self.subTest(system=system):
+                machine = "arm64" if system == "Darwin" else "aarch64"
+                self.script("uname", f'#!/bin/sh\ncase "$1" in -m) echo {machine};; -s) echo {system};; esac\n')
+                result = self.make("check-deps", "NKE_PACKAGE_BUILDER=nix")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(json.loads(Path(self.env["PACKER_ARGS"]).read_text()), expected)
 
     def test_unknown_package_builder_fails_before_packer(self):
         result = self.make("check-deps", "NKE_PACKAGE_BUILDER=invalid")
