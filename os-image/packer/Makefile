@@ -41,6 +41,7 @@ EXPECTED_SOURCE_COMMIT ?=
 export SOURCE_ROOT EXPECTED_SOURCE_COMMIT PYTHON
 
 LUKS_PASSPHRASE ?= changeit
+REQUIRE_ACCELERATION ?= 0
 # Label applied to the root filesystem. Cloud-image importers can use this
 # stable identifier instead of depending on a partition or device path.
 ROOT_FS_LABEL ?= cloudimg-rootfs
@@ -138,7 +139,18 @@ CPUS ?= 4
 # nke-node-fde.pkr.hcl.
 BOOT_WAIT ?= $(if $(filter kvm,$(ACCELERATOR)),10s,30s)
 
-.PHONY: os-image-fde os-image-non-fde preflight init-fde init-non-fde ssh-key prepare-installer-iso prepare-artifacts clean check-deps check-source collect-qcow2-fde collect-qcow2-non-fde
+# Firmware and acceleration checks share the boot harness selection, including
+# QEMU's firmware directory on hosts without /usr/share/OVMF or AAVMF. The
+# wrapper receives the whole `packer build ... TEMPLATE` command and inserts the
+# firmware -var flags in front of the template, which Packer requires last.
+PACKER_BUILD = ARCH=$(ARCH) ACCELERATOR=$(ACCELERATOR) REQUIRE_ACCELERATION=$(REQUIRE_ACCELERATION) \
+	bash -ec '. ./scripts/qemu-arch.sh; nke_qemu_env "$$ARCH"; \
+	template=$${@: -1}; set -- "$${@:1:$$\#-1}"; \
+	exec "$$@" -var "efi_firmware_code=$${OVMF_CODE:-$$EFI_CODE_DEFAULT}" \
+	-var "efi_firmware_vars=$${OVMF_VARS_TEMPLATE:-$$EFI_VARS_DEFAULT}" "$$template"' \
+	bash $(PACKER) build
+
+.PHONY: os-image-fde os-image-non-fde preflight init-fde init-non-fde ssh-key prepare-installer-iso prepare-artifacts clean check-deps check-source collect-qcow2-fde collect-qcow2-non-fde check-acceleration
 
 ssh-key: preflight $(SSH_DIR)/id_ed25519
 
@@ -161,7 +173,7 @@ check-source:
 		exit 1; \
 	fi
 
-preflight: check-source check-deps
+preflight: check-source check-deps check-acceleration
 
 init-fde: preflight
 	$(PACKER) init $(PKR_FILE_FDE)
@@ -176,6 +188,10 @@ init-non-fde: preflight
 prepare-installer-iso: preflight
 	mkdir -p $(ISO_CACHE)
 	ISO_URL=$(ISO_URL) ISO_CHECKSUM=$(ISO_CHECKSUM) OUT_DIR=$(ISO_CACHE) ./scripts/prepare-installer-iso.sh
+
+check-acceleration:
+	@ARCH=$(ARCH) ACCELERATOR=$(ACCELERATOR) REQUIRE_ACCELERATION=$(REQUIRE_ACCELERATION) bash -ec '\
+		. ./scripts/qemu-arch.sh; nke_qemu_env "$$ARCH"'
 
 # Stage the source-built packages before Packer starts the VM. Keeping this in
 # Make preserves the current workflow and leaves Packer responsible only for
@@ -233,6 +249,10 @@ prepare-artifacts: preflight
 	trap - 0 1 2 15
 
 check-deps:
+	@test "$$(uname -s)" = Linux && test "$$(uname -m)" = "$(ARCH_UNAME)" || { \
+		echo "Image packages require a matching-architecture Linux host ($(ARCH_UNAME))." >&2; \
+		exit 1; \
+	}
 	@command -v go >/dev/null 2>&1 || { \
 		echo "go is required to build nke-agent and the pinned nfpm" >&2; \
 		exit 1; \
@@ -333,8 +353,7 @@ os-image-fde: ssh-key init-fde prepare-installer-iso prepare-artifacts
 	@if [ "$(ACCELERATOR)" = "tcg" ]; then \
 		echo "no usable /dev/kvm: building with software emulation, which is far slower"; \
 	fi
-	PKR_VAR_luks_passphrase=$(LUKS_PASSPHRASE) \
-	$(PACKER) build \
+	PKR_VAR_luks_passphrase=$(LUKS_PASSPHRASE) $(PACKER_BUILD) \
 		-var accelerator=$(ACCELERATOR) \
 		-var cpu_model=$(CPU_MODEL) \
 		-var cpus=$(CPUS) \
@@ -343,6 +362,7 @@ os-image-fde: ssh-key init-fde prepare-installer-iso prepare-artifacts
 		-var iso_url=$(ISO_URL) \
 		-var iso_checksum=$(ISO_CHECKSUM) \
 		-var root_fs_label=$(ROOT_FS_LABEL) \
+		-var artifacts_dir=$(ARTIFACTS) \
 		$(PKR_FILE_FDE)
 
 # Non-FDE variant: LVM-backed ext4 without LUKS. See
@@ -352,7 +372,7 @@ os-image-non-fde: ssh-key init-non-fde prepare-installer-iso prepare-artifacts
 	@if [ "$(ACCELERATOR)" = "tcg" ]; then \
 		echo "no usable /dev/kvm: building with software emulation, which is far slower"; \
 	fi
-	$(PACKER) build \
+	$(PACKER_BUILD) \
 		-var accelerator=$(ACCELERATOR) \
 		-var cpu_model=$(CPU_MODEL) \
 		-var cpus=$(CPUS) \
@@ -361,6 +381,7 @@ os-image-non-fde: ssh-key init-non-fde prepare-installer-iso prepare-artifacts
 		-var iso_url=$(ISO_URL) \
 		-var iso_checksum=$(ISO_CHECKSUM) \
 		-var root_fs_label=$(ROOT_FS_LABEL) \
+		-var artifacts_dir=$(ARTIFACTS) \
 		$(PKR_FILE_NON_FDE)
 
 clean:

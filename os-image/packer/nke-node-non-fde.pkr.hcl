@@ -48,7 +48,7 @@ variable "root_fs_label" {
 variable "accelerator" {
   type        = string
   default     = "kvm"
-  description = "QEMU accelerator: kvm (hardware) or tcg (software emulation)."
+  description = "QEMU accelerator: kvm (Linux) or tcg (software emulation)."
 }
 
 variable "cpu_model" {
@@ -76,8 +76,26 @@ variable "boot_wait" {
   description = "Delay before boot_command starts typing into GRUB. Comfortably under 300s (the patched GRUB timeout) but past however long BIOS+GRUB take to reach the menu; raise under tcg."
 }
 
+variable "artifacts_dir" {
+  type        = string
+  default     = ""
+  description = "Host directory containing prepared build artifacts."
+}
+
+variable "efi_firmware_code" {
+  type        = string
+  default     = ""
+  description = "UEFI firmware code blob."
+}
+
+variable "efi_firmware_vars" {
+  type        = string
+  default     = ""
+  description = "UEFI firmware writable variables template."
+}
+
 locals {
-  artifacts = "${path.root}/artifacts"
+  artifacts = coalesce(var.artifacts_dir, "${path.root}/artifacts/${local.arch}")
   ssh_dir   = "${path.root}/.ssh"
   # See the same locals block in nke-node-fde.pkr.hcl: this must stay out of
   # local.artifacts, which the "file" provisioner uploads to the guest
@@ -88,7 +106,7 @@ locals {
   build_logs = "${path.root}/build-logs"
   # See the same locals in nke-node-fde.pkr.hcl: derived from iso_url so the
   # output filename can't drift out of sync with the ISO actually being built.
-  iso_name_parts = regex("ubuntu-([0-9.]+)-live-server-([a-z0-9_]+)\\.iso$", var.iso_url)
+  iso_name_parts = regex("ubuntu-([0-9.]+)-live-server-(amd64|arm64)\\.iso$", var.iso_url)
   ubuntu_version = local.iso_name_parts[0]
   arch           = local.iso_name_parts[1]
   # Ubuntu's NVIDIA-tuned kernel flavor: linux-nvidia-64k on arm64 (64k page
@@ -101,10 +119,10 @@ locals {
   # x86 chipsets, meaningless on arm64). AAVMF is UEFI firmware built for
   # aarch64, the same role OVMF plays for x86 -- they are not interchangeable
   # binaries despite both being "the UEFI firmware files".
-  qemu_binary       = local.arch == "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64"
-  machine_type      = local.arch == "arm64" ? "virt" : "q35"
-  efi_firmware_code = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_CODE.fd" : "/usr/share/OVMF/OVMF_CODE_4M.fd"
-  efi_firmware_vars = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_VARS.fd" : "/usr/share/OVMF/OVMF_VARS_4M.fd"
+  qemu_binary      = local.arch == "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64"
+  machine_type     = local.arch == "arm64" ? "virt" : "q35"
+  default_efi_code = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_CODE.fd" : "/usr/share/OVMF/OVMF_CODE_4M.fd"
+  default_efi_vars = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_VARS.fd" : "/usr/share/OVMF/OVMF_VARS_4M.fd"
 
   # arm64's virt machine has no BIOS-era fixed (cd0) device alias the way
   # x86 does -- search --file finds the CD-ROM by content instead of
@@ -149,8 +167,8 @@ source "qemu" "nke-non-fde" {
   # cleanly, so the exported qcow2 is complete.
   disk_cache = "unsafe"
 
-  efi_firmware_code = local.efi_firmware_code
-  efi_firmware_vars = local.efi_firmware_vars
+  efi_firmware_code = coalesce(var.efi_firmware_code, local.default_efi_code)
+  efi_firmware_vars = coalesce(var.efi_firmware_vars, local.default_efi_vars)
   efi_boot          = true
 
   http_content = {
@@ -200,9 +218,9 @@ source "qemu" "nke-non-fde" {
     ]
   )
 
-  ssh_username           = "ubuntu"
-  ssh_private_key_file   = "${local.ssh_dir}/id_ed25519"
-  ssh_timeout            = var.ssh_timeout
+  ssh_username         = "ubuntu"
+  ssh_private_key_file = "${local.ssh_dir}/id_ed25519"
+  ssh_timeout          = var.ssh_timeout
   # The live installer runs its own sshd, so every attempt at ubuntu@ before
   # the reboot is an authentication failure and each one counts here. Under
   # tcg the install outlasts 1000 of them (~8 s apiece); ssh_timeout is the
@@ -223,17 +241,17 @@ build {
   sources = ["source.qemu.nke-non-fde"]
 
   provisioner "shell" {
-    inline = ["mkdir -p /tmp/nke-image/lvm"]
+    inline = ["mkdir -p /var/tmp/nke-image/lvm"]
   }
 
   provisioner "file" {
     source      = "${local.artifacts}/"
-    destination = "/tmp/nke-image/"
+    destination = "/var/tmp/nke-image/"
   }
 
   provisioner "file" {
     source      = "${path.root}/../files/lvm/"
-    destination = "/tmp/nke-image/lvm/"
+    destination = "/var/tmp/nke-image/lvm/"
   }
 
   provisioner "shell" {
