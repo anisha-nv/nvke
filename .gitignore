@@ -11,6 +11,8 @@ controller/hack/capd-reboot-controller/capd-reboot-controller
 **/dist/
 **/release/
 
+/generated/
+
 # Reference-image Packer output and build-only SSH keys / pulled binaries.
 os-image/packer/output/
 os-image/packer/output-fde/
