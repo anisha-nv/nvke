@@ -42,6 +42,7 @@ export SOURCE_ROOT EXPECTED_SOURCE_COMMIT PYTHON
 
 LUKS_PASSPHRASE ?= changeit
 REQUIRE_ACCELERATION ?= 0
+export NKE_PACKAGE_BUILDER ?= auto
 # Label applied to the root filesystem. Cloud-image importers can use this
 # stable identifier instead of depending on a partition or device path.
 ROOT_FS_LABEL ?= cloudimg-rootfs
@@ -271,14 +272,7 @@ prepare-artifacts: preflight
 	trap - 0 1 2 15
 
 check-deps:
-	@test "$$(uname -s)" = Linux && test "$$(uname -m)" = "$(ARCH_UNAME)" || { \
-		echo "Image packages require a matching-architecture Linux host ($(ARCH_UNAME))." >&2; \
-		exit 1; \
-	}
-	@command -v go >/dev/null 2>&1 || { \
-		echo "go is required to build nke-agent and the pinned nfpm" >&2; \
-		exit 1; \
-	}
+	@ARCH=$(ARCH) bash ./scripts/package-builder.sh --check
 	@command -v $(PYTHON) >/dev/null 2>&1 || { \
 		echo "Python 3.10 or newer is required to validate the compressed QCOW2" >&2; \
 		exit 1; \

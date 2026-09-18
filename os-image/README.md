@@ -9,6 +9,7 @@ generic default. The contract is [SPEC.md](SPEC.md).
 |---|---|
 | `SPEC.md` | Image contract (bake vs first-boot, ports, identity) |
 | `packer/` | Packer + QEMU recipe that produces a qcow2 |
+| [`nix/`](nix/README.md) | Nix apps for package builds and the NixOS VM |
 | `files/` | systemd units, SPIRE template, first-boot script |
 | `files/luks/` | LUKS/TPM2 first-boot binding assets for the FDE variant |
 | `files/lvm/` | First-boot storage-growth assets for the non-FDE variant |
@@ -43,10 +44,10 @@ make -C os-image boot-smoke REQUIRE_ACCELERATION=1
 ```
 
 Use `ARCH=arm64` on an arm64 Linux host, or `VARIANT=fde` for the encrypted
-image. Image baking uses the existing package Make targets on the host;
-`kubeadm-distro` runs the downloaded Linux kubeadm to list its images, so the
-build requires Linux and a matching CPU architecture. There is no container
-builder or guest package-build fallback.
+image. Image baking uses the existing package Make targets. Matching Linux hosts
+build packages locally; other hosts use the [NixOS package-builder VM](nix/README.md).
+`NKE_PACKAGE_BUILDER=host|nix` overrides automatic selection. Packages return
+to the host before Packer uploads them to its separate Ubuntu guest.
 
 `image-native` requires usable KVM. The generic `image` target and the existing
 `packer/` targets allow `ACCELERATOR=tcg` for development. Emulated builds are
@@ -75,13 +76,19 @@ emulation, and an explicit unavailable `ACCELERATOR=kvm` or `hvf` fails early.
 On Apple Silicon, `run-vm` and `boot-smoke` can use HVF with an already-built
 compatible arm64 image. The production arm64 kernel is `linux-nvidia-64k`;
 compatibility with a particular Mac/QEMU combination still needs live
-validation. macOS image baking is not supported by the host package builder.
+validation. macOS package builds use the NixOS VM; full image baking still requires
+the host Packer/ISO tools and a supported QEMU/kernel combination.
 The boot scripts also need `cloud-localds`, SSH and, for smoke tests, `timeout`.
 Run `make -C os-image test-qemu` for the selection and build-entrypoint tests
 without booting a VM.
 
-The build checks for Go before starting the VM. The agent package uses nfpm,
-pinned in `make/tool-versions.mk`.
+The build checks package-builder prerequisites before starting Packer. Native
+package builds require Go; VM package builds require Nix on the host. Install Nix
+and enable `nix-command` and `flakes` before building. See the
+[builder setup](nix/README.md#build-and-run) for Linux builder requirements.
+Run `make -C os-image/packer check-deps ARCH=arm64` to check package-builder
+prerequisites without starting a build. The NixOS builder supplies its tools declaratively.
+The agent package uses nfpm, pinned in `make/tool-versions.mk`.
 
 `nke-agent` is built as a Debian package from this checkout's `agent/` source
 using `make -C agent deb-<arch>` and installed with dpkg during provisioning.
