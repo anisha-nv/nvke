@@ -73,6 +73,9 @@ repository's `bin/`, and `make version-check` runs it with `--version`.
   while other hosts use the separate NixOS package-builder VM. The shared QEMU helper also supports HVF for boot tools on macOS.
 - Preserve `packages/spire-agent/` installation and the current package builders.
   `flake.nix` and `nix/` define the NixOS package-builder fallback; see `nix/README.md` for the integration status and Ubuntu-linkage checks.
+  Keep the macOS entrypoint free of realized custom Linux dependencies. Its
+  on-demand bootstrap must preserve the upstream cached guest definition and
+  keep private keys outside the Nix store.
 - Run `make test-qemu` for QEMU selection and build-entrypoint changes; the
   module's `make test` also runs these tests.
 - `nke-agent` is built as a Debian package from this checkout's `agent/` source

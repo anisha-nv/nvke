@@ -14,9 +14,10 @@ nix build ./os-image#builder-amd64 -o result-builder-amd64
 For Git-flake builds, the flake files must be tracked by Git. Ignored Packer keys
 and artifacts are excluded from that source snapshot.
 
-These outputs are launchers plus their guest closures, not golden qcow2 images.
-Nix builds the Linux system derivations using a matching Linux builder or binary
-cache. No derivation uses `make-disk-image` or boots an image-assembly VM.
+These low-level outputs are launchers plus their guest closures, not golden qcow2
+images. Unlike the managed `build-packages-*` apps, building these outputs directly
+does not bootstrap a Linux builder. Use an existing matching Linux builder or
+binary cache. No derivation uses `make-disk-image` or boots an image-assembly VM.
 At launch, host tools create the writable disk and an EROFS store filesystem;
 QEMU boots the supplied kernel and initrd directly, without UEFI or an installer.
 
@@ -73,12 +74,19 @@ directory. Flake files must be tracked by Git (including intent-to-add for new
 files). Use the Git-backed `./os-image` reference, not `path:./os-image`, so ignored
 Packer SSH keys, ISOs, and artifacts do not enter the flake source.
 
-Nix resolves the VM and pins Bash, coreutils, flock, Git, OpenSSH, and rsync.
-The flake-defined shell application starts the VM, waits for SSH, transfers source,
+Nix pins the host tools and defines both the VM and its shell applications.
+On macOS, the outer app carries derivation references without depending on their
+built Linux outputs, so it can run before a Linux builder exists. It reads the
+pinned Nix CLI's dry-run plan, which already accounts for local and cached outputs.
+If Linux derivations remain, it starts the upstream cached builder and supplies
+its SSH endpoint to just the Nix invocation that prepares the package VM.
+The bootstrap guest definition is asserted identical to the upstream guest;
+only the host launcher and runtime networking are customized.
+The package shell application then starts the VM, waits for SSH, transfers source,
 runs the guest build script, retrieves artifacts, and shuts down through an exit
 trap. A small shell application shares the SSH options with rsync. The guest
-script runs the existing package targets and ELF check. There is no Python
-coordinator or recursive Nix invocation. The Ubuntu Packer VM remains a separate host process.
+script runs the existing package targets and ELF check. Runtime coordination is a Nix-defined shell application; Python is used only
+for regression tests. The Ubuntu Packer VM remains a separate host process.
 Neither guest runs QEMU.
 
 Packer's `fetch-artifacts.sh` uses a small shell adapter:
@@ -86,8 +94,11 @@ Packer's `fetch-artifacts.sh` uses a small shell adapter:
 the Nix app otherwise. Set `host` or `nix` to choose explicitly. The normal
 `make -C os-image image ARCH=arm64` entrypoint uses this same path. A VM package
 build requires Nix on the host; its other host tools come from the flake.
-Building the guest closure still needs a matching Linux Nix builder or available
-substitutes. QEMU emulation at runtime does not replace that build step.
+macOS prepares missing Linux outputs through the automatic bootstrap stage.
+The Nix daemon must trust the invoking user to accept a temporary builder, and
+the standard guest must be available from the public cache. The command does not
+install a launchd service, change Nix configuration, or write into `/etc`.
+Mismatched Linux hosts still need an existing matching builder or substitutes.
 
 Tracked files (including local modifications and vendor/) plus non-ignored
 untracked files are transferred at runtime. Ignored host outputs and `.git`
@@ -115,6 +126,24 @@ set `SSH_PORT` when running another instance with separate state.
 store preparation. Use `NKE_BUILDER_ACCELERATOR=tcg` to force software emulation
 independently of Packer's `ACCELERATOR`. A failed package build shuts down the VM
 and does not collect partial outputs; logs and guest files remain available.
+
+### Bootstrap state on macOS
+
+The standard bootstrap guest has a separate persistent 20 GiB disk under
+`$NKE_BUILDER_STATE_DIR/bootstrap/` (or the default per-architecture state
+directory). Its keys, runtime files, console log, and lock are separate from the
+32 GiB package VM. Only the bootstrap public key is copied into the Nix store;
+its private key stays in the user-owned state directory. SSH is bound to loopback
+with the upstream guest's pinned host key. Default bootstrap ports are 31024 for
+ARM and 31025 for x86; `NKE_BOOTSTRAP_PORT` overrides the port.
+
+The bootstrap is stopped on success, build failure, timeout, or interruption.
+It finishes before the package VM starts, so no nested virtualization is used.
+A changed guest definition or dependency pin may require bootstrap again;
+unchanged outputs skip it. This is local state reuse, not CI Nix caching.
+On Apple Silicon, ARM uses hardware acceleration and x86 uses slower emulation.
+When updating the nixpkgs pin, verify both stock guest closures are still
+available from the public cache before relying on a fresh-machine bootstrap.
 
 ### Ubuntu-compatible linking
 

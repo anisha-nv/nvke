@@ -73,7 +73,7 @@ without booting a VM.
 The build checks package-builder prerequisites before starting Packer. Native
 package builds require Go; VM package builds require Nix on the host. Install Nix
 and enable `nix-command` and `flakes` before building. See the
-[builder setup](nix/README.md#build-and-run) for Linux builder requirements.
+[builder setup](nix/README.md#build-and-run) for automatic macOS bootstrap and Nix trust requirements.
 Run `make -C os-image/packer check-deps ARCH=arm64` to check package-builder
 prerequisites without starting a build. The NixOS builder supplies its tools declaratively.
 The agent package uses nfpm, pinned in `make/tool-versions.mk`.
