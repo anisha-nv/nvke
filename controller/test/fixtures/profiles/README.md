@@ -17,6 +17,8 @@ Two kinds of entry live here, and the difference matters:
 |---|---|---|
 | `test-fixture-amd64`, `nke-local-dev-kindest-arm64` | `example.test`, synthetic | nothing; they exercise CWE's rendering and the CAPD and gofail lanes |
 | `nke-nico-vms-24.04-amd64-fde`, `nke-nico-vms-24.04-arm64-fde` | unreachable placeholders | the NKE node image on the `nico-vms` backend |
+| `nke-nico-vms-24.04-amd64-fde-doca` | unreachable image placeholder, plus `mellanox.com` for the DOCA deb | the same 24.04 image, then installs `doca-networking` at first boot |
+| `nke-nico-vms-26.04-amd64-fde-doca` | unreachable image placeholder, plus `mellanox.com` for the DOCA deb | the same path, once the lane's pulled image is a 26.04 qcow |
 
 **No file in this tree names a CDN host.** These profiles used to point
 `image-url` at CloudFront and pass `--bundle-server-url` for a CloudFront
@@ -24,7 +26,9 @@ bundle server. The self-hosted arm64 fleet gets 403 from that CDN, so the lane
 now pulls the node image from GHCR and rewrites `image-url` to the local copy,
 and the agent runs with no bundle server, which makes it prefer apt against the
 `nke-cni-*` debs already in the node image. `nico-vms-e2e.sh` fails the run if
-any file here names CloudFront again.
+any file here names CloudFront again. The `-doca` profiles are the one
+exception for a public host: their `runcmd` downloads `doca-networking` from
+`mellanox.com`.
 
 `nke-nico-vms-24.04-amd64-fde` is a copy of the fleet profile of the same name.
 It is the OS profile every `nico-vms` E2E spec requests, and CWE reads its
@@ -32,6 +36,17 @@ It is the OS profile every `nico-vms` E2E spec requests, and CWE reads its
 without the copy the first create fails. The files hold no credentials: the
 image is fetched with a plain GET, and the one `token_name` line is a template
 variable. When the fleet profile changes, copy it again; nothing syncs it.
+
+The two `-doca` profiles are drafts for `nke-site-deploy`, kept here so the
+`nico-vms` lane can boot them first. Each purges the distro Open vSwitch and
+installs `doca-networking` from `mellanox.com` in `runcmd`, which makes them the
+only profiles here that need egress to the public internet at first boot — a
+site without it has to mirror the `.deb`. DOCA's kernel modules take effect
+only on the pre-join reboot, so both are correct only when the node pool also
+names a config profile with `preJoinNodeReboot: true`. `nico-vms-worker.yaml`
+sets it; `nico-vms-cp.yaml` deliberately does not. Nothing validates that
+pairing, and a mismatch provisions a node that joins with DOCA installed and
+inert.
 
 `configProfiles/nico-vms-cp.yaml` and `nico-vms-worker.yaml` are copies of the
 fleet config profiles the same specs name, and `../runbooks/` holds the eight

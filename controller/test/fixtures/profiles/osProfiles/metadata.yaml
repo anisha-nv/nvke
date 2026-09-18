@@ -41,3 +41,23 @@ profiles:
     architecture: arm64
     build_date: "2026-01-01"
     ubuntu_version: "24.04"
+  # The doca variant swaps the distro Open vSwitch for the one doca-networking
+  # ships. variant is carried across Kubernetes upgrades, so resolveOSProfile
+  # only ever offers another doca profile of the same arch and Ubuntu version as
+  # an upgrade target — retiring the last one of a pair strands its node pools.
+  nke-nico-vms-24.04-amd64-fde-doca:
+    kubernetes_version: ""
+    kubernetes_version_injected: true
+    architecture: amd64
+    build_date: "2026-09-17"
+    ubuntu_version: "24.04"
+    variant: doca
+  # 26.04 (Resolute), matching the reference image in os-image/. The lane
+  # rewrites its image-url, and that pull has to be the 26.04 image.
+  nke-nico-vms-26.04-amd64-fde-doca:
+    kubernetes_version: ""
+    kubernetes_version_injected: true
+    architecture: amd64
+    build_date: "2026-09-17"
+    ubuntu_version: "26.04"
+    variant: doca
