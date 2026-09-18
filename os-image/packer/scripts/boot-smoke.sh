@@ -10,8 +10,9 @@
 # QCOW defaults to the single *.qcow2 under output-non-fde/ (its filename
 # encodes the Ubuntu version/arch, e.g. nke-node-non-fde-ubuntu-26.04.1-amd64.qcow2
 # -- see vm_name in nke-node-non-fde.pkr.hcl). This variant is UEFI-installed,
-# firmware is discovered automatically; override its paths when necessary:
-#   OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd ./boot-smoke.sh
+# firmware is discovered automatically; override both paths together when necessary:
+#   OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd \
+#     OVMF_VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS_4M.fd ./boot-smoke.sh
 # The FDE variant needs its own passphrase/TPM handling instead of this
 # script -- see ../../demo-fde.sh.
 

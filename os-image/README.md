@@ -60,7 +60,16 @@ Boot tools share architecture, firmware, and acceleration selection. They
 infer the architecture from the `-amd64.qcow2` or `-arm64.qcow2` filename and
 choose KVM on Linux, HVF on matching macOS hosts, or TCG. Firmware discovery
 checks OVMF/AAVMF paths, then QEMU's own firmware directory; override with
-`OVMF_CODE` and `OVMF_VARS_TEMPLATE`. `REQUIRE_ACCELERATION=1` rejects software
+`OVMF_CODE` and `OVMF_VARS_TEMPLATE` together as a matching pair. Setting only
+one is an error. For example, from `os-image/`:
+
+```bash
+OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd \
+OVMF_VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS_4M.fd \
+make run-vm QCOW=packer/output-non-fde/nke-node-non-fde-ubuntu-26.04.1-amd64.qcow2
+```
+
+`REQUIRE_ACCELERATION=1` rejects software
 emulation, and an explicit unavailable `ACCELERATOR=kvm` or `hvf` fails early.
 
 On Apple Silicon, `run-vm` and `boot-smoke` can use HVF with an already-built

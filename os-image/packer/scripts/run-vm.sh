@@ -38,6 +38,7 @@
 #                 for this ARCH. NKE qcow2s are UEFI-only.
 #   OVMF_VARS_TEMPLATE  default: /usr/share/OVMF/OVMF_VARS_4M.fd (amd64) or
 #                 /usr/share/AAVMF/AAVMF_VARS.fd (arm64)
+#                 Override OVMF_CODE and OVMF_VARS_TEMPLATE together as a matching pair.
 #   TPM           set to 1 to attach a fresh swtpm (the FDE image's first
 #                 real boot needs one to complete its TPM bind; the shipped
 #                 image's build-time luks.key= GRUB parameter unlocks it

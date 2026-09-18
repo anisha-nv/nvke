@@ -89,7 +89,11 @@ nke_qemu_env() {
     return 1
   fi
 
-  if [[ -n "${OVMF_CODE:-}" && -n "${OVMF_VARS_TEMPLATE:-}" ]]; then
+  if [[ -n "${OVMF_CODE:-}" || -n "${OVMF_VARS_TEMPLATE:-}" ]]; then
+    if [[ -z "${OVMF_CODE:-}" || -z "${OVMF_VARS_TEMPLATE:-}" ]]; then
+      echo "qemu-arch: OVMF_CODE and OVMF_VARS_TEMPLATE must be set together" >&2
+      return 1
+    fi
     # Fully overridden: there is nothing discovery could contribute.
     EFI_CODE_DEFAULT="$OVMF_CODE"
     EFI_VARS_DEFAULT="$OVMF_VARS_TEMPLATE"

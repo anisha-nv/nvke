@@ -60,6 +60,25 @@ nke_qemu_env arm64
 [[ "${ACCEL_ARGS[*]}" == '-accel hvf' ]]
 [[ "${TPM_DEVICE_SPEC}" == 'tpm-tis-device,tpmdev=tpm0,ppi=off' ]]
 
+# A custom firmware half must never be combined with a discovered counterpart.
+for override in OVMF_CODE OVMF_VARS_TEMPLATE; do
+  (
+    export "${override}=${workdir}/custom.fd"
+    if nke_qemu_env arm64 >"${workdir}/partial-override.log" 2>&1; then
+      echo "partial firmware override ${override} unexpectedly accepted" >&2
+      exit 1
+    fi
+    grep -Fq 'OVMF_CODE and OVMF_VARS_TEMPLATE must be set together' "${workdir}/partial-override.log"
+  )
+done
+(
+  OVMF_CODE="${workdir}/distro-code.fd"
+  OVMF_VARS_TEMPLATE="${workdir}/distro-vars.fd"
+  nke_qemu_env arm64
+  [[ "${EFI_CODE_DEFAULT}" == "$OVMF_CODE" ]]
+  [[ "${EFI_VARS_DEFAULT}" == "$OVMF_VARS_TEMPLATE" ]]
+)
+
 ACCELERATOR=tcg
 nke_qemu_env arm64
 [[ "${NKE_ACCELERATOR}" == tcg ]]
