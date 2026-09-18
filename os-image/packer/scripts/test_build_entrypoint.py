@@ -181,7 +181,11 @@ class BuildPackagesTest(unittest.TestCase):
         script("timeout", '#!/bin/sh\nshift\nexec "$@"\n')
         script("launcher", '#!/bin/sh\nwhile [ ! -e "$NKE_BUILDER_STATE_DIR/down" ]; '
                            'do sleep 0.2; done\n')
-        script("nke-builder-ssh", '#!/bin/sh\ncat >/dev/null\n'
+        script("nke-builder-ssh", '#!/bin/sh\nset -eu\n'
+                                  'test -s "$NKE_BUILDER_HOST_KEY"\n'
+                                  'expected="nke-package-builder $(ssh-keygen -y -f "$NKE_BUILDER_HOST_KEY")"\n'
+                                  'test "$(cat "$NKE_BUILDER_STATE_DIR/known_hosts")" = "$expected"\n'
+                                  'cat >/dev/null\n'
                                   'case "$*" in *poweroff*) touch "$NKE_BUILDER_STATE_DIR/down";; '
                                   'esac\nexit 0\n')
         # Rewrite the guest's artifacts path to a local fixture; the source upload
@@ -206,6 +210,7 @@ sys.exit(0 if any("root@" in a for a in args)
             ["bash", str(driver), "--source", str(repo), "--output", str(out)],
             env=os.environ | {"PATH": f"{bin_dir}:{os.environ['PATH']}",
                               "NKE_BUILDER_STATE_DIR": str(state), "VERSION": "agent/v0.0.0",
+                              "NKE_BUILDER_BOOT_TIMEOUT": "10",
                               "REAL_RSYNC": shutil.which("rsync"), "FAKE_GUEST": str(guest)},
             stdin=subprocess.DEVNULL, text=True, capture_output=True,
         )
@@ -214,6 +219,48 @@ sys.exit(0 if any("root@" in a for a in args)
         self.assertTrue((out / "nke-agent.deb").exists())
         self.assertTrue((out / "debs/Packages").exists())
         self.assertFalse((out / "debs/stale.deb").exists())
+
+
+class GuestUpdaterTest(unittest.TestCase):
+    """The guest must reject absent or unreadable updater build outputs."""
+
+    def test_updater_validation(self):
+        for kind in ("missing", "invalid", "dynamic", "static"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                tools = root / "bin"
+                tools.mkdir()
+                # Skip package compilation and cache setup; exercise the real
+                # guest script's artifact validation and shell error handling.
+                for name in ("mkdir", "ln", "bash", "check-ubuntu-elf"):
+                    tool = tools / name
+                    tool.write_text("#!/bin/sh\nexit 0\n")
+                    tool.chmod(0o755)
+                readelf = tools / "readelf"
+                readelf.write_text('''#!/bin/sh
+test -f "$2" || exit 1
+case "$(cat "$2")" in
+  invalid) exit 1;;
+  dynamic) echo INTERP;;
+  static) echo LOAD;;
+esac
+''')
+                readelf.chmod(0o755)
+                updater = root / "agent/bin/linux_arm64/nke-agent-updater"
+                updater.parent.mkdir(parents=True)
+                if kind != "missing":
+                    updater.write_text(kind)
+                result = subprocess.run(
+                    [shutil.which("bash"), str(PACKER_DIR.parent / "nix/build-guest.sh")],
+                    env=os.environ | {"PATH": f"{tools}:{os.environ['PATH']}",
+                                      "REPO_ROOT": str(root), "ARCH": "arm64"},
+                    text=True, capture_output=True,
+                )
+                if kind == "static":
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertNotIn("PASS:", result.stdout)
 
 
 if __name__ == "__main__":

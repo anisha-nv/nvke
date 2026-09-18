@@ -19,13 +19,19 @@ repo=$(git -C "$source_dir" rev-parse --show-toplevel)
 mkdir -p "$artifacts"
 artifacts=$(cd "$artifacts" && pwd -P)
 state=${NKE_BUILDER_STATE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/nke/builders/$arch}
+umask 077
 mkdir -p "$state/runtime"
+chmod 700 "$state"
 state=$(cd "$state" && pwd -P)
 exec 9>"$state/build.lock"
 flock -n 9 || { echo "Builder state is already in use: $state" >&2; exit 1; }
 key=$state/client-key
 [[ -e "$key" ]] || ssh-keygen -q -t ed25519 -N '' -f "$key"
 export NKE_BUILDER_STATE_DIR=$state NKE_BUILDER_SSH_KEY=$key.pub
+export NKE_BUILDER_HOST_KEY=$state/host-key
+[[ -e "$NKE_BUILDER_HOST_KEY" ]] || ssh-keygen -q -t ed25519 -N '' -f "$NKE_BUILDER_HOST_KEY"
+host_public_key=$(ssh-keygen -y -f "$NKE_BUILDER_HOST_KEY")
+printf 'nke-package-builder %s\n' "$host_public_key" > "$state/known_hosts"
 export NIX_DISK_IMAGE=$state/root.qcow2 TMPDIR=$state/runtime USE_TMPDIR=1
 # Stable, separate default ports for each architecture; override for other instances.
 if [[ "$arch" == arm64 ]]; then default_port=5422; else default_port=5423; fi
@@ -54,8 +60,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-# A fresh disk means a fresh guest host key.
-[[ -e "$NIX_DISK_IMAGE" ]] || rm -f "$state/known_hosts"
+# The host key is provisioned independently of the guest disk, before connecting.
 # Job control gives the launcher and its QEMU child their own process group.
 set -m
 # QEMU inherits fd 9, so the lock is held until the VM exits, even if this driver is killed.

@@ -50,6 +50,7 @@ in
     writableStoreUseTmpfs = false;
     qemu.options = [
       ''-fw_cfg name=opt/io.systemd.credentials/ssh.authorized_keys.root,file="$NKE_BUILDER_SSH_KEY"''
+      ''-fw_cfg name=opt/io.systemd.credentials/nke.ssh.host-key,file="$NKE_BUILDER_HOST_KEY"''
     ];
   };
   boot.kernelModules = [ "qemu_fw_cfg" ];
@@ -57,12 +58,22 @@ in
   # systemd imports the public key supplied by the launcher at boot.
   services.openssh = {
     enable = true;
+    generateHostKeys = false;
+    hostKeys = [
+      {
+        type = "ed25519";
+        path = "/run/credentials/sshd.service/nke.ssh.host-key";
+      }
+    ];
     settings = {
       PasswordAuthentication = false;
       KbdInteractiveAuthentication = false;
       PermitRootLogin = "prohibit-password";
     };
   };
+  # Import the host-provisioned private key into sshd's runtime-only credentials.
+  # No private key is embedded in the Nix store or trusted over the network.
+  systemd.services.sshd.serviceConfig.LoadCredential = [ "nke.ssh.host-key" ];
   # The upstream f^ rule only initializes this file. Reused disks must accept
   # the public key supplied for this boot, including a switch to the managed runner.
   systemd.tmpfiles.settings."ssh-root-provision"."/root/.ssh/authorized_keys" = lib.mkForce {

@@ -16,6 +16,9 @@ bash "$REPO_ROOT/os-image/packer/scripts/fetch-artifacts.sh"
 check-ubuntu-elf --arch "$ARCH" \
   "$REPO_ROOT/agent/bin/linux_$ARCH/nke-agent"
 updater=$REPO_ROOT/agent/bin/linux_$ARCH/nke-agent-updater
-[[ "$(readelf -lW "$updater")" != *INTERP* ]] ||
+[[ -f "$updater" ]] ||
+  { echo "FAIL: $updater: expected updater binary" >&2; exit 1; }
+headers=$(readelf -lW "$updater")
+[[ "$headers" != *INTERP* ]] ||
   { echo "FAIL: $updater: expected a static binary, found a program interpreter" >&2; exit 1; }
 echo "PASS: $updater: static, no interpreter"

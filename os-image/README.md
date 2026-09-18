@@ -19,16 +19,23 @@ generic default. The contract is [SPEC.md](SPEC.md).
 
 ## Build the OS image
 
-Prereqs, on a Linux host matching the image architecture:
+Common prerequisites for image builds:
 
 | Tool | Version | Install |
 |---|---|---|
 | [Packer](https://developer.hashicorp.com/packer) | >= 1.10.0 | https://developer.hashicorp.com/packer/install |
-| [Go](https://go.dev/) | per `go.work` | https://go.dev/dl/ |
 | Python | >= 3.10, standard library only | via your package manager |
 | `curl` | any | via your package manager |
 | `qemu-system-x86_64` or `qemu-system-aarch64`, `qemu-img`, `cloud-localds`, `swtpm`, OVMF/AAVMF | any | via your package manager |
 | `xorriso`, `p7zip-full` (`7z`) | any | via your package manager |
+
+Package-builder prerequisites depend on the selected mode:
+
+- **Host builds:** Linux matching the image architecture, plus
+  [Go](https://go.dev/dl/) at the version specified by `go.work`.
+- **Nix VM builds:** Nix with `nix-command` and `flakes` enabled. Preparing the
+  VM requires a matching Linux builder or cached build outputs; see the
+  [Nix setup instructions](nix/README.md). Go is provided inside the VM.
 
 Both variants boot the Ubuntu Server installer (not a prebuilt cloud image),
 so all of the above are needed even for a first build — see

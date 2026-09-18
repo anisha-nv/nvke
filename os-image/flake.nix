@@ -48,6 +48,9 @@
             export NKE_BUILDER_SSH_KEY
             NKE_BUILDER_SSH_KEY=$(realpath "''${NKE_BUILDER_SSH_KEY:?Set NKE_BUILDER_SSH_KEY to a public SSH key file}")
             test -r "$NKE_BUILDER_SSH_KEY"
+            export NKE_BUILDER_HOST_KEY
+            NKE_BUILDER_HOST_KEY=$(realpath "''${NKE_BUILDER_HOST_KEY:?Set NKE_BUILDER_HOST_KEY to a private SSH host key file}")
+            test -r "$NKE_BUILDER_HOST_KEY"
             state_dir="''${NKE_BUILDER_STATE_DIR:-''${XDG_CACHE_HOME:-$HOME/.cache}/nke/builders/${arch}}"
             mkdir -p "$state_dir"
             export NIX_DISK_IMAGE="''${NIX_DISK_IMAGE:-$state_dir/root.qcow2}"
@@ -87,7 +90,8 @@
               exec ssh -F /dev/null -p "$SSH_PORT" \
                 -i "$NKE_BUILDER_STATE_DIR/client-key" \
                 -o IdentityAgent=none -o IdentitiesOnly=yes -o BatchMode=yes \
-                -o ConnectTimeout=2 -o StrictHostKeyChecking=accept-new \
+                -o ConnectTimeout=2 -o StrictHostKeyChecking=yes \
+                -o GlobalKnownHostsFile=/dev/null \
                 -o HostKeyAlias=nke-package-builder \
                 -o "UserKnownHostsFile=$NKE_BUILDER_STATE_DIR/known_hosts" "$@"
             '';

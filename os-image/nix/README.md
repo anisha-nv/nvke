@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Build Linux packages with Nix
 
 Nix prepares a Linux VM with the tools needed to build NKE's Debian packages.
@@ -97,6 +102,12 @@ the default is `~/.cache/nke/builders/<arch>` (or under `XDG_CACHE_HOME`).
 The guest's SSH port is forwarded on `127.0.0.1:5422` for arm64 and `5423` for
 amd64, clear of the ports `run-vm.sh`, `boot-smoke.sh` and Packer use. Set
 `SSH_PORT` to run another instance.
+
+The runner generates a private SSH host key in that state directory and pins
+its public key before connecting. QEMU supplies the private key to the guest
+through a systemd credential; sshd reads it from runtime memory, not the Nix
+store. All SSH and rsync connections require that pinned key, including the
+first boot and boots with a fresh disk. Keep the state directory private.
 
 ## How the builder produces Ubuntu-compatible binaries
 
