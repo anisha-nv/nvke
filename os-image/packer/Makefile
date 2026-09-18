@@ -194,7 +194,7 @@ prepare-installer-iso: preflight
 
 # Image builds run the Ubuntu installer, so they need kvm or tcg. The shared
 # boot harness also knows about hvf, but that is for run-vm/boot-smoke on
-# macOS: check-deps already requires a matching-architecture Linux host here.
+# macOS; check-deps picks the host or VM package builder separately.
 # ISO_URL carries the architecture that nke-node-*.pkr.hcl parses into
 # local.arch, so a hand-passed ISO_URL disagreeing with ARCH would build the
 # wrong image under the right QEMU.

@@ -31,8 +31,9 @@ if [[ "$2" == */agent ]]; then
 fi
 ''')
                 make.chmod(0o755)
+                machine = {"amd64": "x86_64", "arm64": "aarch64"}[arch]
                 uname = tools / "uname"
-                uname.write_text('#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo "$ARCH";; esac\n')
+                uname.write_text(f'#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo {machine};; esac\n')
                 uname.chmod(0o755)
                 artifacts = root / "artifacts"
                 result = subprocess.run(

@@ -28,36 +28,39 @@ key=$state/client-key
 export NKE_BUILDER_STATE_DIR=$state NKE_BUILDER_SSH_KEY=$key.pub
 export NIX_DISK_IMAGE=$state/root.qcow2 TMPDIR=$state/runtime USE_TMPDIR=1
 # Stable, separate default ports for each architecture; override for other instances.
-if [[ "$arch" == arm64 ]]; then default_port=2222; else default_port=2223; fi
+if [[ "$arch" == arm64 ]]; then default_port=5422; else default_port=5423; fi
 export SSH_PORT=${SSH_PORT:-$default_port}
-unset ACCELERATOR
+unset ACCELERATOR  # the Packer Makefile exports its own; let nke_qemu_env pick for this VM
 run_id=$(date +%s)-$$
+rm -f "$state"/console-*.log
 log=$state/console-$run_id.log
 ready=0
+vm_pid=
 cleanup() {
   status=$?
-  trap - EXIT INT TERM
-  if [[ "$ready" == 1 ]]; then
-    timeout 15 nke-builder-ssh root@127.0.0.1 poweroff >/dev/null 2>&1 || true
-  fi
-  for ((i=0; i<60; i++)); do
-    kill -0 "$vm_pid" 2>/dev/null || break
-    sleep 1
-  done
-  if kill -0 "$vm_pid" 2>/dev/null; then
-    echo "Stopping unresponsive builder; disk retained at $state" >&2
+  trap '' INT TERM  # a second signal must not orphan the VM mid-cleanup
+  if [[ -n "$vm_pid" ]]; then
+    if [[ "$ready" == 1 ]]; then
+      timeout 15 nke-builder-ssh root@127.0.0.1 poweroff >/dev/null 2>&1 || true
+      for ((i=0; i<60; i++)); do kill -0 "$vm_pid" 2>/dev/null || break; sleep 1; done
+    fi
     kill -TERM -- "-$vm_pid" 2>/dev/null || true
+    for ((i=0; i<10; i++)); do kill -0 "$vm_pid" 2>/dev/null || break; sleep 1; done
+    kill -KILL -- "-$vm_pid" 2>/dev/null || true
+    wait "$vm_pid" 2>/dev/null || true
   fi
-  wait "$vm_pid" 2>/dev/null || true
   exit "$status"
 }
-# Job control gives the launcher and its QEMU child their own process group.
-set -m
-"$launcher" </dev/null >"$log" 2>&1 9>&- &
-vm_pid=$!
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+# A fresh disk means a fresh guest host key.
+[[ -e "$NIX_DISK_IMAGE" ]] || rm -f "$state/known_hosts"
+# Job control gives the launcher and its QEMU child their own process group.
+set -m
+# QEMU inherits fd 9, so the lock is held until the VM exits, even if this driver is killed.
+"$launcher" </dev/null >"$log" 2>&1 &
+vm_pid=$!
 echo "Builder console: $log"
 deadline=$((SECONDS + ${NKE_BUILDER_BOOT_TIMEOUT:-900}))
 until nke-builder-ssh root@127.0.0.1 true >/dev/null 2>&1; do
@@ -69,7 +72,8 @@ until nke-builder-ssh root@127.0.0.1 true >/dev/null 2>&1; do
 done
 ready=1
 work=/root/nke-builds/$run_id
-nke-builder-ssh root@127.0.0.1 "mkdir -p $work/src $work/artifacts"
+# Previous runs would otherwise fill the disk; the caches under /root/.cache stay.
+nke-builder-ssh root@127.0.0.1 "rm -rf /root/nke-builds && mkdir -p $work/src $work/artifacts"
 # Skip deleted tracked paths and ignored host outputs; preserve unusual filenames.
 while IFS= read -r -d '' file; do
   if [[ -e "$repo/$file" || -L "$repo/$file" ]]; then printf '%s\0' "$file"; fi
@@ -85,5 +89,14 @@ version=${VERSION:-$(git -C "$repo" describe --match 'agent/v*' --tags --always 
   done
   cat "$guest_script"
 } | nke-builder-ssh root@127.0.0.1 'bash -s'
-rsync -a --checksum -e nke-builder-ssh "root@127.0.0.1:$work/artifacts/" "$artifacts/"
-echo "Packages returned to $artifacts; guest work retained at $work"
+# debs/ is the builder's own tree, so stale debs are deleted there; the output
+# directory itself belongs to the caller and keeps whatever else is in it.
+rsync -a --exclude=/debs -e nke-builder-ssh \
+  "root@127.0.0.1:$work/artifacts/" "$artifacts/"
+rsync -a --delete -e nke-builder-ssh \
+  "root@127.0.0.1:$work/artifacts/debs/" "$artifacts/debs/"
+for expected in nke-agent.deb debs/Packages; do
+  [[ -e "$artifacts/$expected" ]] ||
+    { echo "Builder produced no $expected; see $log" >&2; exit 1; }
+done
+echo "Packages returned to $artifacts"

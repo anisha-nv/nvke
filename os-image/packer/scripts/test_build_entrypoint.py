@@ -105,7 +105,8 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
             with self.subTest(mode=mode):
                 result = subprocess.run(
                     [bash, str(PACKER_DIR / "scripts/package-builder.sh"), "--check"],
-                    env=self.env | {"PATH": str(self.root), "ARCH": "arm64",
+                    # /usr/bin and /bin supply dirname; the stubs still come first.
+                    env=self.env | {"PATH": f"{self.root}:/usr/bin:/bin", "ARCH": "arm64",
                                     "NKE_PACKAGE_BUILDER": mode},
                     text=True, capture_output=True,
                 )
@@ -116,6 +117,18 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
                     self.assertIn("os-image/nix/README.md", result.stderr)
                 else:
                     self.assertIn("package builder: host", result.stdout)
+
+    def test_check_deps_fails_when_the_guest_runner_cannot_be_realized(self):
+        self.script("nix", '''#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
+sys.exit(1 if sys.argv[1] == "build" else 0)
+''')
+        result = self.make("check-deps", "NKE_PACKAGE_BUILDER=nix")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(Path(self.env["PACKER_ARGS"]).read_text()),
+                         ["build", "--no-link", f"{PACKER_DIR.parent}#builder-arm64"])
 
     def test_unknown_package_builder_fails_before_packer(self):
         result = self.make("check-deps", "NKE_PACKAGE_BUILDER=invalid")
@@ -140,6 +153,67 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
             "run", f"{PACKER_DIR.parent}#build-packages-arm64", "--",
             "--source", str(PACKER_DIR.parent.parent), "--output", str(artifacts),
         ])
+
+
+class BuildPackagesTest(unittest.TestCase):
+    """Drive nix/build-packages.sh with the VM, SSH and rsync transport stubbed out."""
+
+    def test_artifact_sync_replaces_debs_and_keeps_unrelated_output(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        guest, out, bin_dir, state, repo = (root / n for n in
+                                            ("guest", "out", "bin", "state", "repo"))
+        for d in (guest / "debs", out / "debs", bin_dir, state, repo):
+            d.mkdir(parents=True)
+        (guest / "nke-agent.deb").write_text("agent")
+        (guest / "debs" / "Packages").write_text("index")
+        (out / "keep-me.txt").write_text("caller's file")
+        (out / "debs" / "stale.deb").write_text("stale")
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+
+        def script(name, text):
+            p = bin_dir / name
+            p.write_text(text)
+            p.chmod(0o755)
+
+        script("flock", "#!/bin/sh\nexit 0\n")
+        script("timeout", '#!/bin/sh\nshift\nexec "$@"\n')
+        script("launcher", '#!/bin/sh\nwhile [ ! -e "$NKE_BUILDER_STATE_DIR/down" ]; '
+                           'do sleep 0.2; done\n')
+        script("nke-builder-ssh", '#!/bin/sh\ncat >/dev/null\n'
+                                  'case "$*" in *poweroff*) touch "$NKE_BUILDER_STATE_DIR/down";; '
+                                  'esac\nexit 0\n')
+        # Rewrite the guest's artifacts path to a local fixture; the source upload
+        # has no local equivalent, so it is answered without copying anything.
+        script("rsync", '''#!/usr/bin/env python3
+import os, re, subprocess, sys
+args, skip = [], False
+for a in sys.argv[1:]:
+    if skip or a == "-e":
+        skip = not skip
+        continue
+    args.append(re.sub(r"root@127\\.0\\.0\\.1:/root/nke-builds/[^/]+/artifacts",
+                       os.environ["FAKE_GUEST"], a))
+sys.exit(0 if any("root@" in a for a in args)
+         else subprocess.call([os.environ["REAL_RSYNC"], *args]))
+''')
+        driver = root / "build-packages"
+        driver.write_text(f"arch=arm64\nlauncher={bin_dir / 'launcher'}\n"
+                          f"guest_script={PACKER_DIR.parent / 'nix/build-guest.sh'}\n"
+                          + (PACKER_DIR.parent / "nix/build-packages.sh").read_text())
+        result = subprocess.run(
+            ["bash", str(driver), "--source", str(repo), "--output", str(out)],
+            env=os.environ | {"PATH": f"{bin_dir}:{os.environ['PATH']}",
+                              "NKE_BUILDER_STATE_DIR": str(state), "VERSION": "agent/v0.0.0",
+                              "REAL_RSYNC": shutil.which("rsync"), "FAKE_GUEST": str(guest)},
+            stdin=subprocess.DEVNULL, text=True, capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((out / "keep-me.txt").exists())
+        self.assertTrue((out / "nke-agent.deb").exists())
+        self.assertTrue((out / "debs/Packages").exists())
+        self.assertFalse((out / "debs/stale.deb").exists())
 
 
 if __name__ == "__main__":

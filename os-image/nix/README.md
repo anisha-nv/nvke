@@ -46,6 +46,19 @@ Use `build-packages-amd64` for x86 packages. The command starts the VM, copies
 in your checkout, builds the packages, copies the results to your output
 directory, and shuts down the VM. The first build takes longer; later builds
 reuse a persistent disk containing the Nix store and compiler/download caches.
+Only the `debs/` subdirectory of the output is the builder's to replace; anything
+else already there is left alone.
+
+To check the prerequisites without building anything:
+
+```bash
+make -C os-image/packer check-deps ARCH=arm64
+```
+
+In Nix mode this realizes the VM runner (`nix build --no-link
+./os-image#builder-<arch>`), which may download the guest closure. Without a
+matching Linux builder and without a cache hit it fails right there, with Nix's
+own error, rather than part-way through an image bake.
 
 ### 3. Build the OS image
 
@@ -81,6 +94,9 @@ software emulation. Its compiler produces binaries compatible with Ubuntu.
 The persistent disk grows as needed up to 32 GiB and is reused per architecture.
 Set `NKE_BUILDER_STATE_DIR` to choose where the disk, keys, and logs live;
 the default is `~/.cache/nke/builders/<arch>` (or under `XDG_CACHE_HOME`).
+The guest's SSH port is forwarded on `127.0.0.1:5422` for arm64 and `5423` for
+amd64, clear of the ports `run-vm.sh`, `boot-smoke.sh` and Packer use. Set
+`SSH_PORT` to run another instance.
 
 ## How the builder produces Ubuntu-compatible binaries
 

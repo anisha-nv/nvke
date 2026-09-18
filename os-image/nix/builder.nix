@@ -9,7 +9,6 @@
 let
   # Use the target ABI, rather than the builder's Nix-store loader and libc.
   ubuntuCC = pkgs.writeShellScriptBin "nke-ubuntu-cc" ''
-    # Replace this wrapper with the compiler, preserving its signals and exit status.
     exec ${pkgs.zig_0_15}/bin/zig cc \
       -target ${pkgs.stdenv.hostPlatform.parsed.cpu.name}-linux-gnu.2.39 "$@"
   '';
@@ -77,8 +76,7 @@ in
 
   # Execute downloaded Linux tools such as kubeadm when they use an FHS loader.
   programs.nix-ld.enable = true;
-  # Go honors CC for native cgo builds, including the agent's existing deb target.
-  environment.variables.CC = "${ubuntuCC}/bin/nke-ubuntu-cc";
+  # build-guest.sh points CC at this wrapper, which Go honors for cgo builds.
   environment.systemPackages = with pkgs; [
     ubuntuCC
     nfpm

@@ -5,9 +5,10 @@
 set -euo pipefail
 arch=${ARCH:-amd64}
 case "$arch" in amd64|arm64) ;; *) echo 'ARCH must be amd64 or arm64' >&2; exit 1;; esac
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 native=0
 case "$(uname -s)/$(uname -m)/$arch" in
-  Linux/x86_64/amd64|Linux/amd64/amd64|Linux/aarch64/arm64|Linux/arm64/arm64) native=1 ;;
+  Linux/x86_64/amd64|Linux/aarch64/arm64) native=1 ;;
 esac
 mode=${NKE_PACKAGE_BUILDER:-auto}
 if [[ "$mode" == auto ]]; then
@@ -19,6 +20,11 @@ case "$mode" in
     command -v go >/dev/null || { echo 'go is required for host package builds' >&2; exit 1; }
     ;;
   nix)
+    # The flake builds VMs for these hosts only; see os-image/flake.nix.
+    case "$(uname -s)/$(uname -m)" in
+      Darwin/arm64|Linux/x86_64|Linux/aarch64) ;;
+      *) echo "VM package builds are not supported on $(uname -s)/$(uname -m)" >&2; exit 1 ;;
+    esac
     command -v nix >/dev/null || {
       echo 'nix is required for VM package builds.' >&2
       echo 'Install Nix and enable nix-command and flakes; see os-image/nix/README.md.' >&2
@@ -28,8 +34,15 @@ case "$mode" in
   *) echo 'NKE_PACKAGE_BUILDER must be auto, host, or nix' >&2; exit 1 ;;
 esac
 echo "package builder: $mode ($arch)"
-[[ "${1:-}" != --check ]] || exit 0
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+if [[ "${1:-}" == --check ]]; then
+  if [[ "$mode" == nix ]]; then
+    # Realize the guest runner now: without a matching Linux builder or a cache
+    # hit this fails here rather than part-way through an image bake.
+    echo "realizing the builder VM runner; this may download the guest closure"
+    nix build --no-link "$repo_root/os-image#builder-$arch"
+  fi
+  exit 0
+fi
 if [[ "$mode" == nix ]]; then
   exec nix run "$repo_root/os-image#build-packages-$arch" -- \
     --source "$repo_root" --output "${ARTIFACTS_DIR:?ARTIFACTS_DIR is required}"

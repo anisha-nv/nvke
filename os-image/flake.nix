@@ -34,7 +34,7 @@
           };
           native =
             hostPkgs.stdenv.hostPlatform.parsed.cpu.name == guest.pkgs.stdenv.hostPlatform.parsed.cpu.name;
-          machine = if arch == "arm64" then "virt,gic-version=3" else "q35";
+          machine = if arch == "arm64" then "virt,gic-version=max" else "q35";
         in
         hostPkgs.writeShellApplication {
           name = "nke-builder-${arch}";
@@ -68,8 +68,9 @@
               kvm|hvf) cpu=host ;;
               *) echo "ACCELERATOR must be kvm, hvf, or tcg" >&2; exit 1 ;;
             esac
-            export QEMU_NET_OPTS="hostfwd=tcp:127.0.0.1:''${SSH_PORT:-2222}-:22"
-            # exec replaces this wrapper with the launcher so signals reach the VM.
+            export QEMU_NET_OPTS="hostfwd=tcp:127.0.0.1:''${SSH_PORT:-${
+              if arch == "arm64" then "5422" else "5423"
+            }}-:22"
             exec ${guest.config.system.build.vm}/bin/run-nke-builder-${arch}-vm \
               -machine ${machine},accel="$accel" -cpu "$cpu" "$@"
           '';
@@ -83,7 +84,6 @@
             name = "nke-builder-ssh";
             runtimeInputs = [ pkgs.openssh ];
             text = ''
-              # Hand control to SSH; no extra wrapper process is needed.
               exec ssh -F /dev/null -p "$SSH_PORT" \
                 -i "$NKE_BUILDER_STATE_DIR/client-key" \
                 -o IdentityAgent=none -o IdentitiesOnly=yes -o BatchMode=yes \
@@ -118,7 +118,6 @@
           arch: guestSystem:
           nixpkgs.lib.nameValuePair "builder-${arch}" (mkBuilder hostSystem arch guestSystem)
         ) guests)
-        # // merges attribute sets: combine VM launchers, build apps, and the default.
         // (nixpkgs.lib.mapAttrs' (
           arch: _: nixpkgs.lib.nameValuePair "build-packages-${arch}" (mkPackageApp hostSystem arch)
         ) guests)
