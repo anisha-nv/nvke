@@ -84,6 +84,8 @@ endif
 # vice versa) always falls back to tcg software emulation, which the CI
 # workflow's own comments clock at roughly 10x slower than KVM for a
 # same-arch build; cross-arch tcg is not expected to be faster.
+# macOS spells it arm64, never aarch64, so it never matches here -- which costs
+# nothing: this probe also requires /dev/kvm, which macOS does not have.
 ifeq ($(ARCH),amd64)
   ARCH_UNAME := x86_64
 else ifeq ($(ARCH),arm64)
@@ -189,7 +191,27 @@ prepare-installer-iso: preflight
 	mkdir -p $(ISO_CACHE)
 	ISO_URL=$(ISO_URL) ISO_CHECKSUM=$(ISO_CHECKSUM) OUT_DIR=$(ISO_CACHE) ./scripts/prepare-installer-iso.sh
 
+# Image builds run the Ubuntu installer, so they need kvm or tcg. The shared
+# boot harness also knows about hvf, but that is for run-vm/boot-smoke on
+# macOS: check-deps already requires a matching-architecture Linux host here.
+# ISO_URL carries the architecture that nke-node-*.pkr.hcl parses into
+# local.arch, so a hand-passed ISO_URL disagreeing with ARCH would build the
+# wrong image under the right QEMU.
 check-acceleration:
+	@case "$(ACCELERATOR)" in \
+		kvm|tcg) ;; \
+		*) echo "ACCELERATOR=$(ACCELERATOR) is not supported for image builds: they run under kvm or tcg. hvf is for run-vm/boot-smoke only." >&2; exit 1 ;; \
+	esac
+	@ARCH=$(ARCH) ISO_URL=$(ISO_URL) bash -ec '\
+		if [[ "$$ISO_URL" =~ ubuntu-[0-9.]+-live-server-(amd64|arm64)\.iso$$ ]]; then \
+			iso_arch="$${BASH_REMATCH[1]}"; \
+		else \
+			iso_arch=unrecognised; \
+		fi; \
+		if [[ "$$iso_arch" != "$$ARCH" ]]; then \
+			echo "ISO_URL architecture ($$iso_arch) does not match ARCH=$$ARCH: $$ISO_URL" >&2; \
+			exit 1; \
+		fi'
 	@ARCH=$(ARCH) ACCELERATOR=$(ACCELERATOR) REQUIRE_ACCELERATION=$(REQUIRE_ACCELERATION) bash -ec '\
 		. ./scripts/qemu-arch.sh; nke_qemu_env "$$ARCH"'
 

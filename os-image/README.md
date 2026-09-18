@@ -50,7 +50,9 @@ builder or guest package-build fallback.
 
 `image-native` requires usable KVM. The generic `image` target and the existing
 `packer/` targets allow `ACCELERATOR=tcg` for development. Emulated builds are
-much slower. The build keeps artifacts in `packer/artifacts/<arch>/` and
+much slower. Image builds accept `kvm` or `tcg` and nothing else —
+`check-acceleration` rejects `ACCELERATOR=hvf`, which exists only for `run-vm`
+and `boot-smoke`. The build keeps artifacts in `packer/artifacts/<arch>/` and
 uploads them to `/var/tmp/nke-image`, which the provisioner removes before
 finishing the image. Installer ISOs remain in their separate cache.
 

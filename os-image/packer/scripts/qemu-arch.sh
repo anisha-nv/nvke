@@ -17,23 +17,40 @@ nke_arch_from_qcow() {
   esac
 }
 
-# Prefer distro firmware paths, then the EDK2 files QEMU exposes through -L.
-nke_find_firmware() {
-  local qemu="$1" name="$2" candidate dir
-  shift 2
-  for candidate in "$@"; do
-    if [[ -f "$candidate" ]]; then
-      printf '%s\n' "$candidate"
+# Sets EFI_CODE_DEFAULT and EFI_VARS_DEFAULT from the first complete firmware
+# pair: the distro paths first, then the EDK2 files QEMU exposes through -L.
+# The two halves are looked up as a pair on purpose. A host carrying
+# OVMF_CODE_4M.fd but no OVMF_VARS_4M.fd would otherwise pair the distro's code
+# blob with QEMU's own edk2-i386-vars.fd, a combination nobody ships or tests.
+# Finding nothing at all is not an error here: OVMF_CODE and
+# OVMF_VARS_TEMPLATE can still supply the firmware.
+nke_find_firmware_pair() {
+  local qemu="$1" code_name="$2" vars_name="$3" dir pair code vars
+  local -a pairs=("$4|$5")
+  while IFS= read -r dir; do
+    [[ -n "$dir" ]] && pairs+=("$dir/$code_name|$dir/$vars_name")
+  done < <("$qemu" -L help 2>/dev/null)
+
+  for pair in "${pairs[@]}"; do
+    code="${pair%%|*}"
+    vars="${pair##*|}"
+    if [[ -f "$code" && -f "$vars" ]]; then
+      EFI_CODE_DEFAULT="$code"
+      EFI_VARS_DEFAULT="$vars"
       return 0
+    fi
+    if [[ -f "$code" ]]; then
+      echo "qemu-arch: $code has no matching $vars; install the firmware package's variables template" >&2
+      return 1
+    fi
+    if [[ -f "$vars" ]]; then
+      echo "qemu-arch: $vars has no matching $code; install the firmware package's code blob" >&2
+      return 1
     fi
   done
-  while IFS= read -r dir; do
-    if [[ -n "$dir" && -f "$dir/$name" ]]; then
-      printf '%s\n' "$dir/$name"
-      return 0
-    fi
-  done < <("$qemu" -L help 2>/dev/null)
-  return 1
+  EFI_CODE_DEFAULT=""
+  EFI_VARS_DEFAULT=""
+  return 0
 }
 
 # shellcheck disable=SC2034 # Values are the public interface for callers that source this file.
@@ -41,27 +58,44 @@ nke_find_firmware() {
 # EFI_CODE_DEFAULT, EFI_VARS_DEFAULT, NKE_ACCELERATED, NKE_ACCELERATOR and
 # TPM_DEVICE_SPEC. TPM_DEVICE_SPEC includes the software TPM's tpmdev id.
 nke_qemu_env() {
-  local arch="$1" host_arch host_os qemu_cpu_override="${QEMU_CPU:-}" hvf_supported=0 kvm_supported=0
+  local arch="$1" host_arch host_os hvf_supported=0 kvm_supported=0
+  local -a firmware
+  # Every output is derived from $arch alone: the same shell calls this once
+  # per architecture (arm64 packages then an amd64 image, say), so a value
+  # carried over from the previous call would silently run the wrong QEMU.
   case "$arch" in
     amd64)
-      QEMU_BIN="${QEMU_BIN:-qemu-system-x86_64}"
-      QEMU_MACHINE="${QEMU_MACHINE:-q35}"
-      EFI_CODE_DEFAULT="$(nke_find_firmware "$QEMU_BIN" edk2-x86_64-code.fd /usr/share/OVMF/OVMF_CODE_4M.fd)" || true
-      EFI_VARS_DEFAULT="$(nke_find_firmware "$QEMU_BIN" edk2-i386-vars.fd /usr/share/OVMF/OVMF_VARS_4M.fd)" || true
+      QEMU_BIN="qemu-system-x86_64"
+      QEMU_MACHINE=q35
       TPM_DEVICE=tpm-tis
+      firmware=(edk2-x86_64-code.fd edk2-i386-vars.fd
+        /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_VARS_4M.fd)
       ;;
     arm64)
-      QEMU_BIN="${QEMU_BIN:-qemu-system-aarch64}"
-      QEMU_MACHINE="${QEMU_MACHINE:-virt}"
-      EFI_CODE_DEFAULT="$(nke_find_firmware "$QEMU_BIN" edk2-aarch64-code.fd /usr/share/AAVMF/AAVMF_CODE.fd)" || true
-      EFI_VARS_DEFAULT="$(nke_find_firmware "$QEMU_BIN" edk2-arm-vars.fd /usr/share/AAVMF/AAVMF_VARS.fd)" || true
+      QEMU_BIN="qemu-system-aarch64"
+      QEMU_MACHINE=virt
       TPM_DEVICE=tpm-tis-device
+      firmware=(edk2-aarch64-code.fd edk2-arm-vars.fd
+        /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/AAVMF/AAVMF_VARS.fd)
       ;;
     *)
       echo "qemu-arch: unsupported architecture '$arch': expected amd64 or arm64" >&2
       return 1
       ;;
   esac
+
+  if ! command -v "$QEMU_BIN" >/dev/null 2>&1; then
+    echo "qemu-arch: $QEMU_BIN is not on PATH; $arch images need it" >&2
+    return 1
+  fi
+
+  if [[ -n "${OVMF_CODE:-}" && -n "${OVMF_VARS_TEMPLATE:-}" ]]; then
+    # Fully overridden: there is nothing discovery could contribute.
+    EFI_CODE_DEFAULT="$OVMF_CODE"
+    EFI_VARS_DEFAULT="$OVMF_VARS_TEMPLATE"
+  else
+    nke_find_firmware_pair "$QEMU_BIN" "${firmware[@]}" || return 1
+  fi
 
   if [[ -z "$EFI_CODE_DEFAULT" && -z "${OVMF_CODE+x}" ]] || [[ -z "$EFI_VARS_DEFAULT" && -z "${OVMF_VARS_TEMPLATE+x}" ]]; then
     echo "qemu-arch: no UEFI firmware found for $arch; set OVMF_CODE and OVMF_VARS_TEMPLATE" >&2
@@ -124,11 +158,11 @@ nke_qemu_env() {
   esac
 
   if [[ "$NKE_ACCELERATED" == 1 ]]; then
-    QEMU_CPU="${qemu_cpu_override:-host}"
+    QEMU_CPU=host
   elif [[ "$arch" == arm64 ]]; then
-    QEMU_CPU="${qemu_cpu_override:-max,pauth-impdef=on}"
+    QEMU_CPU=max,pauth-impdef=on
   else
-    QEMU_CPU="${qemu_cpu_override:-max}"
+    QEMU_CPU=max
   fi
 
   TPM_DEVICE_SPEC="${TPM_DEVICE},tpmdev=tpm0"

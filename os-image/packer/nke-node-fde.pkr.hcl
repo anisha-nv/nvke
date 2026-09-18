@@ -64,7 +64,7 @@ variable "root_fs_label" {
 variable "accelerator" {
   type        = string
   default     = "kvm"
-  description = "QEMU accelerator: kvm (Linux) or tcg (software emulation)."
+  description = "QEMU accelerator: kvm (Linux) or tcg (software emulation); hvf is not supported for image builds."
 }
 
 variable "cpu_model" {
@@ -115,15 +115,16 @@ variable "artifacts_dir" {
   description = "Host directory containing prepared build artifacts."
 }
 
+# No default: packer/Makefile resolves the firmware pair through
+# scripts/qemu-arch.sh and always passes both. A default here would let a
+# missing -var silently boot the wrong firmware instead of failing.
 variable "efi_firmware_code" {
   type        = string
-  default     = ""
   description = "UEFI firmware code blob."
 }
 
 variable "efi_firmware_vars" {
   type        = string
-  default     = ""
   description = "UEFI firmware writable variables template."
 }
 
@@ -149,13 +150,10 @@ locals {
   nvidia_kernel_package = local.arch == "arm64" ? "linux-nvidia-64k" : "linux-nvidia"
 
   # See the same locals in nke-node-non-fde.pkr.hcl: QEMU on this host only
-  # ever runs the guest arch matching its own binary, "virt" is ARM's
-  # equivalent of q35/i440fx, and AAVMF is arm64's UEFI firmware, not an
-  # interchangeable drop-in for OVMF.
+  # ever runs the guest arch matching its own binary, and "virt" is ARM's
+  # equivalent of q35/i440fx.
   qemu_binary      = local.arch == "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64"
   machine_type     = local.arch == "arm64" ? "virt" : "q35"
-  default_efi_code = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_CODE.fd" : "/usr/share/OVMF/OVMF_CODE_4M.fd"
-  default_efi_vars = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_VARS.fd" : "/usr/share/OVMF/OVMF_VARS_4M.fd"
   # Also not under local.artifacts, for the same reason. CI has no way to
   # inspect a stuck build interactively (no VNC/monitor access), so this
   # captures the guest's own boot/install console output to a file the
@@ -206,8 +204,8 @@ source "qemu" "nke-fde" {
   # See the same setting in nke-node-non-fde.pkr.hcl.
   disk_cache = "unsafe"
 
-  efi_firmware_code = coalesce(var.efi_firmware_code, local.default_efi_code)
-  efi_firmware_vars = coalesce(var.efi_firmware_vars, local.default_efi_vars)
+  efi_firmware_code = var.efi_firmware_code
+  efi_firmware_vars = var.efi_firmware_vars
   efi_boot          = true
 
   http_content = {

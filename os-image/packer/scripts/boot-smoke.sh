@@ -144,6 +144,10 @@ systemctl is-enabled spire-agent.service
 systemctl is-enabled nke-spire-configure.service
 test -x /usr/local/bin/nke-agent
 test -x /usr/local/bin/nke-agent-updater
+# The mode bits say nothing about whether the binary runs: -version exits 0
+# only if it matches the image's architecture and resolves its libraries.
+/usr/local/bin/nke-agent -version
+/usr/local/bin/nke-agent-updater -version
 dpkg-query -W -f='${Status}\n' nke-agent | grep -Fxq 'install ok installed'
 for path in /usr/local/bin/nke-agent /usr/local/bin/nke-agent-updater \
   /etc/systemd/system/nke-agent.service /etc/systemd/system/nke-agent-updater@.service; do

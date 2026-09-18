@@ -11,25 +11,43 @@ source "${ROOT}/qemu-arch.sh"
 workdir="$(mktemp -d)"
 trap 'rm -rf "${workdir}"' EXIT
 mkdir -p "${workdir}/firmware"
-touch "${workdir}/firmware/edk2-aarch64-code.fd" "${workdir}/firmware/edk2-arm-vars.fd"
-cat >"${workdir}/qemu" <<EOF
+touch "${workdir}/firmware/edk2-aarch64-code.fd" "${workdir}/firmware/edk2-arm-vars.fd" \
+  "${workdir}/firmware/edk2-x86_64-code.fd" "${workdir}/firmware/edk2-i386-vars.fd"
+cat >"${workdir}/qemu-system-aarch64" <<EOF
 #!/usr/bin/env bash
 if [[ "\$1" == -L && "\$2" == help ]]; then printf '%s\\n' '${workdir}/firmware'; fi
 if [[ "\$1" == -accel && "\$2" == help ]]; then printf '%s\\n' hvf tcg; fi
 if [[ "\$1" == -device && "\$2" == tpm-tis-device,help && -z "\${NO_PPI:-}" ]]; then printf '%s\\n' 'ppi=<bool>'; fi
 EOF
-chmod +x "${workdir}/qemu"
+chmod +x "${workdir}/qemu-system-aarch64"
+cp "${workdir}/qemu-system-aarch64" "${workdir}/qemu-system-x86_64"
+# nke_qemu_env picks its QEMU binary by name, so the fixtures shadow any real
+# QEMU on PATH under both names it can choose.
+PATH="${workdir}:${PATH}"
 
-QEMU_BIN="${workdir}/qemu"
+QEMU_FAKE="${workdir}/qemu-system-aarch64"
 # Exercise firmware search with controlled candidates, independent of OVMF/AAVMF
-# installed on the host. An existing distro candidate must beat QEMU's fallback.
-touch "${workdir}/distro-code.fd"
-[[ "$(nke_find_firmware "$QEMU_BIN" edk2-aarch64-code.fd "${workdir}/distro-code.fd")" == "${workdir}/distro-code.fd" ]]
-[[ "$(nke_find_firmware "$QEMU_BIN" edk2-aarch64-code.fd "${workdir}/missing.fd")" == "${workdir}/firmware/edk2-aarch64-code.fd" ]]
-if nke_find_firmware "$QEMU_BIN" missing.fd "${workdir}/missing.fd" >/dev/null; then
-  echo 'missing firmware unexpectedly found' >&2
+# installed on the host. A complete distro pair must beat QEMU's fallback.
+touch "${workdir}/distro-code.fd" "${workdir}/distro-vars.fd"
+nke_find_firmware_pair "$QEMU_FAKE" edk2-aarch64-code.fd edk2-arm-vars.fd \
+  "${workdir}/distro-code.fd" "${workdir}/distro-vars.fd"
+[[ "${EFI_CODE_DEFAULT}" == "${workdir}/distro-code.fd" ]]
+[[ "${EFI_VARS_DEFAULT}" == "${workdir}/distro-vars.fd" ]]
+nke_find_firmware_pair "$QEMU_FAKE" edk2-aarch64-code.fd edk2-arm-vars.fd \
+  "${workdir}/missing-code.fd" "${workdir}/missing-vars.fd"
+[[ "${EFI_CODE_DEFAULT}" == "${workdir}/firmware/edk2-aarch64-code.fd" ]]
+[[ "${EFI_VARS_DEFAULT}" == "${workdir}/firmware/edk2-arm-vars.fd" ]]
+# Half a pair is a broken host, not a licence to borrow the other half from a
+# different firmware build.
+if nke_find_firmware_pair "$QEMU_FAKE" edk2-aarch64-code.fd edk2-arm-vars.fd \
+  "${workdir}/distro-code.fd" "${workdir}/missing-vars.fd" 2>/dev/null; then
+  echo 'half a firmware pair unexpectedly accepted' >&2
   exit 1
 fi
+# No candidate at all is not an error: OVMF_CODE/OVMF_VARS_TEMPLATE can supply it.
+nke_find_firmware_pair "$QEMU_FAKE" missing-code.fd missing-vars.fd \
+  "${workdir}/missing-code.fd" "${workdir}/missing-vars.fd"
+[[ -z "${EFI_CODE_DEFAULT}" && -z "${EFI_VARS_DEFAULT}" ]]
 
 unset OVMF_CODE OVMF_VARS_TEMPLATE
 uname() { case "$1" in -m) printf '%s\n' arm64 ;; -s) printf '%s\n' Darwin ;; esac; }
@@ -43,7 +61,6 @@ nke_qemu_env arm64
 [[ "${TPM_DEVICE_SPEC}" == 'tpm-tis-device,tpmdev=tpm0,ppi=off' ]]
 
 ACCELERATOR=tcg
-unset QEMU_CPU
 nke_qemu_env arm64
 [[ "${NKE_ACCELERATOR}" == tcg ]]
 [[ "${NKE_ACCELERATED}" == 0 ]]
@@ -59,6 +76,16 @@ export NO_PPI=1
 nke_qemu_env arm64
 [[ "${TPM_DEVICE_SPEC}" == 'tpm-tis-device,tpmdev=tpm0' ]]
 unset NO_PPI
+
+# Every call re-derives its outputs from the architecture argument: nothing may
+# leak from a previous call in the same shell.
+nke_qemu_env arm64
+[[ "${QEMU_BIN}" == qemu-system-aarch64 ]]
+nke_qemu_env amd64
+[[ "${QEMU_BIN}" == qemu-system-x86_64 ]]
+[[ "${QEMU_MACHINE}" == q35 ]]
+[[ "${QEMU_CPU}" == max ]]
+[[ "${TPM_DEVICE}" == tpm-tis ]]
 
 uname() { case "$1" in -m) printf '%s\n' x86_64 ;; -s) printf '%s\n' Linux ;; esac; }
 OVMF_CODE=/firmware/code OVMF_VARS_TEMPLATE=/firmware/vars

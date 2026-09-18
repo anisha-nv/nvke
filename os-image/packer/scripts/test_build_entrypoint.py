@@ -20,7 +20,6 @@ class BuildEntrypointTest(unittest.TestCase):
         self.env = os.environ.copy()
         self.env.update(
             PATH=f"{self.root}:{self.env['PATH']}",
-            QEMU_BIN=str(self.root / "qemu"),
             OVMF_CODE=str(self.root / "code.fd"),
             OVMF_VARS_TEMPLATE=str(self.root / "vars.fd"),
             PACKER_ARGS=str(self.root / "args.json"),
@@ -28,7 +27,10 @@ class BuildEntrypointTest(unittest.TestCase):
         for name in ("code.fd", "vars.fd"):
             (self.root / name).touch()
         self.script("uname", '#!/bin/sh\ncase "$1" in -m) echo aarch64;; -s) echo Linux;; esac\n')
-        self.script("qemu", '#!/bin/sh\nif [ "$1" = -accel ]; then echo tcg; fi\n')
+        # nke_qemu_env resolves the QEMU binary by name off PATH; check-deps
+        # looks for qemu-img, which the macOS CI runner lacks.
+        self.script("qemu-system-aarch64", '#!/bin/sh\nif [ "$1" = -accel ]; then echo tcg; fi\n')
+        self.script("qemu-img", '#!/bin/sh\nexit 0\n')
         self.script("packer", '''#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
@@ -67,6 +69,18 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cannot be hardware accelerated", result.stderr)
         self.assertFalse(Path(self.env['PACKER_ARGS']).exists())
+
+    def test_acceleration_preflight_rejects_hvf_and_mismatched_iso_arch(self):
+        cases = (
+            (["ACCELERATOR=hvf"], "not supported for image builds"),
+            (["ISO_URL=https://example.invalid/ubuntu-26.04.1-live-server-amd64.iso"],
+             "does not match ARCH=arm64"),
+        )
+        for extra, expected in cases:
+            with self.subTest(extra=extra):
+                result = self.make("check-acceleration", *extra)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stderr)
 
     def test_package_preflight_rejects_macos_and_mismatched_linux(self):
         for system, arch in (("Darwin", "arm64"), ("Linux", "x86_64")):

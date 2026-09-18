@@ -48,7 +48,7 @@ variable "root_fs_label" {
 variable "accelerator" {
   type        = string
   default     = "kvm"
-  description = "QEMU accelerator: kvm (Linux) or tcg (software emulation)."
+  description = "QEMU accelerator: kvm (Linux) or tcg (software emulation); hvf is not supported for image builds."
 }
 
 variable "cpu_model" {
@@ -82,15 +82,16 @@ variable "artifacts_dir" {
   description = "Host directory containing prepared build artifacts."
 }
 
+# No default: packer/Makefile resolves the firmware pair through
+# scripts/qemu-arch.sh and always passes both. A default here would let a
+# missing -var silently boot the wrong firmware instead of failing.
 variable "efi_firmware_code" {
   type        = string
-  default     = ""
   description = "UEFI firmware code blob."
 }
 
 variable "efi_firmware_vars" {
   type        = string
-  default     = ""
   description = "UEFI firmware writable variables template."
 }
 
@@ -116,13 +117,10 @@ locals {
   # QEMU on this host only ever runs the guest arch matching its own binary
   # (qemu-system-x86_64 vs qemu-system-aarch64) -- there's no single binary
   # that does both. "virt" is QEMU's generic ARM platform (q35/i440fx are
-  # x86 chipsets, meaningless on arm64). AAVMF is UEFI firmware built for
-  # aarch64, the same role OVMF plays for x86 -- they are not interchangeable
-  # binaries despite both being "the UEFI firmware files".
+  # x86 chipsets, meaningless on arm64). The matching UEFI firmware pair comes
+  # from packer/Makefile via scripts/qemu-arch.sh.
   qemu_binary      = local.arch == "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64"
   machine_type     = local.arch == "arm64" ? "virt" : "q35"
-  default_efi_code = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_CODE.fd" : "/usr/share/OVMF/OVMF_CODE_4M.fd"
-  default_efi_vars = local.arch == "arm64" ? "/usr/share/AAVMF/AAVMF_VARS.fd" : "/usr/share/OVMF/OVMF_VARS_4M.fd"
 
   # arm64's virt machine has no BIOS-era fixed (cd0) device alias the way
   # x86 does -- search --file finds the CD-ROM by content instead of
@@ -167,8 +165,8 @@ source "qemu" "nke-non-fde" {
   # cleanly, so the exported qcow2 is complete.
   disk_cache = "unsafe"
 
-  efi_firmware_code = coalesce(var.efi_firmware_code, local.default_efi_code)
-  efi_firmware_vars = coalesce(var.efi_firmware_vars, local.default_efi_vars)
+  efi_firmware_code = var.efi_firmware_code
+  efi_firmware_vars = var.efi_firmware_vars
   efi_boot          = true
 
   http_content = {
