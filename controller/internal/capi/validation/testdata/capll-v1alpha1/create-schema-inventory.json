@@ -32,6 +32,264 @@
             },
             "type": "object"
           },
+          "securityGroups": {
+            "items": {
+              "properties": {
+                "name": {
+                  "maxLength": 24,
+                  "minLength": 1,
+                  "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+                  "type": "string"
+                },
+                "rules": {
+                  "properties": {
+                    "egress": {
+                      "items": {
+                        "properties": {
+                          "destination": {
+                            "items": {
+                              "properties": {
+                                "except": {
+                                  "items": {
+                                    "maxLength": 100,
+                                    "type": "string"
+                                  },
+                                  "maxItems": 8,
+                                  "type": "array"
+                                },
+                                "type": {
+                                  "enum": [
+                                    "CIDR"
+                                  ],
+                                  "type": "string"
+                                },
+                                "value": {
+                                  "maxLength": 100,
+                                  "type": "string",
+                                  "x-kubernetes-validations": [
+                                    {
+                                      "message": "value must be a CIDR block",
+                                      "rule": "isCIDR(self)"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "value"
+                              ],
+                              "type": "object"
+                            },
+                            "maxItems": 16,
+                            "type": "array"
+                          },
+                          "name": {
+                            "maxLength": 63,
+                            "type": "string"
+                          },
+                          "protocolConfig": {
+                            "properties": {
+                              "ports": {
+                                "maxLength": 100,
+                                "type": "string"
+                              },
+                              "protocol": {
+                                "enum": [
+                                  "tcp",
+                                  "udp",
+                                  "icmp",
+                                  "any"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "protocol"
+                            ],
+                            "type": "object",
+                            "x-kubernetes-validations": [
+                              {
+                                "message": "tcp and udp require ports; icmp and any must not set them",
+                                "rule": "(self.protocol == 'tcp' || self.protocol == 'udp') ? (has(self.ports) \u0026\u0026 size(self.ports) \u003e 0) : (!has(self.ports) || size(self.ports) == 0)"
+                              }
+                            ]
+                          },
+                          "source": {
+                            "items": {
+                              "properties": {
+                                "except": {
+                                  "items": {
+                                    "maxLength": 100,
+                                    "type": "string"
+                                  },
+                                  "maxItems": 8,
+                                  "type": "array"
+                                },
+                                "type": {
+                                  "enum": [
+                                    "CIDR"
+                                  ],
+                                  "type": "string"
+                                },
+                                "value": {
+                                  "maxLength": 100,
+                                  "type": "string",
+                                  "x-kubernetes-validations": [
+                                    {
+                                      "message": "value must be a CIDR block",
+                                      "rule": "isCIDR(self)"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "value"
+                              ],
+                              "type": "object"
+                            },
+                            "maxItems": 16,
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "maxItems": 32,
+                      "type": "array"
+                    },
+                    "ingress": {
+                      "items": {
+                        "properties": {
+                          "destination": {
+                            "items": {
+                              "properties": {
+                                "except": {
+                                  "items": {
+                                    "maxLength": 100,
+                                    "type": "string"
+                                  },
+                                  "maxItems": 8,
+                                  "type": "array"
+                                },
+                                "type": {
+                                  "enum": [
+                                    "CIDR"
+                                  ],
+                                  "type": "string"
+                                },
+                                "value": {
+                                  "maxLength": 100,
+                                  "type": "string",
+                                  "x-kubernetes-validations": [
+                                    {
+                                      "message": "value must be a CIDR block",
+                                      "rule": "isCIDR(self)"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "value"
+                              ],
+                              "type": "object"
+                            },
+                            "maxItems": 16,
+                            "type": "array"
+                          },
+                          "name": {
+                            "maxLength": 63,
+                            "type": "string"
+                          },
+                          "protocolConfig": {
+                            "properties": {
+                              "ports": {
+                                "maxLength": 100,
+                                "type": "string"
+                              },
+                              "protocol": {
+                                "enum": [
+                                  "tcp",
+                                  "udp",
+                                  "icmp",
+                                  "any"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "protocol"
+                            ],
+                            "type": "object",
+                            "x-kubernetes-validations": [
+                              {
+                                "message": "tcp and udp require ports; icmp and any must not set them",
+                                "rule": "(self.protocol == 'tcp' || self.protocol == 'udp') ? (has(self.ports) \u0026\u0026 size(self.ports) \u003e 0) : (!has(self.ports) || size(self.ports) == 0)"
+                              }
+                            ]
+                          },
+                          "source": {
+                            "items": {
+                              "properties": {
+                                "except": {
+                                  "items": {
+                                    "maxLength": 100,
+                                    "type": "string"
+                                  },
+                                  "maxItems": 8,
+                                  "type": "array"
+                                },
+                                "type": {
+                                  "enum": [
+                                    "CIDR"
+                                  ],
+                                  "type": "string"
+                                },
+                                "value": {
+                                  "maxLength": 100,
+                                  "type": "string",
+                                  "x-kubernetes-validations": [
+                                    {
+                                      "message": "value must be a CIDR block",
+                                      "rule": "isCIDR(self)"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "value"
+                              ],
+                              "type": "object"
+                            },
+                            "maxItems": 16,
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "maxItems": 32,
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                },
+                "stateless": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "type": "object"
+            },
+            "maxItems": 16,
+            "type": "array",
+            "x-kubernetes-list-map-keys": [
+              "name"
+            ],
+            "x-kubernetes-list-type": "map"
+          },
           "siteID": {
             "type": "string"
           },
@@ -48,15 +306,15 @@
           },
           {
             "message": "vpcID is immutable",
-            "rule": "has(self.vpcID) == has(oldSelf.vpcID) && (!has(self.vpcID) || self.vpcID == oldSelf.vpcID)"
+            "rule": "has(self.vpcID) == has(oldSelf.vpcID) \u0026\u0026 (!has(self.vpcID) || self.vpcID == oldSelf.vpcID)"
           },
           {
             "message": "orgID is immutable",
-            "rule": "has(self.orgID) == has(oldSelf.orgID) && (!has(self.orgID) || self.orgID == oldSelf.orgID)"
+            "rule": "has(self.orgID) == has(oldSelf.orgID) \u0026\u0026 (!has(self.orgID) || self.orgID == oldSelf.orgID)"
           },
           {
             "message": "cloudProviderEnabled is immutable",
-            "rule": "has(self.cloudProviderEnabled) == has(oldSelf.cloudProviderEnabled) && (!has(self.cloudProviderEnabled) || self.cloudProviderEnabled == oldSelf.cloudProviderEnabled)"
+            "rule": "has(self.cloudProviderEnabled) == has(oldSelf.cloudProviderEnabled) \u0026\u0026 (!has(self.cloudProviderEnabled) || self.cloudProviderEnabled == oldSelf.cloudProviderEnabled)"
           }
         ]
       }
@@ -68,11 +326,11 @@
     "x-kubernetes-validations": [
       {
         "message": "spec.siteID is immutable after a VPC is bound",
-        "rule": "!has(oldSelf.status) || !has(oldSelf.status.vpc) || (has(self.spec.siteID) == has(oldSelf.spec.siteID) && (!has(self.spec.siteID) || self.spec.siteID == oldSelf.spec.siteID))"
+        "rule": "!has(oldSelf.status) || !has(oldSelf.status.vpc) || (has(self.spec.siteID) == has(oldSelf.spec.siteID) \u0026\u0026 (!has(self.spec.siteID) || self.spec.siteID == oldSelf.spec.siteID))"
       },
       {
         "message": "spec.owner is immutable after a VPC is bound",
-        "rule": "!has(oldSelf.status) || !has(oldSelf.status.vpc) || (has(self.spec.owner) == has(oldSelf.spec.owner) && (!has(self.spec.owner) || self.spec.owner == oldSelf.spec.owner))"
+        "rule": "!has(oldSelf.status) || !has(oldSelf.status.vpc) || (has(self.spec.owner) == has(oldSelf.spec.owner) \u0026\u0026 (!has(self.spec.owner) || self.spec.owner == oldSelf.spec.owner))"
       }
     ]
   },
@@ -109,6 +367,23 @@
             "minLength": 1,
             "type": "string"
           },
+          "securityGroupRefs": {
+            "properties": {
+              "gpuNetworkInterface": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "primaryNetworkInterface": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
           "securityGroups": {
             "properties": {
               "gpuNetworkInterface": {
@@ -133,30 +408,40 @@
         "required": [
           "instanceType"
         ],
-        "type": "object"
+        "type": "object",
+        "x-kubernetes-validations": [
+          {
+            "message": "a network interface takes either securityGroups or securityGroupRefs, not both",
+            "rule": "!has(self.securityGroups) || !has(self.securityGroupRefs) || (((!has(self.securityGroups.primaryNetworkInterface) || size(self.securityGroups.primaryNetworkInterface) == 0) || (!has(self.securityGroupRefs.primaryNetworkInterface) || size(self.securityGroupRefs.primaryNetworkInterface) == 0)) \u0026\u0026 ((!has(self.securityGroups.gpuNetworkInterface) || size(self.securityGroups.gpuNetworkInterface) == 0) || (!has(self.securityGroupRefs.gpuNetworkInterface) || size(self.securityGroupRefs.gpuNetworkInterface) == 0)))"
+          }
+        ]
       }
     },
     "type": "object",
     "x-kubernetes-validations": [
       {
         "message": "spec.instanceType is immutable after a compute request is submitted",
-        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID)) || self.spec.instanceType == oldSelf.spec.instanceType"
+        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) \u0026\u0026 !has(oldSelf.status.instanceID)) || self.spec.instanceType == oldSelf.spec.instanceType"
       },
       {
         "message": "spec.hostOSProfile is immutable after a compute request is submitted",
-        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID)) || (has(self.spec.hostOSProfile) == has(oldSelf.spec.hostOSProfile) && (!has(self.spec.hostOSProfile) || self.spec.hostOSProfile == oldSelf.spec.hostOSProfile))"
+        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) \u0026\u0026 !has(oldSelf.status.instanceID)) || (has(self.spec.hostOSProfile) == has(oldSelf.spec.hostOSProfile) \u0026\u0026 (!has(self.spec.hostOSProfile) || self.spec.hostOSProfile == oldSelf.spec.hostOSProfile))"
       },
       {
         "message": "spec.vmProfile is immutable after a compute request is submitted",
-        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID)) || (has(self.spec.vmProfile) == has(oldSelf.spec.vmProfile) && (!has(self.spec.vmProfile) || self.spec.vmProfile == oldSelf.spec.vmProfile))"
+        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) \u0026\u0026 !has(oldSelf.status.instanceID)) || (has(self.spec.vmProfile) == has(oldSelf.spec.vmProfile) \u0026\u0026 (!has(self.spec.vmProfile) || self.spec.vmProfile == oldSelf.spec.vmProfile))"
       },
       {
         "message": "spec.fulfillmentStrategy is immutable after a compute request is submitted",
-        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID)) || (has(self.spec.fulfillmentStrategy) == has(oldSelf.spec.fulfillmentStrategy) && (!has(self.spec.fulfillmentStrategy) || self.spec.fulfillmentStrategy == oldSelf.spec.fulfillmentStrategy))"
+        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) \u0026\u0026 !has(oldSelf.status.instanceID)) || (has(self.spec.fulfillmentStrategy) == has(oldSelf.spec.fulfillmentStrategy) \u0026\u0026 (!has(self.spec.fulfillmentStrategy) || self.spec.fulfillmentStrategy == oldSelf.spec.fulfillmentStrategy))"
       },
       {
         "message": "spec.securityGroups is immutable after a compute request is submitted",
-        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID)) || (has(self.spec.securityGroups) == has(oldSelf.spec.securityGroups) && (!has(self.spec.securityGroups) || self.spec.securityGroups == oldSelf.spec.securityGroups))"
+        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) \u0026\u0026 !has(oldSelf.status.instanceID)) || (has(self.spec.securityGroups) == has(oldSelf.spec.securityGroups) \u0026\u0026 (!has(self.spec.securityGroups) || self.spec.securityGroups == oldSelf.spec.securityGroups))"
+      },
+      {
+        "message": "spec.securityGroupRefs is immutable after a compute request is submitted",
+        "rule": "!has(oldSelf.status) || (!has(oldSelf.status.requestID) \u0026\u0026 !has(oldSelf.status.instanceID)) || (has(self.spec.securityGroupRefs) == has(oldSelf.spec.securityGroupRefs) \u0026\u0026 (!has(self.spec.securityGroupRefs) || self.spec.securityGroupRefs == oldSelf.spec.securityGroupRefs))"
       }
     ]
   },
@@ -197,6 +482,23 @@
                     "minLength": 1,
                     "type": "string"
                   },
+                  "securityGroupRefs": {
+                    "properties": {
+                      "gpuNetworkInterface": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "primaryNetworkInterface": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "type": "object"
+                  },
                   "securityGroups": {
                     "properties": {
                       "gpuNetworkInterface": {
@@ -226,6 +528,10 @@
                   {
                     "message": "spec.template.spec is immutable",
                     "rule": "self == oldSelf"
+                  },
+                  {
+                    "message": "a network interface takes either securityGroups or securityGroupRefs, not both",
+                    "rule": "!has(self.securityGroups) || !has(self.securityGroupRefs) || (((!has(self.securityGroups.primaryNetworkInterface) || size(self.securityGroups.primaryNetworkInterface) == 0) || (!has(self.securityGroupRefs.primaryNetworkInterface) || size(self.securityGroupRefs.primaryNetworkInterface) == 0)) \u0026\u0026 ((!has(self.securityGroups.gpuNetworkInterface) || size(self.securityGroups.gpuNetworkInterface) == 0) || (!has(self.securityGroupRefs.gpuNetworkInterface) || size(self.securityGroupRefs.gpuNetworkInterface) == 0)))"
                   }
                 ]
               }

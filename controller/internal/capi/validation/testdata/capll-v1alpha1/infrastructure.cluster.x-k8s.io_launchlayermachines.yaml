@@ -99,6 +99,26 @@ spec:
                 maxLength: 512
                 minLength: 1
                 type: string
+              securityGroupRefs:
+                description: |-
+                  SecurityGroupRefs name entries of the owning
+                  LaunchLayerCluster.spec.securityGroups, which CAPLL creates and deletes.
+                  Naming a group CAPLL manages rather than an ID is what lets a template be
+                  written before the group exists.
+                properties:
+                  gpuNetworkInterface:
+                    description: GPUNetworkInterface are the groups for GPU-paired
+                      network cards.
+                    items:
+                      type: string
+                    type: array
+                  primaryNetworkInterface:
+                    description: PrimaryNetworkInterface are the groups for the primary
+                      interface.
+                    items:
+                      type: string
+                    type: array
+                type: object
               securityGroups:
                 description: |-
                   SecurityGroups are existing LaunchLayer security group IDs to attach.
@@ -129,6 +149,15 @@ spec:
             required:
             - instanceType
             type: object
+            x-kubernetes-validations:
+            - message: a network interface takes either securityGroups or securityGroupRefs,
+                not both
+              rule: '!has(self.securityGroups) || !has(self.securityGroupRefs) ||
+                (((!has(self.securityGroups.primaryNetworkInterface) || size(self.securityGroups.primaryNetworkInterface)
+                == 0) || (!has(self.securityGroupRefs.primaryNetworkInterface) ||
+                size(self.securityGroupRefs.primaryNetworkInterface) == 0)) && ((!has(self.securityGroups.gpuNetworkInterface)
+                || size(self.securityGroups.gpuNetworkInterface) == 0) || (!has(self.securityGroupRefs.gpuNetworkInterface)
+                || size(self.securityGroupRefs.gpuNetworkInterface) == 0)))'
           status:
             description: |-
               LaunchLayerMachineStatus defines the observed state of LaunchLayerMachine.
@@ -246,6 +275,12 @@ spec:
                   empty for a virtual instance, but the instance type already decided the
                   substrate, so this is recorded for operators rather than for logic.
                 type: string
+              rackID:
+                description: |-
+                  RackID is the rack the instance landed on. Populated for a virtual
+                  instance as well as a physical one, so it is the placement signal that
+                  holds whatever the instance type resolved to. Observational only.
+                type: string
               requestID:
                 description: |-
                   RequestID is the Compute request submitted for this node. Written before
@@ -275,6 +310,12 @@ spec:
           rule: '!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID))
             || (has(self.spec.securityGroups) == has(oldSelf.spec.securityGroups)
             && (!has(self.spec.securityGroups) || self.spec.securityGroups == oldSelf.spec.securityGroups))'
+        - message: spec.securityGroupRefs is immutable after a compute request is
+            submitted
+          rule: '!has(oldSelf.status) || (!has(oldSelf.status.requestID) && !has(oldSelf.status.instanceID))
+            || (has(self.spec.securityGroupRefs) == has(oldSelf.spec.securityGroupRefs)
+            && (!has(self.spec.securityGroupRefs) || self.spec.securityGroupRefs ==
+            oldSelf.spec.securityGroupRefs))'
     served: true
     storage: true
     subresources:

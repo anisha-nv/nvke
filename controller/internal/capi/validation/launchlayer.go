@@ -29,7 +29,7 @@ const (
 	// LaunchLayerAPIVersion is the supported CAPLL manifest version.
 	LaunchLayerAPIVersion = "infrastructure.cluster.x-k8s.io/v1alpha1"
 	// LaunchLayerRevision pins the schema and runtime requirements reviewed here.
-	LaunchLayerRevision = "80a0d3da5d4af8ebd25cf3d8f897c4779248f50b"
+	LaunchLayerRevision = "0f5ac57f1aaa0f0cadf4043525223bc907c1fff8"
 )
 
 type fieldRule struct {

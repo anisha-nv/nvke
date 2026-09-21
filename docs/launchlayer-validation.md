@@ -23,7 +23,7 @@ work. New clusters, later pools, and provider-bearing PATCH requests require
 their mode to be enabled.
 
 The source contract is pinned to
-[CAPLL revision 80a0d3da5d4af8ebd25cf3d8f897c4779248f50b](https://github.com/NVIDIA/cluster-api-provider-launchlayer/tree/80a0d3da5d4af8ebd25cf3d8f897c4779248f50b).
+[CAPLL revision 0f5ac57f1aaa0f0cadf4043525223bc907c1fff8](https://github.com/dsx-ai-factory/cluster-api-provider-launchlayer/tree/0f5ac57f1aaa0f0cadf4043525223bc907c1fff8).
 [CRD fixtures and inventory](../controller/internal/capi/validation/testdata/capll-v1alpha1/README.md)
 record the reviewed schema. CWE authors
 `infrastructure.cluster.x-k8s.io/v1alpha1` LaunchLayerCluster and

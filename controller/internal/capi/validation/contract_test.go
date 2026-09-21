@@ -17,9 +17,9 @@ import (
 
 func TestLaunchLayerPinnedContract(t *testing.T) {
 	digests := map[string]string{
-		"launchlayerclusters":         "bc53e04991f2a19af435807cd7933fa07bdb6df52e7f70f8107b22603417e4d3",
-		"launchlayermachines":         "c907abbb9aaf9034eae1775e97624111c3bb7667a1ae7029d088088faeb388e6",
-		"launchlayermachinetemplates": "d03d240e1cc677d0f9ae5e9416afad1d295c583bc83dc67e80ea354aad2e8ec0",
+		"launchlayerclusters":         "a45fc67d5b8163499be90bab0cfdf2f0957662d41b51183076e489f7e217ac76",
+		"launchlayermachines":         "07c273e6fa943bfaca755204f5c107d183f320a642fb3273d6d134663b7bd0bd",
+		"launchlayermachinetemplates": "761154203f7fd9d9c9bf10efc86e0be60595dae1d6e6357e7e423278a8d0b5b6",
 	}
 	inventory := map[string]any{}
 	for plural, digest := range digests {
@@ -47,8 +47,21 @@ func TestLaunchLayerPinnedContract(t *testing.T) {
 		"new fields, required/type/enum/length/default/CEL constraints require a validator review")
 }
 
-// No general CEL evaluator: the sole creation rule is the VPC presence XOR.
-// Every other reviewed rule requires oldSelf and belongs to Kubernetes updates.
+// No general CEL evaluator: creation rules are enumerated by exact text and
+// reviewed individually. Every other reviewed rule requires oldSelf and
+// belongs to Kubernetes updates.
+//
+// Reviewed at revision 0f5ac57f1aaa0f0cadf4043525223bc907c1fff8:
+//   - isCIDR(self), and the protocol/ports consistency rule, both on
+//     spec.securityGroups[].rules.{ingress,egress}, the security group rule
+//     definitions. CWE's securityGroups intake only accepts group name
+//     references (primaryNetworkInterface/gpuNetworkInterface string arrays,
+//     see securityGroups() below); it does not let an operator submit a group
+//     rule, so this constraint is unreachable through CWE today.
+//   - the securityGroups/securityGroupRefs mutual-exclusivity rule.
+//     securityGroupRefs is new at this revision. CWE does not expose it
+//     anywhere in its typed API, so this constraint is unreachable through
+//     CWE today.
 func classifyRules(t *testing.T, value any) {
 	t.Helper()
 	switch v := value.(type) {
@@ -56,7 +69,11 @@ func classifyRules(t *testing.T, value any) {
 		if rules, ok := v["x-kubernetes-validations"].([]any); ok {
 			for _, raw := range rules {
 				rule := raw.(map[string]any)["rule"].(string)
-				require.True(t, strings.Contains(rule, "oldSelf") || rule == "has(self.vpcID) != has(self.orgID)",
+				require.True(t, strings.Contains(rule, "oldSelf") ||
+					rule == "has(self.vpcID) != has(self.orgID)" ||
+					rule == "isCIDR(self)" ||
+					rule == "(self.protocol == 'tcp' || self.protocol == 'udp') ? (has(self.ports) && size(self.ports) > 0) : (!has(self.ports) || size(self.ports) == 0)" ||
+					rule == "!has(self.securityGroups) || !has(self.securityGroupRefs) || (((!has(self.securityGroups.primaryNetworkInterface) || size(self.securityGroups.primaryNetworkInterface) == 0) || (!has(self.securityGroupRefs.primaryNetworkInterface) || size(self.securityGroupRefs.primaryNetworkInterface) == 0)) && ((!has(self.securityGroups.gpuNetworkInterface) || size(self.securityGroups.gpuNetworkInterface) == 0) || (!has(self.securityGroupRefs.gpuNetworkInterface) || size(self.securityGroupRefs.gpuNetworkInterface) == 0)))",
 					"unclassified creation rule: %s", rule)
 			}
 		}

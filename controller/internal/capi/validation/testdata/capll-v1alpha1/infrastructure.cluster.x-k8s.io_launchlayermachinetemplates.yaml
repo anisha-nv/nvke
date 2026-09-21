@@ -90,6 +90,26 @@ spec:
                         maxLength: 512
                         minLength: 1
                         type: string
+                      securityGroupRefs:
+                        description: |-
+                          SecurityGroupRefs name entries of the owning
+                          LaunchLayerCluster.spec.securityGroups, which CAPLL creates and deletes.
+                          Naming a group CAPLL manages rather than an ID is what lets a template be
+                          written before the group exists.
+                        properties:
+                          gpuNetworkInterface:
+                            description: GPUNetworkInterface are the groups for GPU-paired
+                              network cards.
+                            items:
+                              type: string
+                            type: array
+                          primaryNetworkInterface:
+                            description: PrimaryNetworkInterface are the groups for
+                              the primary interface.
+                            items:
+                              type: string
+                            type: array
+                        type: object
                       securityGroups:
                         description: |-
                           SecurityGroups are existing LaunchLayer security group IDs to attach.
@@ -123,6 +143,16 @@ spec:
                     x-kubernetes-validations:
                     - message: spec.template.spec is immutable
                       rule: self == oldSelf
+                    - message: a network interface takes either securityGroups or
+                        securityGroupRefs, not both
+                      rule: '!has(self.securityGroups) || !has(self.securityGroupRefs)
+                        || (((!has(self.securityGroups.primaryNetworkInterface) ||
+                        size(self.securityGroups.primaryNetworkInterface) == 0) ||
+                        (!has(self.securityGroupRefs.primaryNetworkInterface) || size(self.securityGroupRefs.primaryNetworkInterface)
+                        == 0)) && ((!has(self.securityGroups.gpuNetworkInterface)
+                        || size(self.securityGroups.gpuNetworkInterface) == 0) ||
+                        (!has(self.securityGroupRefs.gpuNetworkInterface) || size(self.securityGroupRefs.gpuNetworkInterface)
+                        == 0)))'
                 required:
                 - spec
                 type: object

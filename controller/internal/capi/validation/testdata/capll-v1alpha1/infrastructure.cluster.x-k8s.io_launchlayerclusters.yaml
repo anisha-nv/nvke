@@ -103,6 +103,276 @@ spec:
                     maxLength: 253
                     type: string
                 type: object
+              securityGroups:
+                description: |-
+                  SecurityGroups are groups CAPLL creates in this cluster's organization and
+                  deletes with it, attached by a LaunchLayerMachine through
+                  spec.securityGroupRefs. They are declared per cluster because one group
+                  serves every machine referencing it and its lifetime is the cluster's.
+
+                  Rules are supplied here, never defaulted. A provider that owns the load
+                  balancer and installs Kubernetes knows which ports a role needs and can
+                  ship a rule set per role; CAPLL does neither, so choosing one would be
+                  guessing at one deployment's policy.
+                items:
+                  description: |-
+                    ManagedSecurityGroup is a security group CAPLL creates with the cluster and
+                    deletes with it.
+                  properties:
+                    description:
+                      description: Description is carried through to LaunchLayer.
+                      maxLength: 255
+                      type: string
+                    name:
+                      description: |-
+                        Name identifies the group within this cluster and is what a
+                        LaunchLayerMachine refers to. It is not the name LaunchLayer sees: a
+                        bare-metal group is scoped to the organization rather than to the VPC, so
+                        the name sent is derived per cluster to keep two clusters apart.
+                      maxLength: 24
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    rules:
+                      description: |-
+                        Rules is the whole desired rule set: editing it replaces what LaunchLayer
+                        holds rather than adding to it. A direction with no rules denies it.
+                      properties:
+                        egress:
+                          description: Egress rules match on Destination.
+                          items:
+                            description: SecurityGroupRule permits one class of traffic.
+                            properties:
+                              destination:
+                                description: Destination is where egress traffic goes.
+                                items:
+                                  description: SecurityGroupTarget is one end of a
+                                    rule.
+                                  properties:
+                                    except:
+                                      description: Except carves ranges back out of
+                                        Value.
+                                      items:
+                                        maxLength: 100
+                                        type: string
+                                      maxItems: 8
+                                      type: array
+                                    type:
+                                      description: |-
+                                        Type selects how Value is read. Only CIDR is accepted: naming another
+                                        group is reserved for virtualized groups, and CAPLL creates none.
+                                      enum:
+                                      - CIDR
+                                      type: string
+                                    value:
+                                      description: Value is the CIDR block this end
+                                        of the rule matches.
+                                      maxLength: 100
+                                      type: string
+                                      x-kubernetes-validations:
+                                      - message: value must be a CIDR block
+                                        rule: isCIDR(self)
+                                  required:
+                                  - type
+                                  - value
+                                  type: object
+                                maxItems: 16
+                                type: array
+                              name:
+                                description: Name labels the rule for an operator
+                                  reading it back.
+                                maxLength: 63
+                                type: string
+                              protocolConfig:
+                                description: ProtocolConfig narrows the rule to one
+                                  protocol. Omitted matches any.
+                                properties:
+                                  ports:
+                                    description: |-
+                                      Ports is a comma-separated list of ports and ranges, "80,443,1000-1010".
+                                      Only tcp and udp read it.
+                                    maxLength: 100
+                                    type: string
+                                  protocol:
+                                    enum:
+                                    - tcp
+                                    - udp
+                                    - icmp
+                                    - any
+                                    type: string
+                                required:
+                                - protocol
+                                type: object
+                                x-kubernetes-validations:
+                                - message: tcp and udp require ports; icmp and any
+                                    must not set them
+                                  rule: '(self.protocol == ''tcp'' || self.protocol
+                                    == ''udp'') ? (has(self.ports) && size(self.ports)
+                                    > 0) : (!has(self.ports) || size(self.ports) ==
+                                    0)'
+                              source:
+                                description: Source is where ingress traffic comes
+                                  from.
+                                items:
+                                  description: SecurityGroupTarget is one end of a
+                                    rule.
+                                  properties:
+                                    except:
+                                      description: Except carves ranges back out of
+                                        Value.
+                                      items:
+                                        maxLength: 100
+                                        type: string
+                                      maxItems: 8
+                                      type: array
+                                    type:
+                                      description: |-
+                                        Type selects how Value is read. Only CIDR is accepted: naming another
+                                        group is reserved for virtualized groups, and CAPLL creates none.
+                                      enum:
+                                      - CIDR
+                                      type: string
+                                    value:
+                                      description: Value is the CIDR block this end
+                                        of the rule matches.
+                                      maxLength: 100
+                                      type: string
+                                      x-kubernetes-validations:
+                                      - message: value must be a CIDR block
+                                        rule: isCIDR(self)
+                                  required:
+                                  - type
+                                  - value
+                                  type: object
+                                maxItems: 16
+                                type: array
+                            type: object
+                          maxItems: 32
+                          type: array
+                        ingress:
+                          description: Ingress rules match on Source.
+                          items:
+                            description: SecurityGroupRule permits one class of traffic.
+                            properties:
+                              destination:
+                                description: Destination is where egress traffic goes.
+                                items:
+                                  description: SecurityGroupTarget is one end of a
+                                    rule.
+                                  properties:
+                                    except:
+                                      description: Except carves ranges back out of
+                                        Value.
+                                      items:
+                                        maxLength: 100
+                                        type: string
+                                      maxItems: 8
+                                      type: array
+                                    type:
+                                      description: |-
+                                        Type selects how Value is read. Only CIDR is accepted: naming another
+                                        group is reserved for virtualized groups, and CAPLL creates none.
+                                      enum:
+                                      - CIDR
+                                      type: string
+                                    value:
+                                      description: Value is the CIDR block this end
+                                        of the rule matches.
+                                      maxLength: 100
+                                      type: string
+                                      x-kubernetes-validations:
+                                      - message: value must be a CIDR block
+                                        rule: isCIDR(self)
+                                  required:
+                                  - type
+                                  - value
+                                  type: object
+                                maxItems: 16
+                                type: array
+                              name:
+                                description: Name labels the rule for an operator
+                                  reading it back.
+                                maxLength: 63
+                                type: string
+                              protocolConfig:
+                                description: ProtocolConfig narrows the rule to one
+                                  protocol. Omitted matches any.
+                                properties:
+                                  ports:
+                                    description: |-
+                                      Ports is a comma-separated list of ports and ranges, "80,443,1000-1010".
+                                      Only tcp and udp read it.
+                                    maxLength: 100
+                                    type: string
+                                  protocol:
+                                    enum:
+                                    - tcp
+                                    - udp
+                                    - icmp
+                                    - any
+                                    type: string
+                                required:
+                                - protocol
+                                type: object
+                                x-kubernetes-validations:
+                                - message: tcp and udp require ports; icmp and any
+                                    must not set them
+                                  rule: '(self.protocol == ''tcp'' || self.protocol
+                                    == ''udp'') ? (has(self.ports) && size(self.ports)
+                                    > 0) : (!has(self.ports) || size(self.ports) ==
+                                    0)'
+                              source:
+                                description: Source is where ingress traffic comes
+                                  from.
+                                items:
+                                  description: SecurityGroupTarget is one end of a
+                                    rule.
+                                  properties:
+                                    except:
+                                      description: Except carves ranges back out of
+                                        Value.
+                                      items:
+                                        maxLength: 100
+                                        type: string
+                                      maxItems: 8
+                                      type: array
+                                    type:
+                                      description: |-
+                                        Type selects how Value is read. Only CIDR is accepted: naming another
+                                        group is reserved for virtualized groups, and CAPLL creates none.
+                                      enum:
+                                      - CIDR
+                                      type: string
+                                    value:
+                                      description: Value is the CIDR block this end
+                                        of the rule matches.
+                                      maxLength: 100
+                                      type: string
+                                      x-kubernetes-validations:
+                                      - message: value must be a CIDR block
+                                        rule: isCIDR(self)
+                                  required:
+                                  - type
+                                  - value
+                                  type: object
+                                maxItems: 16
+                                type: array
+                            type: object
+                          maxItems: 32
+                          type: array
+                      type: object
+                    stateless:
+                      description: Stateless drops connection tracking, so a reply
+                        needs a rule of its own.
+                      type: boolean
+                  required:
+                  - name
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               siteID:
                 description: SiteID names the LaunchLayer datahall this cluster's
                   machines come from.
@@ -199,6 +469,46 @@ spec:
                     description: Provisioned is true once the VPC has been validated.
                     type: boolean
                 type: object
+              securityGroups:
+                description: SecurityGroups records the managed groups, one per spec
+                  entry.
+                items:
+                  description: |-
+                    SecurityGroupStatus records one managed security group. Its ID is recorded as
+                    soon as creation returns; status follows from a later read.
+                  properties:
+                    appliedRules:
+                      description: |-
+                        AppliedRules fingerprints the definition LaunchLayer last accepted, so an
+                        edited group is pushed once and an unchanged one is left alone.
+                      type: string
+                    id:
+                      description: ID is the LaunchLayer identifier machines attach
+                        and CAPLL deletes.
+                      type: string
+                    name:
+                      description: Name is the spec.securityGroups entry this backs.
+                      type: string
+                    status:
+                      description: Status is the lifecycle state reported by the security
+                        group read.
+                      enum:
+                      - PENDING
+                      - READY
+                      - ERROR
+                      - FAILED
+                      - DELETING
+                      - DELETED
+                      type: string
+                  required:
+                  - id
+                  - name
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               siteID:
                 description: SiteID is the site resolved for this cluster.
                 type: string
