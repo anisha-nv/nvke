@@ -43,13 +43,32 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
         p.write_text(text)
         p.chmod(0o755)
 
-    def make(self, target, *extra, skip_build_setup=False):
-        args = [os.environ.get("MAKE", "make"), "--no-print-directory", "-C", str(PACKER_DIR)]
+    def make(self, target, *extra, skip_build_setup=False, directory=PACKER_DIR):
+        args = [os.environ.get("MAKE", "make"), "--no-print-directory", "-C", str(directory)]
         if skip_build_setup:
-            args += ["-o", "ssh-key", "-o", "init-fde", "-o", "init-non-fde", "-o", "prepare-installer-iso", "-o", "prepare-artifacts"]
-        args += [target, "ARCH=arm64", "ACCELERATOR=tcg", f"PACKER={self.root / 'packer'}",
+            args += ["-o", "check-deps", "-o", "ssh-key", "-o", "init-fde", "-o", "init-non-fde", "-o", "prepare-installer-iso", "-o", "prepare-artifacts"]
+        args += [target, "ARCH=arm64", f"PACKER={self.root / 'packer'}",
                  f"ARTIFACTS_DIR={self.root / 'artifacts'}", f"BUILD_LOGS={self.root / 'logs'}", *extra]
         return subprocess.run(args, env=self.env, text=True, capture_output=True, check=False)
+
+    def test_macos_uses_hvf_and_preserves_explicit_overrides(self):
+        self.script("uname", '#!/bin/sh\ncase "$1" in -m) echo arm64;; -s) echo Darwin;; esac\n')
+        self.script("sysctl", '#!/bin/sh\necho 1\n')
+        self.script("qemu-system-aarch64", '#!/bin/sh\nif [ "$1" = -accel ]; then printf "hvf\\ntcg\\n"; fi\n')
+        for variant in ("fde", "non-fde"):
+            for overrides, expected in (
+                ([], ["accelerator=hvf", "cpu_model=host", "ssh_timeout=30m", "boot_wait=10s"]),
+                (["ACCELERATOR=tcg"], ["accelerator=tcg", "cpu_model=max,pauth-impdef=on",
+                                      "ssh_timeout=180m", "boot_wait=30s"]),
+                (["CPU_MODEL=cortex-a72", "SSH_TIMEOUT=90m", "BOOT_WAIT=45s"],
+                 ["accelerator=hvf", "cpu_model=cortex-a72", "ssh_timeout=90m", "boot_wait=45s"]),
+            ):
+                with self.subTest(variant=variant, overrides=overrides):
+                    result = self.make(f"os-image-{variant}", *overrides, skip_build_setup=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    args = json.loads(Path(self.env['PACKER_ARGS']).read_text())
+                    for value in expected:
+                        self.assertIn(value, args)
 
     def test_both_variants_pass_firmware_before_template_and_keep_current_defaults(self):
         for variant in ("fde", "non-fde"):
@@ -65,15 +84,45 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
                               f"efi_firmware_vars={self.env['OVMF_VARS_TEMPLATE']}"):
                     self.assertIn(value, args)
 
+    def test_image_profiles_select_safe_defaults_and_reject_incompatible_requests(self):
+        self.script("sysctl", '#!/bin/sh\necho 1\n')
+        self.script("qemu-system-aarch64", '#!/bin/sh\nif [ "$1" = -accel ]; then printf "hvf\\ntcg\\n"; fi\n')
+        cases = (
+            ("Linux", [], "production", "tcg", None),
+            ("Darwin", [], "development", "hvf", None),
+            ("Darwin", ["IMAGE_PROFILE=production"], "production", "tcg", None),
+            ("Darwin", ["IMAGE_PROFILE=production", "ACCELERATOR=hvf"], None, None, "64 KiB"),
+            ("Darwin", ["IMAGE_PROFILE=production", "REQUIRE_ACCELERATION=1"], None, None,
+             "cannot be hardware accelerated"),
+            ("Linux", ["IMAGE_PROFILE=development"], "development", "tcg", None),
+            ("Linux", ["IMAGE_PROFILE=invalid"], None, None, "IMAGE_PROFILE"),
+        )
+        for variant in ("fde", "non-fde"):
+            for system, overrides, profile, accelerator, error in cases:
+                with self.subTest(variant=variant, system=system, overrides=overrides):
+                    self.script("uname", f'#!/bin/sh\ncase "$1" in -m) echo arm64;; -s) echo {system};; esac\n')
+                    Path(self.env['PACKER_ARGS']).unlink(missing_ok=True)
+                    result = self.make(f"os-image-{variant}", *overrides, skip_build_setup=True)
+                    if error:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn(error, result.stderr)
+                        self.assertFalse(Path(self.env['PACKER_ARGS']).exists())
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        args = json.loads(Path(self.env['PACKER_ARGS']).read_text())
+                        self.assertIn(f"image_profile={profile}", args)
+                        self.assertIn(f"accelerator={accelerator}", args)
+                        if accelerator == "tcg":
+                            self.assertIn("cpu_model=max,pauth-impdef=on", args)
+
     def test_native_requirement_rejects_tcg_before_packer_build(self):
         result = self.make("os-image-non-fde", "REQUIRE_ACCELERATION=1", skip_build_setup=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cannot be hardware accelerated", result.stderr)
         self.assertFalse(Path(self.env['PACKER_ARGS']).exists())
 
-    def test_acceleration_preflight_rejects_hvf_and_mismatched_iso_arch(self):
+    def test_acceleration_preflight_rejects_mismatched_iso_arch(self):
         cases = (
-            (["ACCELERATOR=hvf"], "not supported for image builds"),
             (["ISO_URL=https://example.invalid/ubuntu-26.04.1-live-server-amd64.iso"],
              "does not match ARCH=arm64"),
         )
@@ -82,6 +131,34 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
                 result = self.make("check-acceleration", *extra)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(expected, result.stderr)
+
+    def test_unavailable_hardware_accelerator_fails_before_packer(self):
+        for accelerator in ("hvf", "kvm"):
+            with self.subTest(accelerator=accelerator):
+                result = self.make("os-image-non-fde", f"ACCELERATOR={accelerator}",
+                                   skip_build_setup=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("unavailable", result.stderr)
+                self.assertFalse(Path(self.env['PACKER_ARGS']).exists())
+
+    def test_image_native_still_requires_linux_kvm(self):
+        self.script("nix", "#!/bin/sh\nexit 0\n")
+        self.script("uname", '#!/bin/sh\ncase "$1" in -m) echo arm64;; -s) echo Darwin;; esac\n')
+        self.script("sysctl", '#!/bin/sh\necho 1\n')
+        self.script("qemu-system-aarch64", '#!/bin/sh\nif [ "$1" = -accel ]; then printf "hvf\\ntcg\\n"; fi\n')
+        result = self.make("image-native", skip_build_setup=True, directory=PACKER_DIR.parent)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("requested accelerator kvm is unavailable", result.stderr)
+        self.assertFalse(Path(self.env['PACKER_ARGS']).exists())
+
+    def test_macos_cross_architecture_uses_tcg(self):
+        self.script("uname", '#!/bin/sh\ncase "$1" in -m) echo x86_64;; -s) echo Darwin;; esac\n')
+        self.script("qemu-system-aarch64", '#!/bin/sh\nif [ "$1" = -accel ]; then printf "hvf\\ntcg\\n"; fi\n')
+        result = self.make("os-image-non-fde", skip_build_setup=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        args = json.loads(Path(self.env['PACKER_ARGS']).read_text())
+        self.assertIn("accelerator=tcg", args)
+        self.assertIn("cpu_model=max,pauth-impdef=on", args)
 
     def test_package_preflight_selects_vm_for_macos_and_mismatched_linux(self):
         self.script("nix", "#!/bin/sh\nexit 0\n")

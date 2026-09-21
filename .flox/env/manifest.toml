@@ -1,11 +1,3 @@
-## Flox Environment Manifest -----------------------------------------
-##
-##   _Everything_ you need to know about the _manifest_ is here:
-##
-##               https://flox.dev/docs/concepts/manifest
-##
-## -------------------------------------------------------------------
-# Flox manifest version managed by Flox CLI
 schema-version = "1.11.0"
 
 
@@ -67,6 +59,8 @@ python3 = { pkg-path = "python313", pkg-group = "python" }
 pyyaml = { pkg-path = "python313Packages.pyyaml", pkg-group = "python" }
 # Nix CLI for OS-image package-builder VMs.
 nix.pkg-path = "nix"
+p7zip.pkg-path = "p7zip"
+xorriso.pkg-path = "xorriso"
 
 
 ## Environment Variables ---------------------------------------------

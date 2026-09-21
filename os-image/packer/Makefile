@@ -78,56 +78,15 @@ else
   ISO_CHECKSUM ?= file:https://releases.ubuntu.com/26.04/SHA256SUMS
 endif
 
-# uname -m spelling of ARCH, to compare against the host below. KVM only
-# virtualizes the host's own architecture -- an x86_64 host cannot
-# KVM-accelerate an arm64 guest (or the reverse), regardless of whether
-# /dev/kvm exists and is writable. Building arm64 on an x86_64 host (or
-# vice versa) always falls back to tcg software emulation, which the CI
-# workflow's own comments clock at roughly 10x slower than KVM for a
-# same-arch build; cross-arch tcg is not expected to be faster.
-# macOS spells it arm64, never aarch64, so it never matches here -- which costs
-# nothing: this probe also requires /dev/kvm, which macOS does not have.
-ifeq ($(ARCH),amd64)
-  ARCH_UNAME := x86_64
-else ifeq ($(ARCH),arm64)
-  ARCH_UNAME := aarch64
-else
-  $(error unsupported ARCH=$(ARCH); expected amd64 or arm64)
-endif
-HOST_ARCH := $(shell uname -m)
+# Leave selection to qemu-arch.sh: native HVF on macOS, native KVM on Linux,
+# otherwise TCG. Explicit ACCELERATOR and CPU_MODEL overrides remain supported.
+ACCELERATOR ?=
+CPU_MODEL ?=
+IMAGE_PROFILE ?= auto
 
-# Hardware acceleration where the host has it for this arch, software
-# emulation otherwise. Probed rather than declared: the CI runners are
-# containers with no /dev/kvm, so a fixed accelerator = kvm cannot build
-# there at all, and a fixed tcg would emulate on developer machines that
-# have the device.
-#
-# -w as well as -c: a present but unwritable /dev/kvm fails inside QEMU, later
-# and less legibly than falling back here.
-ACCELERATOR ?= $(shell if [ "$(HOST_ARCH)" = "$(ARCH_UNAME)" ] && [ -c /dev/kvm ] && [ -w /dev/kvm ]; then echo kvm; else echo tcg; fi)
-
-# "host" needs KVM to be meaningful; "max" is the safe choice under TCG. On an
-# arm64 host "max" also turns on pointer authentication, which tcg emulates so
-# slowly that the live installer's userspace stalls (2 h of wall time bought
-# 20 min of guest uptime); pauth-impdef=on keeps the feature and makes it cheap.
-comma := ,
-CPU_MODEL ?= $(if $(filter kvm,$(ACCELERATOR)),host,$(if $(filter arm64,$(ARCH)),max$(comma)pauth-impdef=on,max))
-
-# Emulated boot is minutes, not seconds. Overridable, so a slow runner can
-# raise it without editing this file. 60m wasn't enough under tcg: a real CI
-# run got through partitioning, curthooks, and most package installs and was
-# still legitimately working (mid unattended-upgrades) when it hit the 60m
-# wall — SSH only becomes reachable after the *entire* autoinstall completes
-# and reboots, so the whole install has to fit inside this one window. 15m
-# wasn't enough under kvm either: a real CI run on a GPU-labeled runner with
-# genuine /dev/kvm was still mid-autoinstall/second-boot (confirmed clean via
-# the serial console log, no crash) when it hit that wall at 15m48s — FDE's
-# LUKS/LVM/package-install work is heavier than the boot times this value was
-# originally set from. 120m wasn't enough for same-arch tcg on the arm64 pool
-# either: with pauth-impdef=on the install runs at roughly 10x the KVM pace
-# (14 min under KVM, so ~140 min), and run 34771011057 was six packages into
-# postinstall when it hit that wall.
-SSH_TIMEOUT ?= $(if $(filter kvm,$(ACCELERATOR)),30m,180m)
+# Defaults are chosen after acceleration detection: 30m for HVF/KVM and 180m
+# for TCG, where the full autoinstall must finish before SSH is available.
+SSH_TIMEOUT ?=
 
 # Guest vCPUs. More is not faster under tcg: every broadcast TLB invalidate
 # has to synchronise all vCPU threads, and run 34791670173 with 8 was still
@@ -140,18 +99,24 @@ CPUS ?= 4
 # this just needs to comfortably exceed BIOS+GRUB boot time under tcg — it
 # no longer has to land inside a narrow window. See boot_wait's comment in
 # nke-node-fde.pkr.hcl.
-BOOT_WAIT ?= $(if $(filter kvm,$(ACCELERATOR)),10s,30s)
+BOOT_WAIT ?=
 
 # Firmware and acceleration checks share the boot harness selection, including
-# QEMU's firmware directory on hosts without /usr/share/OVMF or AAVMF. The
-# wrapper receives the whole `packer build ... TEMPLATE` command and inserts the
-# firmware -var flags in front of the template, which Packer requires last.
-PACKER_BUILD = ARCH=$(ARCH) ACCELERATOR=$(ACCELERATOR) REQUIRE_ACCELERATION=$(REQUIRE_ACCELERATION) \
-	bash -ec '. ./scripts/qemu-arch.sh; nke_qemu_env "$$ARCH"; \
-	template=$${@: -1}; set -- "$${@:1:$$\#-1}"; \
-	exec "$$@" -var "efi_firmware_code=$${OVMF_CODE:-$$EFI_CODE_DEFAULT}" \
-	-var "efi_firmware_vars=$${OVMF_VARS_TEMPLATE:-$$EFI_VARS_DEFAULT}" "$$template"' \
-	bash $(PACKER) build
+# QEMU's firmware directory on hosts without /usr/share/OVMF or AAVMF.
+PACKER_BUILD = ARCH=$(ARCH) ACCELERATOR=$(ACCELERATOR) REQUIRE_ACCELERATION=$(REQUIRE_ACCELERATION) IMAGE_PROFILE=$(IMAGE_PROFILE) \
+	CPU_MODEL="$(CPU_MODEL)" SSH_TIMEOUT="$(SSH_TIMEOUT)" BOOT_WAIT="$(BOOT_WAIT)" \
+	bash -ec '. ./scripts/qemu-arch.sh; nke_image_env "$$ARCH"; QEMU_CPU="$${CPU_MODEL:-$$QEMU_CPU}"; \
+	if [ "$$NKE_ACCELERATED" = 1 ]; then ssh_timeout=30m; boot_wait=10s; \
+	else ssh_timeout=180m; boot_wait=30s; fi; \
+	echo "Image profile: $$IMAGE_PROFILE; QEMU accelerator: $$NKE_ACCELERATOR; CPU: $$QEMU_CPU"; \
+	if [ "$$NKE_ACCELERATED" = 0 ]; then echo "building with software emulation, which is far slower"; fi; \
+	packer="$$1"; shift; exec "$$packer" build \
+	-var "accelerator=$$NKE_ACCELERATOR" -var "cpu_model=$$QEMU_CPU" \
+	-var "image_profile=$$IMAGE_PROFILE" \
+	-var "ssh_timeout=$${SSH_TIMEOUT:-$$ssh_timeout}" -var "boot_wait=$${BOOT_WAIT:-$$boot_wait}" \
+	-var "efi_firmware_code=$${OVMF_CODE:-$$EFI_CODE_DEFAULT}" \
+	-var "efi_firmware_vars=$${OVMF_VARS_TEMPLATE:-$$EFI_VARS_DEFAULT}" "$$@"' \
+	bash $(PACKER)
 
 .PHONY: os-image-fde os-image-non-fde preflight init-fde init-non-fde ssh-key prepare-installer-iso prepare-artifacts clean check-deps check-source collect-qcow2-fde collect-qcow2-non-fde check-acceleration
 
@@ -192,17 +157,11 @@ prepare-installer-iso: preflight
 	mkdir -p $(ISO_CACHE)
 	ISO_URL=$(ISO_URL) ISO_CHECKSUM=$(ISO_CHECKSUM) OUT_DIR=$(ISO_CACHE) ./scripts/prepare-installer-iso.sh
 
-# Image builds run the Ubuntu installer, so they need kvm or tcg. The shared
-# boot harness also knows about hvf, but that is for run-vm/boot-smoke on
-# macOS; check-deps picks the host or VM package builder separately.
+# Image profiles select a compatible kernel and accelerator.
 # ISO_URL carries the architecture that nke-node-*.pkr.hcl parses into
 # local.arch, so a hand-passed ISO_URL disagreeing with ARCH would build the
 # wrong image under the right QEMU.
 check-acceleration:
-	@case "$(ACCELERATOR)" in \
-		kvm|tcg) ;; \
-		*) echo "ACCELERATOR=$(ACCELERATOR) is not supported for image builds: they run under kvm or tcg. hvf is for run-vm/boot-smoke only." >&2; exit 1 ;; \
-	esac
 	@ARCH=$(ARCH) ISO_URL=$(ISO_URL) bash -ec '\
 		if [[ "$$ISO_URL" =~ ubuntu-[0-9.]+-live-server-(amd64|arm64)\.iso$$ ]]; then \
 			iso_arch="$${BASH_REMATCH[1]}"; \
@@ -213,8 +172,8 @@ check-acceleration:
 			echo "ISO_URL architecture ($$iso_arch) does not match ARCH=$$ARCH: $$ISO_URL" >&2; \
 			exit 1; \
 		fi'
-	@ARCH=$(ARCH) ACCELERATOR=$(ACCELERATOR) REQUIRE_ACCELERATION=$(REQUIRE_ACCELERATION) bash -ec '\
-		. ./scripts/qemu-arch.sh; nke_qemu_env "$$ARCH"'
+	@ARCH=$(ARCH) ACCELERATOR=$(ACCELERATOR) REQUIRE_ACCELERATION=$(REQUIRE_ACCELERATION) IMAGE_PROFILE=$(IMAGE_PROFILE) bash -ec '\
+		. ./scripts/qemu-arch.sh; nke_image_env "$$ARCH"'
 
 # Stage the source-built packages before Packer starts the VM. Keeping this in
 # Make preserves the current workflow and leaves Packer responsible only for
@@ -300,7 +259,16 @@ define collect_qcow2
 		echo "QCOW2_DIST_DIR is required for $(1) QCOW2 collection" >&2; \
 		exit 1; \
 	fi; \
-	source_dir="$(CURDIR)/output-$(1)"; \
+	profile="$(IMAGE_PROFILE)"; \
+	if [ "$$profile" = auto ]; then \
+		if [ "$$(uname -s)" = Darwin ]; then profile=development; else profile=production; fi; \
+	fi; \
+	case "$$profile" in \
+		production) suffix= ;; \
+		development) suffix=-development ;; \
+		*) echo "IMAGE_PROFILE must be auto, production, or development" >&2; exit 1 ;; \
+	esac; \
+	source_dir="$(CURDIR)/output-$(1)$$suffix"; \
 	set -- "$$source_dir"/*.qcow2; \
 	if [ "$$#" -eq 1 ] && [ ! -e "$$1" ] && [ ! -L "$$1" ]; then \
 		set --; \
@@ -321,7 +289,7 @@ define collect_qcow2
 	esac; \
 	version="$${iso_name#ubuntu-}"; \
 	version="$${version%-live-server-$(ARCH).iso}"; \
-	expected="nke-node-$(1)-ubuntu-$$version-$(ARCH).qcow2"; \
+	expected="nke-node-$(1)$$suffix-ubuntu-$$version-$(ARCH).qcow2"; \
 	name="$${source##*/}"; \
 	if [ "$$name" != "$$expected" ]; then \
 		echo "expected $(1) $(ARCH) QCOW2 $$expected; found $$name" >&2; \
@@ -366,15 +334,8 @@ collect-qcow2-non-fde:
 # ../docs/full-disk-encryption.md.
 os-image-fde: ssh-key init-fde prepare-installer-iso prepare-artifacts
 	mkdir -p $(BUILD_LOGS)
-	@if [ "$(ACCELERATOR)" = "tcg" ]; then \
-		echo "no usable /dev/kvm: building with software emulation, which is far slower"; \
-	fi
 	PKR_VAR_luks_passphrase=$(LUKS_PASSPHRASE) $(PACKER_BUILD) \
-		-var accelerator=$(ACCELERATOR) \
-		-var cpu_model=$(CPU_MODEL) \
 		-var cpus=$(CPUS) \
-		-var ssh_timeout=$(SSH_TIMEOUT) \
-		-var boot_wait=$(BOOT_WAIT) \
 		-var iso_url=$(ISO_URL) \
 		-var iso_checksum=$(ISO_CHECKSUM) \
 		-var root_fs_label=$(ROOT_FS_LABEL) \
@@ -385,15 +346,8 @@ os-image-fde: ssh-key init-fde prepare-installer-iso prepare-artifacts
 # nke-node-non-fde.pkr.hcl.
 os-image-non-fde: ssh-key init-non-fde prepare-installer-iso prepare-artifacts
 	mkdir -p $(BUILD_LOGS)
-	@if [ "$(ACCELERATOR)" = "tcg" ]; then \
-		echo "no usable /dev/kvm: building with software emulation, which is far slower"; \
-	fi
 	$(PACKER_BUILD) \
-		-var accelerator=$(ACCELERATOR) \
-		-var cpu_model=$(CPU_MODEL) \
 		-var cpus=$(CPUS) \
-		-var ssh_timeout=$(SSH_TIMEOUT) \
-		-var boot_wait=$(BOOT_WAIT) \
 		-var iso_url=$(ISO_URL) \
 		-var iso_checksum=$(ISO_CHECKSUM) \
 		-var root_fs_label=$(ROOT_FS_LABEL) \

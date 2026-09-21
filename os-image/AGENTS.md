@@ -71,6 +71,11 @@ repository's `bin/`, and `make version-check` runs it with `--version`.
   usable native KVM; CI uses matching Linux KVM runners for both architectures.
   Package builds execute Linux kubeadm; matching Linux hosts build locally,
   while other hosts use the separate NixOS package-builder VM. The shared QEMU helper also supports HVF for boot tools on macOS.
+- Keep image profiles explicit: Make defaults to development on macOS and
+  production on Linux; direct Packer defaults to production. Development uses
+  `linux-generic` with distinct output names and `/etc/nke/image-profile`.
+  Production retains the NVIDIA kernels. Production arm64 on macOS requires
+  TCG because HVF cannot supply 64 KiB pages; reject an explicit HVF request.
 - Preserve `packages/spire-agent/` installation and the current package builders.
   `flake.nix` and `nix/` define the NixOS package-builder fallback; see `nix/README.md` for the integration status and Ubuntu-linkage checks.
 - Run `make test-qemu` for QEMU selection and build-entrypoint changes; the

@@ -15,6 +15,16 @@ packer {
   }
 }
 
+variable "image_profile" {
+  type        = string
+  default     = "production"
+  description = "production uses the NVIDIA kernel; development uses a generic kernel for local VMs."
+  validation {
+    condition     = contains(["production", "development"], var.image_profile)
+    error_message = "Image profile must be production or development."
+  }
+}
+
 variable "iso_url" {
   type        = string
   default     = "https://releases.ubuntu.com/26.04/ubuntu-26.04.1-live-server-amd64.iso"
@@ -48,13 +58,13 @@ variable "root_fs_label" {
 variable "accelerator" {
   type        = string
   default     = "kvm"
-  description = "QEMU accelerator: kvm (Linux) or tcg (software emulation); hvf is not supported for image builds."
+  description = "QEMU accelerator: kvm (Linux), hvf (macOS development), or tcg (software emulation)."
 }
 
 variable "cpu_model" {
   type        = string
   default     = "host"
-  description = "QEMU CPU model. Use 'host' with KVM, 'max' with TCG emulation."
+  description = "QEMU CPU model. Use 'host' with KVM/HVF, 'max' with TCG emulation."
 }
 
 variable "cpus" {
@@ -110,17 +120,20 @@ locals {
   iso_name_parts = regex("ubuntu-([0-9.]+)-live-server-(amd64|arm64)\\.iso$", var.iso_url)
   ubuntu_version = local.iso_name_parts[0]
   arch           = local.iso_name_parts[1]
-  # Ubuntu's NVIDIA-tuned kernel flavor: linux-nvidia-64k on arm64 (64k page
-  # size, matching node-images), linux-nvidia everywhere else.
-  nvidia_kernel_package = local.arch == "arm64" ? "linux-nvidia-64k" : "linux-nvidia"
+  # Production names and kernels stay stable. Development images are distinct
+  # and use the generic kernel that can boot under Apple Silicon HVF.
+  kernel_package   = var.image_profile == "development" ? "linux-generic" : (local.arch == "arm64" ? "linux-nvidia-64k" : "linux-nvidia")
+  profile_suffix   = var.image_profile == "development" ? "-development" : ""
+  image_name       = "nke-node-non-fde${local.profile_suffix}-ubuntu-${local.ubuntu_version}-${local.arch}.qcow2"
+  output_directory = "${path.root}/output-non-fde${local.profile_suffix}"
 
   # QEMU on this host only ever runs the guest arch matching its own binary
   # (qemu-system-x86_64 vs qemu-system-aarch64) -- there's no single binary
   # that does both. "virt" is QEMU's generic ARM platform (q35/i440fx are
   # x86 chipsets, meaningless on arm64). The matching UEFI firmware pair comes
   # from packer/Makefile via scripts/qemu-arch.sh.
-  qemu_binary      = local.arch == "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64"
-  machine_type     = local.arch == "arm64" ? "virt" : "q35"
+  qemu_binary  = local.arch == "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64"
+  machine_type = local.arch == "arm64" ? "virt" : "q35"
 
   # arm64's virt machine has no BIOS-era fixed (cd0) device alias the way
   # x86 does -- search --file finds the CD-ROM by content instead of
@@ -171,11 +184,11 @@ source "qemu" "nke-non-fde" {
 
   http_content = {
     "/user-data" = templatefile("${path.root}/cidata/autoinstall-lvm.pkrtpl", {
-      ssh_public_key        = file("${local.ssh_dir}/id_ed25519.pub")
-      luks_enabled          = false
-      luks_passphrase       = ""
-      nvidia_kernel_package = local.nvidia_kernel_package
-      serial_console        = local.arch == "arm64" ? "ttyAMA0" : "ttyS0"
+      ssh_public_key  = file("${local.ssh_dir}/id_ed25519.pub")
+      luks_enabled    = false
+      luks_passphrase = ""
+      kernel_package  = local.kernel_package
+      serial_console  = local.arch == "arm64" ? "ttyAMA0" : "ttyS0"
     })
     "/meta-data" = "instance-id: nke-packer-non-fde\nlocal-hostname: nke-packer-non-fde\n"
   }
@@ -212,7 +225,7 @@ source "qemu" "nke-non-fde" {
       # the console= kernel param in local.boot_command routes here instead
       # of the VGA framebuffer. Read on a stuck/failed build; harmless noise
       # otherwise.
-      ["-serial", "file:${local.build_logs}/non-fde-install-console.log"],
+      ["-serial", "file:${local.build_logs}/non-fde${local.profile_suffix}-install-console.log"],
     ]
   )
 
@@ -226,8 +239,8 @@ source "qemu" "nke-non-fde" {
   ssh_handshake_attempts = 10000
 
   shutdown_command = "sudo shutdown -P now"
-  vm_name          = "nke-node-non-fde-ubuntu-${local.ubuntu_version}-${local.arch}.qcow2"
-  output_directory = "${path.root}/output-non-fde"
+  vm_name          = local.image_name
+  output_directory = local.output_directory
   headless         = true
   memory           = 8192
   cpus             = var.cpus
@@ -237,6 +250,12 @@ source "qemu" "nke-non-fde" {
 build {
   name    = "nke-node-non-fde"
   sources = ["source.qemu.nke-non-fde"]
+
+  # Check the booted kernel and preserve the selected profile before cleanup.
+  provisioner "shell" {
+    environment_vars = ["IMAGE_PROFILE=${var.image_profile}"]
+    script           = "${path.root}/scripts/configure-image-kernel.sh"
+  }
 
   provisioner "shell" {
     inline = ["mkdir -p /var/tmp/nke-image/lvm"]
@@ -266,6 +285,6 @@ build {
   # compression happens here instead, after the builder has already written
   # the uncompressed qcow2 to output_directory.
   post-processor "shell-local" {
-    inline = ["${path.root}/scripts/compress-qcow2.sh ${path.root}/output-non-fde/nke-node-non-fde-ubuntu-${local.ubuntu_version}-${local.arch}.qcow2"]
+    inline = ["${path.root}/scripts/compress-qcow2.sh ${local.output_directory}/${local.image_name}"]
   }
 }

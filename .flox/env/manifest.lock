@@ -55,6 +55,9 @@
         "pkg-group": "oapi-codegen",
         "version": "2.4.1"
       },
+      "p7zip": {
+        "pkg-path": "p7zip"
+      },
       "python3": {
         "pkg-path": "python313",
         "pkg-group": "python"
@@ -75,6 +78,9 @@
       },
       "tilt": {
         "pkg-path": "tilt"
+      },
+      "xorriso": {
+        "pkg-path": "xorriso"
       },
       "yq-go": {
         "pkg-path": "yq-go"
@@ -1117,6 +1123,7 @@
       "version": "4.4.1",
       "outputs_to_install": [
         "man",
+        "out",
         "out"
       ],
       "outputs": {
@@ -1151,6 +1158,7 @@
       "version": "4.4.1",
       "outputs_to_install": [
         "man",
+        "out",
         "out"
       ],
       "outputs": {
@@ -1452,6 +1460,105 @@
         "doc": "/nix/store/il1i3s9d0m2f2dmyp9pggb897nixyn9w-nix-2.34.8-doc",
         "man": "/nix/store/acrh632ydiiy2yq4jcgn8y7l98n78xw1-nix-2.34.8-man",
         "out": "/nix/store/j02vvifyzjw52xqrvyj1bhd8s45yn1fl-nix-2.34.8"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "p7zip",
+      "broken": false,
+      "derivation": "/nix/store/1d8c4g23ksacrxp03bzkbg0n4qc8fa2h-p7zip-17.06.drv",
+      "description": "New p7zip fork with additional codecs and improvements (forked from https://sourceforge.net/projects/p7zip/)",
+      "install_id": "p7zip",
+      "license": "[ LGPL-2.0-or-later, BSD-3-Clause ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "name": "p7zip-17.06",
+      "pname": "p7zip",
+      "rev": "56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "rev_count": 1060451,
+      "rev_date": "2026-08-23T15:22:48Z",
+      "scrape_date": "2026-08-25T04:57:07.726052Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "17.06",
+      "outputs_to_install": [
+        "man",
+        "out"
+      ],
+      "outputs": {
+        "doc": "/nix/store/f4mz17f41lziw301h3516cdvbplqssmh-p7zip-17.06-doc",
+        "lib": "/nix/store/68q16wqr5sbmn9zvwqbklpg378syjy9w-p7zip-17.06-lib",
+        "man": "/nix/store/lz5jmmmdz8mrh9yjg657gxxvql9lyfbq-p7zip-17.06-man",
+        "out": "/nix/store/dkdccl3kz428gb69dw44f3s020rk2xpw-p7zip-17.06"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "p7zip",
+      "broken": false,
+      "derivation": "/nix/store/w80z6zakga35k2qpq5m7qmxv337z9z8m-p7zip-17.06.drv",
+      "description": "New p7zip fork with additional codecs and improvements (forked from https://sourceforge.net/projects/p7zip/)",
+      "install_id": "p7zip",
+      "license": "[ LGPL-2.0-or-later, BSD-3-Clause ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "name": "p7zip-17.06",
+      "pname": "p7zip",
+      "rev": "56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "rev_count": 1060451,
+      "rev_date": "2026-08-23T15:22:48Z",
+      "scrape_date": "2026-08-25T05:28:08.377086Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "17.06",
+      "outputs_to_install": [
+        "man",
+        "out"
+      ],
+      "outputs": {
+        "doc": "/nix/store/9csd1iif287acxl8mmg0jdl64b2n6p83-p7zip-17.06-doc",
+        "lib": "/nix/store/8v91x9jz3a364w4dg1j04b5vr5bcjd88-p7zip-17.06-lib",
+        "man": "/nix/store/831mba686riynw1dqj9fla55q152n641-p7zip-17.06-man",
+        "out": "/nix/store/q3ax32k24xcvb9052vc0s3fl4c8ha0nc-p7zip-17.06"
+      },
+      "system": "aarch64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "p7zip",
+      "broken": false,
+      "derivation": "/nix/store/j4yxhgansp64xamvi60ggb10h59lmhdl-p7zip-17.06.drv",
+      "description": "New p7zip fork with additional codecs and improvements (forked from https://sourceforge.net/projects/p7zip/)",
+      "install_id": "p7zip",
+      "license": "[ LGPL-2.0-or-later, BSD-3-Clause ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "name": "p7zip-17.06",
+      "pname": "p7zip",
+      "rev": "56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "rev_count": 1060451,
+      "rev_date": "2026-08-23T15:22:48Z",
+      "scrape_date": "2026-08-25T06:01:26.114807Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "17.06",
+      "outputs_to_install": [
+        "man",
+        "out"
+      ],
+      "outputs": {
+        "doc": "/nix/store/wzbd7z0wrrs9913y52sirfps9jjx2k2i-p7zip-17.06-doc",
+        "lib": "/nix/store/8i9bszh8y5r64qdnixqyb8lyrxw7q3va-p7zip-17.06-lib",
+        "man": "/nix/store/24iyzdfav0x5nkcki8b2zimk2xay7fss-p7zip-17.06-man",
+        "out": "/nix/store/skwca13npxljlrdlrnj0xzjs8q4iicpg-p7zip-17.06"
       },
       "system": "x86_64-linux",
       "group": "toplevel",
@@ -1824,6 +1931,108 @@
       ],
       "outputs": {
         "out": "/nix/store/9b8mfij9xlq2pgaraqs25q7z1rnp5ss1-tilt-0.37.6"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "xorriso",
+      "broken": false,
+      "derivation": "/nix/store/r7c2y00v6wly8bbngysnahzsfdxx7pia-libisoburn-1.5.8.pl02.drv",
+      "description": "Enables creation and expansion of ISO-9660 filesystems on CD/DVD/BD",
+      "install_id": "xorriso",
+      "license": "GPL-2.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "name": "libisoburn-1.5.8.pl02",
+      "pname": "xorriso",
+      "rev": "56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "rev_count": 1060451,
+      "rev_date": "2026-08-23T15:22:48Z",
+      "scrape_date": "2026-08-25T04:59:42.307050Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "1.5.8.pl02",
+      "outputs_to_install": [
+        "man",
+        "out"
+      ],
+      "outputs": {
+        "dev": "/nix/store/izqcv8aldlbgnkykl0zk4g873brcxzav-libisoburn-1.5.8.pl02-dev",
+        "info": "/nix/store/4xavyky3105yn4haigwsd51agjbwm9wf-libisoburn-1.5.8.pl02-info",
+        "lib": "/nix/store/0wp9a7ybf86pcywkhpgqi3hvvm1hh82z-libisoburn-1.5.8.pl02-lib",
+        "man": "/nix/store/rydsf0844imfxz6aajfrns1sxvvj3pfg-libisoburn-1.5.8.pl02-man",
+        "out": "/nix/store/3yakiqxahx3b51zvgjknscbj356ydaya-libisoburn-1.5.8.pl02"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "xorriso",
+      "broken": false,
+      "derivation": "/nix/store/kdpb91hq8rj8wf0qp4i3bvzlc7kqf96j-libisoburn-1.5.8.pl02.drv",
+      "description": "Enables creation and expansion of ISO-9660 filesystems on CD/DVD/BD",
+      "install_id": "xorriso",
+      "license": "GPL-2.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "name": "libisoburn-1.5.8.pl02",
+      "pname": "xorriso",
+      "rev": "56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "rev_count": 1060451,
+      "rev_date": "2026-08-23T15:22:48Z",
+      "scrape_date": "2026-08-25T05:31:16.289487Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "1.5.8.pl02",
+      "outputs_to_install": [
+        "man",
+        "out"
+      ],
+      "outputs": {
+        "dev": "/nix/store/v8dy8zlnf7iz4n6ny47nzw9pjib03xl0-libisoburn-1.5.8.pl02-dev",
+        "info": "/nix/store/62vrimsir8jry18i7z1r1aap7fbw71lc-libisoburn-1.5.8.pl02-info",
+        "lib": "/nix/store/vckwzjp25iv42mh18kq00c8y8r0br4hw-libisoburn-1.5.8.pl02-lib",
+        "man": "/nix/store/z0dxpsdxcj3vpjhvdwkqa51p5mhmi1jh-libisoburn-1.5.8.pl02-man",
+        "out": "/nix/store/nq1k3cnz3nrdch86xgbq2bnqzwxz59si-libisoburn-1.5.8.pl02"
+      },
+      "system": "aarch64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "xorriso",
+      "broken": false,
+      "derivation": "/nix/store/7v4i3kdda9r1y799yalnkjswkl3183vp-libisoburn-1.5.8.pl02.drv",
+      "description": "Enables creation and expansion of ISO-9660 filesystems on CD/DVD/BD",
+      "install_id": "xorriso",
+      "license": "GPL-2.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "name": "libisoburn-1.5.8.pl02",
+      "pname": "xorriso",
+      "rev": "56c02bc00adcf003215cc4bd996d6efaf4cff188",
+      "rev_count": 1060451,
+      "rev_date": "2026-08-23T15:22:48Z",
+      "scrape_date": "2026-08-25T06:04:40.827477Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "1.5.8.pl02",
+      "outputs_to_install": [
+        "man",
+        "out"
+      ],
+      "outputs": {
+        "dev": "/nix/store/slljszkzdrszr9hl0a1qk52r18d23895-libisoburn-1.5.8.pl02-dev",
+        "info": "/nix/store/w54imdvbka9vkq0b4y7j589d9ybkqly8-libisoburn-1.5.8.pl02-info",
+        "lib": "/nix/store/jsh70pnlfr6ks173sr9vwkkzjvir37b0-libisoburn-1.5.8.pl02-lib",
+        "man": "/nix/store/89sk3drdimdhj13d5dgn22rhbydyhi61-libisoburn-1.5.8.pl02-man",
+        "out": "/nix/store/fzlsr4pypsga23x580mflap88vdwdrcd-libisoburn-1.5.8.pl02"
       },
       "system": "x86_64-linux",
       "group": "toplevel",

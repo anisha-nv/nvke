@@ -111,6 +111,7 @@ class PackerMakefileTest(unittest.TestCase):
                 str(makefile or PACKER_DIR / "Makefile"),
                 *make_options,
                 target,
+                "IMAGE_PROFILE=production",
                 *variables,
             ],
             cwd=cwd,
@@ -503,7 +504,7 @@ exec "${REAL_MV:?}" "$@"
                 packer_init = output.index("/tmp/nkd-packer init ")
                 fetch_command = str(PACKER_DIR / "scripts" / "fetch-artifacts.sh")
                 artifact_fetch = output.index(fetch_command)
-                packer_build = output.index("/tmp/nkd-packer build")
+                packer_build = output.index("bash /tmp/nkd-packer")
 
                 self.assertIn(template, output[packer_init:].splitlines()[0])
                 self.assertEqual(output.count(fetch_command), 1)
@@ -752,19 +753,22 @@ exec "${REAL_MV:?}" "$@"
 
     def test_collection_copies_exact_bytes_and_prints_one_basename(self):
         cases = (
-            ("fde", "amd64"),
-            ("non-fde", "arm64"),
+            ("fde", "amd64", "production"),
+            ("non-fde", "arm64", "production"),
+            ("fde", "arm64", "development"),
+            ("non-fde", "amd64", "development"),
         )
-        for variant, arch in cases:
+        for variant, arch, profile in cases:
             with self.subTest(variant=variant, arch=arch), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 source = root / "source"
                 workspace = root / "workspace"
                 workspace.mkdir()
                 commit = self.create_source_repo(source)
-                output = workspace / f"output-{variant}"
+                suffix = "-development" if profile == "development" else ""
+                output = workspace / f"output-{variant}{suffix}"
                 output.mkdir()
-                name = f"nke-node-{variant}-ubuntu-26.04.1-{arch}.qcow2"
+                name = f"nke-node-{variant}{suffix}-ubuntu-26.04.1-{arch}.qcow2"
                 payload = f"{variant}-{arch}-bytes".encode()
                 (output / name).write_bytes(payload)
                 dist = workspace / "dist"
@@ -777,6 +781,7 @@ exec "${REAL_MV:?}" "$@"
                         f"EXPECTED_SOURCE_COMMIT={commit}",
                         f"QCOW2_DIST_DIR={dist}",
                         f"ARCH={arch}",
+                        f"IMAGE_PROFILE={profile}",
                     ),
                 )
 
