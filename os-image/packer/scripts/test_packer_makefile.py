@@ -136,6 +136,7 @@ class PackerMakefileTest(unittest.TestCase):
         scripts = workspace / "scripts"
         scripts.mkdir()
         shutil.copy2(PACKER_DIR / "scripts" / "qemu-arch.sh", scripts / "qemu-arch.sh")
+        shutil.copy2(PACKER_DIR / "scripts" / "package-builder.sh", scripts / "package-builder.sh")
         events = root / "events.log"
         artifacts = workspace / "artifacts"
         if unsafe_artifacts:
@@ -229,14 +230,16 @@ fi
                 ("SPIRE_VERSION", "1.13.1"),
                 ("TPM_PLUGIN_VERSION", "0.13.1"),
             )
+        for name in ("code.fd", "vars.fd"):
+            (root / name).touch()
         variables = [
             f"PACKER={packer}",
             f"PYTHON={python_path or sys.executable}",
             f"SOURCE_ROOT={source}",
             f"ARCH={arch}",
             "ACCELERATOR=tcg",
-            "OVMF_CODE=/firmware/code.fd",
-            "OVMF_VARS_TEMPLATE=/firmware/vars.fd",
+            f"OVMF_CODE={root / 'code.fd'}",
+            f"OVMF_VARS_TEMPLATE={root / 'vars.fd'}",
         ]
         if not material_inputs_from_environment:
             variables.extend(f"{name}={value}" for name, value in material_inputs)
@@ -496,7 +499,7 @@ exec "${REAL_MV:?}" "$@"
             with self.subTest(target=target):
                 output = self.dry_run(target)
                 source_check = output.index('git -C "$SOURCE_ROOT" rev-parse')
-                dependency_check = output.index("command -v go")
+                dependency_check = output.index("bash ./scripts/package-builder.sh --check")
                 packer_init = output.index("/tmp/nkd-packer init ")
                 fetch_command = str(PACKER_DIR / "scripts" / "fetch-artifacts.sh")
                 artifact_fetch = output.index(fetch_command)
@@ -681,6 +684,7 @@ exec "${REAL_MV:?}" "$@"
                 encoding="utf-8",
             )
             packer.chmod(0o755)
+            self.write_executable(tools / "uname", '#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo x86_64;; esac\n')
             self.write_executable(tools / "go", "#!/bin/sh\nexit 0\n")
             self.write_executable(tools / "qemu-img", "#!/bin/sh\nexit 0\n")
             env = {
