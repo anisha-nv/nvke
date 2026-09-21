@@ -195,6 +195,27 @@ jobs:
 
       # Before the upload, not after: teardown is what copies the VM console logs
       # into the artifact directory. Best-effort; it must never turn a run red.
+      # TEMPORARY (validation branch only): the firmware error in #863 cannot
+      # be reproduced by hand -- a domain with the same shape, TPM and package
+      # set defines cleanly in this same image on this same node. Capture what
+      # libvirt actually saw at failure time instead of guessing further.
+      - name: DEBUG dump libvirt view
+        if: always()
+        run: |
+          set +e
+          echo "::group::domcapabilities --virttype kvm"
+          virsh -c qemu:///session domcapabilities --virttype kvm 2>&1 | head -40
+          echo "::endgroup::"
+          echo "::group::the domain.xml nico-sim generated"
+          find "${GITHUB_WORKSPACE}" -name domain.xml -print -exec cat {} \; 2>/dev/null | head -80
+          echo "::endgroup::"
+          echo "::group::firmware descriptors and AAVMF"
+          ls -l /usr/share/qemu/firmware/ /usr/share/AAVMF/ 2>&1
+          echo "::endgroup::"
+          echo "::group::versions and identity"
+          virsh --version; qemu-system-aarch64 --version | head -1; id; echo "HOME=$HOME XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-unset}"
+          ls -l /dev/kvm
+          echo "::endgroup::"
       - name: Tear down the runner host
         if: always()
         run: ./controller/test/kubeadm/scripts/teardown-ci-host.sh
