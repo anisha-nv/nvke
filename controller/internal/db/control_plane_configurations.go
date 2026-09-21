@@ -24,25 +24,14 @@ import (
 // inside ControlPlaneConfiguration.Config JSONB rather than mapped to columns
 // on the clusters table.
 type ControlPlaneConfigSpec struct {
-	InstanceTypePreference          []uuid.UUID               `json:"instance_type_preference" bun:"-"`
-	InfraMachineTemplatePreferences []json.RawMessage         `json:"infra_machine_template_preferences,omitempty" bun:"-"`
-	SubnetIDs                       []uuid.UUID               `json:"subnet_ids,omitempty" bun:"-"`
-	VpcPrefixIDs                    []uuid.UUID               `json:"vpc_prefix_ids,omitempty" bun:"-"`
-	OSProfile                       string                    `json:"os_profile" bun:"-"`
-	DiskSelectionStrategy           DiskSelectionStrategy     `json:"disk_selection_strategy,omitempty" bun:"-"`
-	ConfigProfile                   string                    `json:"config_profile" bun:"-"`
-	SystemReservedMemory            string                    `json:"system_reserved_memory,omitempty" bun:"-"`
-	KubeReservedMemory              string                    `json:"kube_reserved_memory,omitempty" bun:"-"`
-	SSHKeyGroupIDs                  []uuid.UUID               `json:"ssh_key_group_ids,omitempty" bun:"-"`
-	NodeLabels                      []string                  `json:"node_labels,omitempty" bun:"-"`
-	TeleportEnabled                 bool                      `json:"teleport_enabled,omitempty" bun:"-"`
-	ProvisioningMonitorDisabled     bool                      `json:"provisioning_monitor_disabled,omitempty" bun:"-"`
-	KubernetesVersion               string                    `json:"kubernetes_version,omitempty" bun:"-"`
-	CapiSpireAttestationMethod      SpireAttestationMethod    `json:"capi_spire_attestation_method,omitempty" bun:"-"`
-	CapiBootstrapFiles              []CloudInitFile           `json:"capi_bootstrap_files,omitempty" bun:"-"`
-	CapiPreKubeadmCommands          []string                  `json:"capi_pre_kubeadm_commands,omitempty" bun:"-"`
-	Nico                            *NicoControlPlaneProvider `json:"nico,omitempty" bun:"-"`
-	Capi                            *CAPIControlPlaneProvider `json:"capi,omitempty" bun:"-"`
+	SystemReservedMemory        string                    `json:"system_reserved_memory,omitempty" bun:"-"`
+	KubeReservedMemory          string                    `json:"kube_reserved_memory,omitempty" bun:"-"`
+	NodeLabels                  []string                  `json:"node_labels,omitempty" bun:"-"`
+	TeleportEnabled             bool                      `json:"teleport_enabled,omitempty" bun:"-"`
+	ProvisioningMonitorDisabled bool                      `json:"provisioning_monitor_disabled,omitempty" bun:"-"`
+	KubernetesVersion           string                    `json:"kubernetes_version,omitempty" bun:"-"`
+	Nico                        *NicoControlPlaneProvider `json:"nico,omitempty" bun:"-"`
+	Capi                        *CAPIControlPlaneProvider `json:"capi,omitempty" bun:"-"`
 }
 
 type NicoControlPlaneProvider struct {
@@ -64,46 +53,12 @@ type CAPIControlPlaneProvider struct {
 
 func (c *ControlPlaneConfigSpec) SetNico(provider NicoControlPlaneProvider) {
 	c.Nico = cloneNicoControlPlaneProvider(&provider)
-	c.InstanceTypePreference = append([]uuid.UUID(nil), provider.InstanceTypePreference...)
-	c.SubnetIDs = append([]uuid.UUID(nil), provider.SubnetIDs...)
-	c.VpcPrefixIDs = append([]uuid.UUID(nil), provider.VpcPrefixIDs...)
-	c.OSProfile = provider.OSProfile
-	c.DiskSelectionStrategy = provider.DiskSelectionStrategy
-	c.ConfigProfile = provider.ConfigProfile
-	c.SSHKeyGroupIDs = append([]uuid.UUID(nil), provider.SSHKeyGroupIDs...)
+	c.Capi = nil
 }
 
 func (c *ControlPlaneConfigSpec) SetCapi(provider CAPIControlPlaneProvider) {
 	c.Capi = cloneCAPIControlPlaneProvider(&provider)
-	c.InfraMachineTemplatePreferences = cloneRawMessages(provider.InfraMachineTemplatePreferences)
-	c.CapiSpireAttestationMethod = provider.SpireAttestationMethod
-	c.CapiBootstrapFiles = append([]CloudInitFile(nil), provider.BootstrapFiles...)
-	c.CapiPreKubeadmCommands = append([]string(nil), provider.PreKubeadmCommands...)
-}
-
-func (c *ControlPlaneConfigSpec) SyncProviderFields(providerType ProviderType) {
 	c.Nico = nil
-	c.Capi = nil
-
-	switch providerType {
-	case ProviderTypeNico:
-		c.Nico = &NicoControlPlaneProvider{
-			InstanceTypePreference: append([]uuid.UUID(nil), c.InstanceTypePreference...),
-			SubnetIDs:              append([]uuid.UUID(nil), c.SubnetIDs...),
-			VpcPrefixIDs:           append([]uuid.UUID(nil), c.VpcPrefixIDs...),
-			OSProfile:              c.OSProfile,
-			DiskSelectionStrategy:  c.DiskSelectionStrategy,
-			ConfigProfile:          c.ConfigProfile,
-			SSHKeyGroupIDs:         append([]uuid.UUID(nil), c.SSHKeyGroupIDs...),
-		}
-	case ProviderTypeCAPI:
-		c.Capi = &CAPIControlPlaneProvider{
-			InfraMachineTemplatePreferences: cloneRawMessages(c.InfraMachineTemplatePreferences),
-			SpireAttestationMethod:          c.CapiSpireAttestationMethod,
-			BootstrapFiles:                  append([]CloudInitFile(nil), c.CapiBootstrapFiles...),
-			PreKubeadmCommands:              append([]string(nil), c.CapiPreKubeadmCommands...),
-		}
-	}
 }
 
 func (c ControlPlaneConfigSpec) NicoProvider() (NicoControlPlaneProvider, error) {
@@ -118,14 +73,6 @@ func (c ControlPlaneConfigSpec) CAPIProvider() (CAPIControlPlaneProvider, error)
 		return CAPIControlPlaneProvider{}, fmt.Errorf("%w: control plane config capi", ErrMissingProviderPayload)
 	}
 	return *cloneCAPIControlPlaneProvider(c.Capi), nil
-}
-
-func (c ControlPlaneConfigSpec) NicoControlPlaneProvider() *NicoControlPlaneProvider {
-	return cloneNicoControlPlaneProvider(c.Nico)
-}
-
-func (c ControlPlaneConfigSpec) CAPIControlPlaneProvider() *CAPIControlPlaneProvider {
-	return cloneCAPIControlPlaneProvider(c.Capi)
 }
 
 // ControlPlaneConfig is the cluster control plane configuration shape used by
@@ -154,6 +101,7 @@ type ControlPlaneConfigurationQueries interface {
 	CreateControlPlaneConfiguration(ctx context.Context, row *ControlPlaneConfiguration) (ControlPlaneConfiguration, error)
 	GetControlPlaneConfiguration(ctx context.Context, id uuid.UUID) (ControlPlaneConfiguration, error)
 	ListControlPlaneConfigurationsByIDs(ctx context.Context, ids []uuid.UUID) ([]ControlPlaneConfiguration, error)
+	ListControlPlaneConfigurationsByCluster(ctx context.Context, clusterID uuid.UUID) ([]ControlPlaneConfiguration, error)
 }
 
 func ConfigSpecFromFull(cfg ControlPlaneConfig) ControlPlaneConfigSpec {
@@ -176,14 +124,7 @@ func (c ControlPlaneConfigSpec) Equal(other ControlPlaneConfigSpec) bool {
 
 func normalizeConfigSpec(cfg ControlPlaneConfigSpec) ControlPlaneConfigSpec {
 	out := cfg
-	out.InstanceTypePreference = append([]uuid.UUID(nil), cfg.InstanceTypePreference...)
-	out.InfraMachineTemplatePreferences = cloneRawMessages(cfg.InfraMachineTemplatePreferences)
-	out.SubnetIDs = append([]uuid.UUID(nil), cfg.SubnetIDs...)
-	out.VpcPrefixIDs = append([]uuid.UUID(nil), cfg.VpcPrefixIDs...)
-	out.SSHKeyGroupIDs = append([]uuid.UUID(nil), cfg.SSHKeyGroupIDs...)
 	out.NodeLabels = append([]string(nil), cfg.NodeLabels...)
-	out.CapiBootstrapFiles = append([]CloudInitFile(nil), cfg.CapiBootstrapFiles...)
-	out.CapiPreKubeadmCommands = append([]string(nil), cfg.CapiPreKubeadmCommands...)
 	out.Nico = cloneNicoControlPlaneProvider(cfg.Nico)
 	out.Capi = cloneCAPIControlPlaneProvider(cfg.Capi)
 	return out
@@ -227,18 +168,47 @@ func cloneRawMessages(in []json.RawMessage) []json.RawMessage {
 	return out
 }
 
-type controlPlaneReplaceTemplate struct {
-	OSProfile         string `json:"os_profile"`
-	ConfigProfile     string `json:"config_profile"`
-	KubernetesVersion string `json:"kubernetes_version"`
+// ControlPlaneRolloutChange is a single rollout-relevant field that differs
+// between two control-plane config snapshots.
+type ControlPlaneRolloutChange struct {
+	Field string // "kubernetesVersion", "osProfile", or "configProfile"
+	From  string
+	To    string
 }
 
-func ReplaceTemplate(cfg ControlPlaneConfigSpec) controlPlaneReplaceTemplate {
-	return controlPlaneReplaceTemplate{
-		OSProfile:         cfg.OSProfile,
-		ConfigProfile:     cfg.ConfigProfile,
-		KubernetesVersion: cfg.KubernetesVersion,
+// ComputeControlPlaneRolloutChanges returns the rollout-triggering fields that
+// differ between a node's pinned snapshot and the cluster's desired snapshot (nil
+// when none differ). It is the single source of truth for both "does this node
+// need rollout" and "what changed" — add a new rollout-relevant field here and
+// the rollout loop, the control-plane rollout-required condition, and the API all
+// pick it up.
+func ComputeControlPlaneRolloutChanges(pinned, desired ControlPlaneConfigSpec) []ControlPlaneRolloutChange {
+	var changes []ControlPlaneRolloutChange
+	if pinned.KubernetesVersion != desired.KubernetesVersion {
+		changes = append(changes, ControlPlaneRolloutChange{Field: "kubernetesVersion", From: pinned.KubernetesVersion, To: desired.KubernetesVersion})
 	}
+	// A CAPI cluster has no nico payload on either side, so both read as the
+	// zero value and the profile comparisons below are a no-op for it.
+	pinnedNico, _ := pinned.NicoProvider()
+	desiredNico, _ := desired.NicoProvider()
+	if pinnedNico.OSProfile != desiredNico.OSProfile {
+		changes = append(changes, ControlPlaneRolloutChange{Field: "osProfile", From: pinnedNico.OSProfile, To: desiredNico.OSProfile})
+	}
+	if pinnedNico.ConfigProfile != desiredNico.ConfigProfile {
+		changes = append(changes, ControlPlaneRolloutChange{Field: "configProfile", From: pinnedNico.ConfigProfile, To: desiredNico.ConfigProfile})
+	}
+	return changes
+}
+
+// IsControlPlaneRolloutRequired reports whether two control-plane config snapshots
+// differ in a field that requires replacing (recycling) a control-plane node: the
+// Kubernetes version, the OS profile, or the config profile. It is a thin
+// predicate over ComputeControlPlaneRolloutChanges, so the boolean and the
+// reported diff can never disagree. The common (unchanged) case allocates nothing,
+// since ComputeControlPlaneRolloutChanges returns a nil slice when the snapshots
+// match.
+func IsControlPlaneRolloutRequired(a, b ControlPlaneConfigSpec) bool {
+	return len(ComputeControlPlaneRolloutChanges(a, b)) > 0
 }
 
 func (q *queriesImpl) CreateControlPlaneConfiguration(ctx context.Context, row *ControlPlaneConfiguration) (ControlPlaneConfiguration, error) {
@@ -288,6 +258,22 @@ func (q *queriesImpl) ListControlPlaneConfigurationsByIDs(ctx context.Context, i
 	err := q.db.NewSelect().
 		Model(&rows).
 		Where("id IN (?)", bun.List(unique)).
+		Scan(ctx)
+	return rows, err
+}
+
+// ListControlPlaneConfigurationsByCluster returns every control-plane
+// configuration snapshot for a cluster, ordered oldest to newest, so callers can
+// build a config-change history.
+func (q *queriesImpl) ListControlPlaneConfigurationsByCluster(ctx context.Context, clusterID uuid.UUID) ([]ControlPlaneConfiguration, error) {
+	if clusterID == uuid.Nil {
+		return nil, nil
+	}
+	var rows []ControlPlaneConfiguration
+	err := q.db.NewSelect().
+		Model(&rows).
+		Where("cluster_id = ?", clusterID).
+		Order("created_at ASC").
 		Scan(ctx)
 	return rows, err
 }
@@ -366,7 +352,6 @@ func createControlPlaneConfigRowIfChanged(
 	snapshotCfg ControlPlaneConfigSpec,
 	opts CreateControlPlaneConfigRowOpts,
 ) error {
-	snapshotCfg.SyncProviderFields(cluster.ProviderType)
 	current := ControlPlaneConfigSpec{}
 	if cluster.ControlPlaneConfig.ConfigurationID != uuid.Nil {
 		row, err := q.GetControlPlaneConfiguration(ctx, cluster.ControlPlaneConfig.ConfigurationID)

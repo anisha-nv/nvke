@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/temporal"
 
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/nodes"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/nodes"
 )
 
 type NodeConditionsUpdate struct {
@@ -22,6 +22,7 @@ type NodeConditionsUpdate struct {
 
 type NodeConditions struct {
 	Pending                 *ConditionUpdate `json:"pending,omitempty"`
+	ProvisioningClaimed     *ConditionUpdate `json:"provisioningClaimed,omitempty"`
 	Provisioning            *ConditionUpdate `json:"provisioning,omitempty"`
 	ReadyToJoin             *ConditionUpdate `json:"readyToJoin,omitempty"`
 	Joined                  *ConditionUpdate `json:"joined,omitempty"`
@@ -134,6 +135,7 @@ func (a *Activities) UpdateNodeConditionsWithTx(ctx context.Context, tx db.Tx, u
 	}
 
 	updateCondition(&node.Conditions.Pending, update.Conditions.Pending)
+	updateCondition(&node.Conditions.ProvisioningClaimed, update.Conditions.ProvisioningClaimed)
 	updateCondition(&node.Conditions.Provisioning, update.Conditions.Provisioning)
 	updateCondition(&node.Conditions.ReadyToJoin, update.Conditions.ReadyToJoin)
 	updateCondition(&node.Conditions.Joined, update.Conditions.Joined)
@@ -150,37 +152,6 @@ func (a *Activities) UpdateNodeConditionsWithTx(ctx context.Context, tx db.Tx, u
 	}
 
 	return nil
-}
-
-type NodeForgeDetailsUpdate struct {
-	NodeID          uuid.UUID
-	ForgeInstanceID string
-	ForgeMachineID  string
-	IP              string
-}
-
-// UpdateNodeForgeDetails updates the Forge instance ID and IP address of a node in the database.
-func (a *Activities) UpdateNodeForgeDetails(ctx context.Context, update NodeForgeDetailsUpdate) error {
-	return a.db.RunInTx(ctx, func(ctx context.Context, tx db.Tx) error {
-		var forgeInstanceID *string
-		if update.ForgeInstanceID != "" {
-			forgeInstanceID = &update.ForgeInstanceID
-		}
-		var forgeMachineID *string
-		if update.ForgeMachineID != "" {
-			forgeMachineID = &update.ForgeMachineID
-		}
-		var ip *string
-		if update.IP != "" {
-			ip = &update.IP
-		}
-
-		if err := tx.UpdateNodeForgeDetails(ctx, update.NodeID, forgeInstanceID, forgeMachineID, ip); err != nil {
-			return fmt.Errorf("failed to update node Forge details: %w", err)
-		}
-
-		return nil
-	})
 }
 
 // ListControlPlaneNodes returns all control plane nodes for a cluster.

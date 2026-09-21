@@ -43,8 +43,10 @@ case "${BACKEND}" in
   nico) BACKEND_LABEL=nico-containers ;;
   *) BACKEND_LABEL="${BACKEND}" ;;
 esac
-# Run the nkectl checks in hack/ci/nkectl-smoke.sh once the suite passes.
+# Run the nkectl checks in hack/ci/nkectl-smoke.sh once the suite passes. This
+# lane has an inner runner, so the smoke drives the CLI inside it.
 NKECTL_SMOKE="${NKE_E2E_NKECTL_SMOKE:-false}"
+NKECTL_SMOKE_RUNNER="${RUNNER_NAME}"
 if [[ "${SINGLE_RUNNER_CONTROL_PLANE_MODES}" == "true" ]]; then
   PROVISION_CONTROL_PLANE_WITH_CONTROL_PLANE_CONTROLLER=true
 fi
@@ -73,6 +75,7 @@ STATE_VOLUME_OWNED=false
 BUNDLE_VOLUME_OWNED=false
 CAPD_NODE_IMAGE_OWNED=false
 STATE_MONITOR_PID=""
+CWE_LOG_PID=""
 
 if [[ "${RUNNER_DOCKER_HOST}" == "unix:///var/run/docker.sock" ]]; then
   [[ -S /var/run/docker.sock ]] || {
@@ -123,6 +126,18 @@ require_command() {
     exit 1
   }
 }
+
+# Every other long-running call here is bounded by the tool's own flag: kubectl
+# --timeout, kind --wait, curl --connect-timeout, ginkgo --timeout. Docker has
+# no equivalent, so the three calls that reach a registry use coreutils
+# `timeout` instead. It is absent from a stock macOS, where this script is also
+# run by hand, so fall back to running unbounded rather than failing outright.
+: "${DOCKER_PULL_TIMEOUT:=10m}"
+if command -v timeout >/dev/null 2>&1; then
+  bounded() { timeout "$@"; }
+else
+  bounded() { shift; "$@"; }
+fi
 
 redact_diagnostics() {
   local file_list="${TMP_DIR}/diagnostic-files"
@@ -319,9 +334,34 @@ start_state_monitor() {
     done
   ) >"${STATE_DIR}/capi-state-timeline.log" 2>&1 &
   STATE_MONITOR_PID=$!
+  start_cwe_log_follower
+}
+
+# CWE is the one deployment this run rolls: redeploy_cwe flips the
+# control-plane-controller flag between the legs, and it rolls again near the
+# end. `kubectl logs deployment/...` at teardown only reaches the pod that
+# survived, so every line before the last roll is gone. Run 35364887944
+# shipped a 20-line cwe.log starting 50 minutes after the first spec failed,
+# which is why that failure was never root-caused. Follow the deployment for
+# the whole run instead and re-attach after each roll; --prefix names the pod
+# per line so the seams stay readable.
+start_cwe_log_follower() {
+  (
+    while true; do
+      runner_exec kubectl -n cloud-workflow-engine logs -f deployment/cloud-workflow-engine \
+        --all-containers --prefix --tail=-1 --pod-running-timeout=1m || true
+      sleep 5
+    done
+  ) >"${STATE_DIR}/cwe-follow.log" 2>&1 &
+  CWE_LOG_PID=$!
 }
 
 stop_state_monitor() {
+  if [[ -n "${CWE_LOG_PID}" ]]; then
+    kill "${CWE_LOG_PID}" >/dev/null 2>&1 || true
+    wait "${CWE_LOG_PID}" >/dev/null 2>&1 || true
+    CWE_LOG_PID=""
+  fi
   if [[ -z "${STATE_MONITOR_PID}" ]]; then
     return
   fi
@@ -832,19 +872,19 @@ log "starting the CAPD bundle mirror on the Kind Docker network"
 docker volume create "${BUNDLE_VOLUME}" >/dev/null
 BUNDLE_VOLUME_OWNED=true
 BUNDLE_LOADER_OWNED=true
-docker create --name "${BUNDLE_LOADER_NAME}" -v "${BUNDLE_VOLUME}:/bundle" alpine:3.22 true >/dev/null
+bounded "${DOCKER_PULL_TIMEOUT}" docker create --name "${BUNDLE_LOADER_NAME}" -v "${BUNDLE_VOLUME}:/bundle" alpine:3.22 true >/dev/null
 docker cp "${BUNDLE_DIR}/." "${BUNDLE_LOADER_NAME}:/bundle/"
 docker rm "${BUNDLE_LOADER_NAME}" >/dev/null
 BUNDLE_LOADER_OWNED=false
 BUNDLE_MIRROR_OWNED=true
-docker run -d \
+bounded "${DOCKER_PULL_TIMEOUT}" docker run -d \
   --name "${BUNDLE_MIRROR_NAME}" \
   --network kind \
   -v "${BUNDLE_VOLUME}:/usr/share/nginx/html:ro" \
   nginx:alpine >/dev/null
 
 log "starting inner runner on the Kind Docker network"
-docker pull "${RUNNER_IMAGE}"
+bounded "${DOCKER_PULL_TIMEOUT}" docker pull "${RUNNER_IMAGE}"
 docker volume create "${STATE_VOLUME}" >/dev/null
 STATE_VOLUME_OWNED=true
 RUNNER_OWNED=true
@@ -1004,7 +1044,7 @@ e2e_write_tilt_config "${TMP_DIR}/tilt_config.json" \
   "${NKE_E2E_PROVIDERS}" "${CWE_IMAGE}" "${management_vip}" "${BGP_CONTAINER_NAME}" \
   "${DSX_IDENTITY_EXCHANGE_IMAGE}"
 if [[ "${NICO_PROVIDER_ENABLED}" == true ]]; then
-  jq '.nico_vms_observability = false' "${TMP_DIR}/tilt_config.json" \
+  jq '.nico_vms_observability = false | .nico_sim_backends = ["container"]' "${TMP_DIR}/tilt_config.json" \
     >"${TMP_DIR}/tilt_config.json.tmp"
   mv "${TMP_DIR}/tilt_config.json.tmp" "${TMP_DIR}/tilt_config.json"
 fi
@@ -1100,6 +1140,7 @@ fi
   NKE_E2E_TILT_MODE="${tilt_mode}" \
   INSTALL_CNI_AFTER_INIT="${INSTALL_CNI_AFTER_INIT:-false}" \
   PROVISION_CONTROL_PLANE_WITH_CONTROL_PLANE_CONTROLLER="${PROVISION_CONTROL_PLANE_WITH_CONTROL_PLANE_CONTROLLER:-}" \
+  NODE_REBOOT_SOFT_REBOOT_ENABLED="${NODE_REBOOT_SOFT_REBOOT_ENABLED:-}" \
   TILT_DISABLE_ANALYTICS=1 \
   bash -lc '
     set -euo pipefail
@@ -1216,6 +1257,15 @@ stop_state_monitor
 if ((e2e_rc != 0)); then
   log "${BACKEND} E2E scenarios failed with exit code ${e2e_rc}" >&2
   exit "${e2e_rc}"
+fi
+
+# A focused pull-request run takes the single-mode path, so it does not pass
+# through the cleanup gate between sequential legs above. Assert the same
+# invariant before reporting success: a green core run must not leave a tenant
+# behind on its management cluster.
+log "E2E specs passed; confirming the cluster is clean"
+if ! wait_for_zero_tenant_clusters; then
+  exit 1
 fi
 
 if [[ "${NKECTL_SMOKE}" == "true" ]]; then

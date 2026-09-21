@@ -20,13 +20,13 @@ import (
 	capiconditions "sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	nicov1 "github.com/NVIDIA/cluster-api-provider-nico/api/v1alpha1"
+	nicov1 "github.com/dsx-ai-factory/cluster-api-provider-nico/api/v1alpha1"
 
-	"github.com/NVIDIA/nke/controller/internal/capi"
-	"github.com/NVIDIA/nke/controller/internal/constants"
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/nodes"
-	"github.com/NVIDIA/nke/controller/internal/spiffe"
+	"github.com/dsx-ai-factory/nke/controller/internal/capi"
+	"github.com/dsx-ai-factory/nke/controller/internal/constants"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/nodes"
+	"github.com/dsx-ai-factory/nke/controller/internal/spiffe"
 )
 
 type CreateCAPIInfraMachineForNodeInput struct {
@@ -72,10 +72,6 @@ func (a *Activities) CreateCAPIInfraMachineForNode(ctx context.Context, input Cr
 	if err != nil {
 		return err
 	}
-	if err := a.rejectUnmigratedCluster(ctx, cluster.Name); err != nil {
-		return err
-	}
-
 	createCtx := &capiMachineCreateContext{
 		node:      node,
 		nodeSet:   nodeSet,
@@ -284,10 +280,6 @@ func (a *Activities) DeleteCAPIMachineForNode(ctx context.Context, input DeleteC
 	if err != nil {
 		return fmt.Errorf("failed to get node: %w", err)
 	}
-	if err := a.rejectUnmigratedClusterForNode(ctx, input.NodeID); err != nil {
-		return err
-	}
-
 	machine := &clusterv1.Machine{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: clusterv1.GroupVersion.String(),
@@ -313,7 +305,13 @@ func (a *Activities) DeleteCAPIMachineForNode(ctx context.Context, input DeleteC
 		}
 	}
 
-	logger.Info("Deleting CAPI machine", "nodeID", input.NodeID, "machine", machine.Name)
+	forgeInstanceID, forgeMachineID := forgeIdentityFromNode(node)
+	logger.Info("Deleting CAPI machine",
+		"nodeID", input.NodeID,
+		"machine", machine.Name,
+		"forgeInstanceID", forgeInstanceID,
+		"forgeMachineID", forgeMachineID,
+	)
 	if err := a.k8sClient.Delete(ctx, machine); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete machine %s: %w", machine.Name, err)
 	}
@@ -354,7 +352,7 @@ func (a *Activities) waitForCAPIMachineReady(ctx context.Context, input WaitForC
 
 	node, err := a.db.GetNode(ctx, input.NodeID)
 	if err != nil {
-		return "", fmt.Errorf("failed to get node: %w", err)
+		return "", nonRetryableIfNotFound("failed to get node", err)
 	}
 	nodeSet, nodePool, err := nodes.GetNodeContext(ctx, a.db, node)
 	if err != nil {
@@ -409,7 +407,7 @@ func (a *Activities) waitForCAPIMachineReady(ctx context.Context, input WaitForC
 	// (which carry no CWE-selected type). Only authoritative once ready, and must
 	// never block provisioning; CAPD and template-backed nodes are unaffected.
 	var observedInstanceTypeID uuid.UUID
-	if node.InstanceTypeID == uuid.Nil {
+	if node.NicoInstanceTypeID() == uuid.Nil {
 		observedInstanceTypeID, err = instanceTypeIDFromInfraRef(ctx, a.k8sClient, machine)
 		if err != nil {
 			logger.Warn("Could not resolve instance type for CAPI machine; skipping instance type stamp",
@@ -418,16 +416,42 @@ func (a *Activities) waitForCAPIMachineReady(ctx context.Context, input WaitForC
 		}
 	}
 
+	// NicoMachine status carries Forge identity; CAPD and other providers leave
+	// these empty. Lookup must never block provisioning.
+	observedInstanceID, observedMachineID, err := identityFromInfraRef(ctx, a.k8sClient, machine)
+	if err != nil {
+		logger.Warn("Could not resolve Forge identity for CAPI machine; skipping identity stamp",
+			"nodeID", input.NodeID, "machine", machine.Name, "error", err)
+		observedInstanceID = ""
+		observedMachineID = ""
+	}
+
 	if err := a.db.RunInTx(ctx, func(ctx context.Context, tx db.Tx) error {
 		nodeForUpdate, err := tx.GetNodeForUpdate(ctx, input.NodeID)
 		if err != nil {
-			return fmt.Errorf("failed to get node: %w", err)
+			return nonRetryableIfNotFound("failed to get node", err)
 		}
 		nodeForUpdate.IP = ipAddress
-		// Sticky: only stamp when the node has no type yet, so we never clobber
-		// a CWE-selected (Forge) type or an already-recorded value.
-		if observedInstanceTypeID != uuid.Nil && nodeForUpdate.InstanceTypeID == uuid.Nil {
-			nodeForUpdate.InstanceTypeID = observedInstanceTypeID
+		// Sticky: only stamp the type when the node has no type yet, so we never
+		// clobber a CWE-selected (Forge) type or an already-recorded value.
+		stampInstanceType := observedInstanceTypeID != uuid.Nil && nodeForUpdate.NicoInstanceTypeID() == uuid.Nil
+		// Stamp only when there is something to record or nico already exists.
+		// Empty CAPD lookups must not invent a nico payload.
+		if stampInstanceType || observedInstanceID != "" || observedMachineID != "" || nodeForUpdate.Nico != nil {
+			nico := db.NicoNodeProvider{}
+			if nodeForUpdate.Nico != nil {
+				nico = *nodeForUpdate.Nico
+			}
+			if stampInstanceType {
+				nico.InstanceTypeID = observedInstanceTypeID
+			}
+			if nico.ForgeInstanceID == "" {
+				nico.ForgeInstanceID = observedInstanceID
+			}
+			if nico.ForgeMachineID == "" {
+				nico.ForgeMachineID = observedMachineID
+			}
+			nodeForUpdate.SetNico(nico)
 		}
 		if _, err := tx.UpdateNode(ctx, &nodeForUpdate); err != nil {
 			return fmt.Errorf("failed to update node IP address: %w", err)
@@ -443,6 +467,8 @@ func (a *Activities) waitForCAPIMachineReady(ctx context.Context, input WaitForC
 		"nodeID", input.NodeID,
 		"nodeName", node.Name,
 		"ip", ipAddress,
+		"forgeInstanceID", observedInstanceID,
+		"forgeMachineID", observedMachineID,
 	)
 
 	return ipAddress, nil
@@ -570,6 +596,27 @@ func instanceTypeIDFromInfraRef(ctx context.Context, k8sClient client.Client, ma
 	return instanceTypeID, nil
 }
 
+// identityFromInfraRef reads instance and machine IDs off the Machine's
+// infrastructure object (e.g. NicoMachine.status). Missing fields return
+// empty strings so CAPD and other providers are a no-op.
+func identityFromInfraRef(ctx context.Context, k8sClient client.Client, machine *clusterv1.Machine) (string, string, error) {
+	infraObj, err := capiexternal.GetObjectFromContractVersionedRef(ctx, k8sClient, machine.Spec.InfrastructureRef, machine.Namespace)
+	if err != nil {
+		return "", "", err
+	}
+
+	instanceID, _, err := unstructured.NestedString(infraObj.Object, "status", "instanceID")
+	if err != nil {
+		return "", "", err
+	}
+	machineID, _, err := unstructured.NestedString(infraObj.Object, "status", "machineID")
+	if err != nil {
+		return "", "", err
+	}
+
+	return instanceID, machineID, nil
+}
+
 func (a *Activities) ApplyCAPIMachineRebootAnnotation(ctx context.Context, input ApplyCAPIMachineRebootAnnotationInput) (ApplyCAPIMachineRebootAnnotationResult, error) {
 	logger := activity.GetLogger(ctx)
 
@@ -600,10 +647,6 @@ func (a *Activities) applyCAPIMachineRebootAnnotation(ctx context.Context, nodeI
 	if err != nil {
 		return fmt.Errorf("failed to get node: %w", err)
 	}
-	if err := a.rejectUnmigratedClusterForNode(ctx, nodeID); err != nil {
-		return err
-	}
-
 	namespace := constants.NamespaceNKESystem
 	machineName := node.Name
 
@@ -633,4 +676,13 @@ func (a *Activities) applyCAPIMachineRebootAnnotation(ctx context.Context, nodeI
 	}
 
 	return nil
+}
+
+// forgeIdentityFromNode returns the node's Forge instance and machine IDs, or
+// empty strings when the node carries no nico payload.
+func forgeIdentityFromNode(node db.Node) (string, string) {
+	if node.Nico == nil {
+		return "", ""
+	}
+	return node.Nico.ForgeInstanceID, node.Nico.ForgeMachineID
 }

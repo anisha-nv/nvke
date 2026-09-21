@@ -20,8 +20,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/testutil"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/testutil"
 )
 
 func TestInstallKubeLocalDNSAppliesManifestWithTenantClientProvider(t *testing.T) {
@@ -49,6 +49,8 @@ func TestInstallKubeLocalDNSAppliesManifestWithTenantClientProvider(t *testing.T
 		Namespace: metav1.NamespaceSystem,
 		Name:      "node-local-dns",
 	}, &serviceAccount))
+	require.NotNil(t, serviceAccount.AutomountServiceAccountToken)
+	require.False(t, *serviceAccount.AutomountServiceAccountToken)
 
 	var upstreamService corev1.Service
 	require.NoError(t, tenantClient.Get(context.Background(), types.NamespacedName{
@@ -76,12 +78,22 @@ func TestInstallKubeLocalDNSAppliesManifestWithTenantClientProvider(t *testing.T
 	require.False(t, daemonSet.Spec.Template.Spec.HostNetwork)
 	require.Equal(t, []string{
 		"-localip", "0.0.0.0",
-		"-conf", "/etc/Corefile",
+		"-conf", "/config/Corefile",
 		"-upstreamsvc", "kube-dns-upstream",
 		"-setupinterface=false",
 		"-setupiptables=false",
 	}, daemonSet.Spec.Template.Spec.Containers[0].Args)
 	require.Empty(t, daemonSet.Spec.Template.Spec.Containers[0].LivenessProbe.HTTPGet.Host)
+
+	containerSecurityContext := daemonSet.Spec.Template.Spec.Containers[0].SecurityContext
+	require.NotNil(t, containerSecurityContext.AllowPrivilegeEscalation)
+	require.False(t, *containerSecurityContext.AllowPrivilegeEscalation)
+	require.NotNil(t, containerSecurityContext.RunAsNonRoot)
+	require.True(t, *containerSecurityContext.RunAsNonRoot)
+	require.NotNil(t, containerSecurityContext.RunAsUser)
+	require.Equal(t, int64(65532), *containerSecurityContext.RunAsUser)
+	require.ElementsMatch(t, []corev1.Capability{"ALL"}, containerSecurityContext.Capabilities.Drop)
+	require.ElementsMatch(t, []corev1.Capability{"NET_BIND_SERVICE"}, containerSecurityContext.Capabilities.Add)
 
 	var metricsService corev1.Service
 	require.NoError(t, tenantClient.Get(context.Background(), types.NamespacedName{

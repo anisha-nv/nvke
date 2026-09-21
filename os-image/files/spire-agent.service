@@ -3,14 +3,19 @@
 
 [Unit]
 Description=SPIRE Agent
-Documentation=https://github.com/NVIDIA/nke/blob/main/os-image/SPEC.md
+Documentation=https://github.com/dsx-ai-factory/nke/blob/main/os-image/SPEC.md
 After=network-online.target nke-spire-configure.service
 Wants=network-online.target
 Requires=nke-spire-configure.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/spire-agent run -config /etc/spire-agent/agent.conf
+# An OS profile's cloud-init writes an agent.conf carrying the literal
+# plugin_checksum = "${TPM_PLUGIN_CHECKSUM}"; -expandEnv resolves it from here,
+# so the checksum belongs to the plugin this image installed. postinst writes
+# the file. Same pair as controller/hack/ci/assets/spire-agent.service.
+EnvironmentFile=-/etc/spire-agent/spire-agent.env
+ExecStart=/usr/local/bin/spire-agent run -config /etc/spire-agent/agent.conf -expandEnv
 Restart=on-failure
 RestartSec=5
 User=spire

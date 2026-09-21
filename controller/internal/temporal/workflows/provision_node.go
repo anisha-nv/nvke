@@ -13,10 +13,10 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
-	"github.com/NVIDIA/nke/controller/internal/constants"
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/metrics"
-	"github.com/NVIDIA/nke/controller/internal/temporal/activities"
+	"github.com/dsx-ai-factory/nke/controller/internal/constants"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/metrics"
+	"github.com/dsx-ai-factory/nke/controller/internal/temporal/activities"
 )
 
 type HookType string
@@ -146,6 +146,10 @@ func provisionCAPINode(ctx workflow.Context, nodeID uuid.UUID) error {
 			Pending: &activities.ConditionUpdate{
 				Status:  db.ConditionStatusTrue,
 				Message: "Waiting for infrastructure allocation",
+			},
+			ProvisioningClaimed: &activities.ConditionUpdate{
+				Status:  db.ConditionStatusTrue,
+				Message: "Provisioning workflow claimed node",
 			},
 			Provisioning: &activities.ConditionUpdate{
 				Status:  db.ConditionStatusFalse,
@@ -483,23 +487,27 @@ func configureCNIPrerequisites(ctx workflow.Context, nodeID uuid.UUID) error {
 	}
 
 	if cluster.CniPlugin == db.CNIOvnKubernetes {
+		workflowInfo := workflow.GetInfo(ctx)
+		operationID := fmt.Sprintf(
+			"open-vswitch/%s/%s/%s",
+			workflowInfo.WorkflowExecution.ID,
+			workflowInfo.WorkflowExecution.RunID,
+			nodeID,
+		)
 		activityOptions := workflow.ActivityOptions{
 			StartToCloseTimeout: 1 * time.Minute,
 			RetryPolicy: &temporal.RetryPolicy{
-				InitialInterval: 1 * time.Minute,
+				InitialInterval: 5 * time.Second,
 				MaximumInterval: 5 * time.Minute,
 				MaximumAttempts: 0, // Retry indefinitely
 			},
 		}
 		if err := workflow.ExecuteActivity(
 			workflow.WithActivityOptions(ctx, activityOptions),
-			a.ExecuteHostRunbook,
-			activities.ExecuteHostRunbookInput{
-				HostID:      nodeID,
-				RunbookName: "configure-openvswitch",
-			},
+			a.ConfigureOpenVSwitch,
+			activities.ConfigureOpenVSwitchInput{NodeID: nodeID, OperationID: operationID},
 		).Get(ctx, nil); err != nil {
-			return fmt.Errorf("failed to run configure-openvswitch runbook: %w", err)
+			return fmt.Errorf("failed to configure Open vSwitch: %w", err)
 		}
 	}
 

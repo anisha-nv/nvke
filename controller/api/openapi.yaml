@@ -32,23 +32,6 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
-  /infraProviders:
-    get:
-      summary: List Accepted Infrastructure API Modes
-      operationId: listInfraProviders
-      description: Returns configured API modes accepted for new clusters and provider-bearing writes. This is not discovery of installed CAPI modules or backend health.
-      responses:
-        "200":
-          description: A list of infrastructure provider payload keys
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ListInfraProvidersResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
   /clusters:
     get:
       summary: List Clusters
@@ -196,6 +179,38 @@ paths:
                 $ref: "#/components/schemas/ClusterControlPlane"
         "404":
           description: Cluster not found
+
+  /clusters/{clusterID}/control-plane/configHistory:
+    parameters:
+      - name: clusterID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get a Cluster's Control Plane Config History
+      operationId: getClusterControlPlaneConfigHistory
+      description: >-
+        Returns the control-plane configuration change history for a cluster,
+        derived from its control-plane configuration snapshots. Each entry
+        represents a config change and shows which rollout-relevant fields changed
+        relative to the previous snapshot. Resolves the pinnedConfigurationID
+        carried on each control-plane node and the cluster's desired
+        configurationID.
+      responses:
+        "200":
+          description: Returns the cluster's control-plane config history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ControlPlaneConfigHistory"
+        "404":
+          description: Cluster not found
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /nodePools:
     get:
@@ -805,6 +820,8 @@ components:
         - kubernetesVersion
         - controlPlaneUpgrading
         - cpNodesRecycling
+        - deletingNodeCount
+        - deleteRequestedNodeCount
       properties:
         nodeCount:
           type: integer
@@ -829,6 +846,27 @@ components:
           $ref: "#/components/schemas/Condition"
           description: The condition indicating whether the control-plane nodes are currently being recycled.
           x-order: 5
+        rollout:
+          $ref: "#/components/schemas/ControlPlaneRolloutSummary"
+          description: >-
+            Rollout rollup for the control plane. Present only when the control
+            plane is managed by the control-plane controller; absent for
+            node-pool-managed control planes.
+          x-order: 6
+        deletingNodeCount:
+          type: integer
+          description: |
+            Number of control-plane nodes whose teardown is in flight. Control-plane
+            deletes are serialized, so this is at most 1.
+          x-go-type-skip-optional-pointer: true
+          x-order: 7
+        deleteRequestedNodeCount:
+          type: integer
+          description: |
+            Number of control-plane nodes with an accepted delete whose teardown has
+            not started yet, because it is queued behind the in-flight one.
+          x-go-type-skip-optional-pointer: true
+          x-order: 8
 
     CreateClusterControlPlaneConfig:
       type: object
@@ -1099,14 +1137,6 @@ components:
           type: string
           description: Canonical IPv4 service network CIDR applied to the cluster.
 
-    InfraProvider:
-      type: string
-      enum:
-        - nico
-        - launchlayer
-        - infra
-      description: A top-level provider payload key advertised for CreateClusterRequest cluster specs.
-
     ListCNIPluginsResponse:
       type: object
       required:
@@ -1117,17 +1147,6 @@ components:
           items:
             type: string
           description: A list of CNI plugins
-
-    ListInfraProvidersResponse:
-      type: object
-      required:
-        - providers
-      properties:
-        providers:
-          type: array
-          items:
-            $ref: "#/components/schemas/InfraProvider"
-          description: The provider payload keys advertised for CreateClusterRequest cluster specs.
 
     ListClustersResponse:
       type: object
@@ -1561,6 +1580,73 @@ components:
           type: string
           description: The new value, JSON-encoded.
 
+    ControlPlaneConfigHistory:
+      type: object
+      additionalProperties: false
+      required:
+        - changes
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ControlPlaneConfigChange"
+          description: >-
+            Control-plane configuration snapshots ordered from oldest to newest.
+            Each entry after the first shows which rollout-relevant fields changed
+            relative to the previous snapshot. A node's pinnedConfigurationID and
+            the cluster's desired configurationID both refer to entries here.
+
+    ControlPlaneConfigChange:
+      type: object
+      additionalProperties: false
+      required:
+        - configurationID
+        - createdAt
+        - isCurrent
+        - changedFields
+      properties:
+        configurationID:
+          type: string
+          format: uuid
+          description: The ID of the control-plane configuration snapshot representing this config.
+        createdAt:
+          type: string
+          format: date-time
+          description: When this config snapshot was created (i.e. when the config change took effect).
+        isCurrent:
+          type: boolean
+          description: Whether this snapshot is the cluster's current desired control-plane configuration.
+        changeReason:
+          type: string
+          description: A human-readable reason the snapshot was created, when recorded.
+          x-go-type-skip-optional-pointer: true
+        createdBy:
+          type: string
+          description: Who created the snapshot, when recorded.
+          x-go-type-skip-optional-pointer: true
+        changedFields:
+          type: array
+          items:
+            $ref: "#/components/schemas/ControlPlaneConfigField"
+          description: Fields that changed relative to the previous snapshot. Empty for the initial snapshot.
+
+    ControlPlaneConfigField:
+      type: object
+      additionalProperties: false
+      required:
+        - field
+        - to
+      properties:
+        field:
+          type: string
+          description: The name of the config field that changed.
+        from:
+          type: string
+          description: The previous value, JSON-encoded. Omitted for the initial snapshot.
+        to:
+          type: string
+          description: The new value, JSON-encoded.
+
     NodeSet:
       type: object
       required:
@@ -1664,6 +1750,150 @@ components:
           $ref: "#/components/schemas/NodeConditions"
           description: Conditions representing various aspects of the node's state
           x-order: 10
+        controlPlaneRollout:
+          $ref: "#/components/schemas/ControlPlaneRolloutStatus"
+          description: >-
+            Rollout status for a control-plane-controller-managed node: whether its
+            pinned control-plane configuration has drifted from the cluster's desired
+            configuration and therefore needs the node to be recycled. Present only
+            for control-plane-controller-managed nodes (control-plane nodes with no
+            owning node pool); absent for node-pool-managed control-plane nodes and
+            for worker nodes.
+          x-go-type-skip-optional-pointer: true
+          x-order: 11
+
+    ControlPlaneRolloutChange:
+      type: object
+      description: A single rollout-relevant field whose pinned value differs from desired.
+      required:
+        - field
+        - from
+        - to
+      properties:
+        field:
+          type: string
+          description: The rollout-relevant field that changed (e.g. kubernetesVersion, osProfile, configProfile).
+          x-order: 1
+        from:
+          type: string
+          description: The value the node is currently pinned to.
+          x-order: 2
+        to:
+          type: string
+          description: The cluster's desired value.
+          x-order: 3
+
+    ControlPlaneRolloutStatus:
+      type: object
+      description: >-
+        Read-only, derived rollout state for a control-plane-controller-managed node.
+        pending is computed exactly as the control-plane controller computes it: the
+        node needs rollout when its pinned snapshot differs from the cluster's desired
+        snapshot in the OS profile, config profile, or Kubernetes version. The
+        pinned and desired snapshots themselves are resolvable in full (change
+        reason, author, timestamp) from pinnedConfigurationID and
+        desiredConfigurationID via GET /clusters/{clusterID}/control-plane/configHistory.
+      required:
+        - pending
+        - actionable
+      properties:
+        pending:
+          type: boolean
+          description: >-
+            True when the node's pinned configuration differs from the cluster's
+            desired configuration in a field that requires recycling the node.
+          x-order: 1
+        actionable:
+          type: boolean
+          description: >-
+            True when the drift is pending and the control-plane controller will
+            currently act on it (the cluster has control-plane node recycling
+            enabled). False means either there is no drift, or the drift is
+            detected but gated — recycling is disabled, so an operator must act.
+          x-order: 2
+        changes:
+          type: array
+          description: >-
+            The rollout-relevant fields whose pinned value differs from desired,
+            each as field/from/to. Empty when the node is up to date. Lets clients
+            render the drift generically without enumerating fields.
+          items:
+            $ref: "#/components/schemas/ControlPlaneRolloutChange"
+          x-go-type-skip-optional-pointer: true
+          x-order: 3
+        pinnedConfigurationID:
+          type: string
+          format: uuid
+          description: >-
+            The ID of the control-plane configuration snapshot the node is pinned
+            to. Use GET /clusters/{clusterID}/control-plane/configHistory to resolve
+            the full snapshot (change reason, author, timestamp).
+          x-go-type-skip-optional-pointer: true
+          x-order: 4
+        desiredConfigurationID:
+          type: string
+          format: uuid
+          description: The ID of the cluster's current desired control-plane configuration snapshot.
+          x-go-type-skip-optional-pointer: true
+          x-order: 5
+
+    ControlPlaneRolloutSummary:
+      type: object
+      additionalProperties: false
+      description: >-
+        Cluster-level rollout rollup for a control-plane-controller-managed control
+        plane: how many managed control-plane nodes are up to date, still pending,
+        and currently rolling out, whether a rollout is in progress, and whether
+        pending drift will be reconciled automatically. The three node counts are
+        mutually exclusive and sum to managedNodeCount. Present only for clusters
+        whose control plane is managed by the control-plane controller.
+      required:
+        - managedNodeCount
+        - upToDateNodeCount
+        - pendingNodeCount
+        - inProgressNodeCount
+        - inProgress
+        - recyclingEnabled
+      properties:
+        managedNodeCount:
+          type: integer
+          description: Number of control-plane nodes managed by the control-plane controller.
+          x-go-type-skip-optional-pointer: true
+          x-order: 1
+        upToDateNodeCount:
+          type: integer
+          description: >-
+            Number of managed control-plane nodes that have converged to the
+            cluster's desired configuration and are Ready (pinned configuration
+            matches desired and kubernetesReady is True).
+          x-go-type-skip-optional-pointer: true
+          x-order: 2
+        pendingNodeCount:
+          type: integer
+          description: Number of managed control-plane nodes whose pinned configuration has drifted and need recycling.
+          x-go-type-skip-optional-pointer: true
+          x-order: 3
+        inProgressNodeCount:
+          type: integer
+          description: >-
+            Number of managed control-plane nodes that already carry the desired
+            configuration but are not yet Ready (a recycle in flight). These are
+            neither pending nor up to date until they become Ready.
+          x-go-type-skip-optional-pointer: true
+          x-order: 4
+        inProgress:
+          type: boolean
+          description: True when a control-plane node recycle is currently underway.
+          x-go-type-skip-optional-pointer: true
+          x-order: 5
+        recyclingEnabled:
+          type: boolean
+          description: >-
+            True when control-plane node recycling is enabled for the cluster, so
+            the control-plane controller reconciles pending drift automatically.
+            When false, pending nodes are detected but gated and require an operator.
+          x-go-type-skip-optional-pointer: true
+          x-order: 6
 
     ListNodesResponse:
       type: object
@@ -1907,11 +2137,13 @@ components:
       type: object
       required:
         - pending
+        - provisioningClaimed
         - provisioning
         - readyToJoin
         - joined
         - provisioned
         - deleting
+        - deleteRequested
         - kubernetesReady
         - kubernetesUnschedulable
         - nodeAgentReady
@@ -1924,54 +2156,77 @@ components:
           description: The condition indicating whether the node is pending.
           $ref: "#/components/schemas/Condition"
           x-order: 1
+        provisioningClaimed:
+          description: The condition indicating whether a provisioning workflow has claimed the node.
+          $ref: "#/components/schemas/Condition"
+          x-order: 2
         provisioning:
           description: The condition indicating whether the node is currently provisioning.
           $ref: "#/components/schemas/Condition"
-          x-order: 2
+          x-order: 3
         readyToJoin:
           description: The condition indicating whether the node is ready to join the cluster.
           $ref: "#/components/schemas/Condition"
-          x-order: 3
+          x-order: 4
         joined:
           description: The condition indicating whether the node has joined the cluster.
           $ref: "#/components/schemas/Condition"
-          x-order: 4
+          x-order: 5
         provisioned:
           description: The condition indicating whether the node is provisioned.
           $ref: "#/components/schemas/Condition"
-          x-order: 5
+          x-order: 6
         deleting:
           description: The condition indicating whether the node is currently being deleted.
           $ref: "#/components/schemas/Condition"
-          x-order: 6
+          x-order: 7
         kubernetesReady:
           description: The condition indicating whether the Kubelet is reporting Ready status.
           $ref: "#/components/schemas/Condition"
-          x-order: 7
+          x-order: 8
         kubernetesUnschedulable:
           description: The condition indicating whether the node is schedulable by Kubernetes.
           $ref: "#/components/schemas/Condition"
-          x-order: 8
+          x-order: 9
         nodeAgentReady:
           description: The condition indicating whether the Node Agent is healthy on the node.
           $ref: "#/components/schemas/Condition"
-          x-order: 9
+          x-order: 10
         rebooting:
           description: The condition indicating whether the node is currently rebooting.
           $ref: "#/components/schemas/Condition"
-          x-order: 10
+          x-order: 11
         markedForRecycling:
           description: The condition indicating whether the node is marked for recycling.
           $ref: "#/components/schemas/Condition"
-          x-order: 11
+          x-order: 12
         markedForRepair:
           description: The condition indicating whether the node is marked for repair.
           $ref: "#/components/schemas/Condition"
-          x-order: 12
+          x-order: 13
         teleportRegistered:
           description: The condition indicating whether the node is registered with Teleport for SSH. True when confirmed registered; includes lastTransitionTime and message.
           $ref: "#/components/schemas/Condition"
-          x-order: 13
+          x-order: 14
+        controlPlaneRolloutRequired:
+          description: >-
+            For control-plane-controller-managed nodes, whether the node's pinned
+            control-plane configuration has drifted from the cluster's desired
+            configuration and the node needs to be rolled (True) or is up to date
+            (False). Carries lastTransitionTime, so consumers can tell how long a
+            node has needed a roll. Absent for nodes not managed by the
+            control-plane controller.
+          $ref: "#/components/schemas/Condition"
+          x-order: 15
+        deleteRequested:
+          description: |
+            The condition indicating that a delete has been accepted for this node
+            but its teardown has not started yet. Control-plane deletes are recorded
+            here first and started by the control-plane controller one at a time;
+            `deleting` then reports the teardown itself. At most one of the two is
+            true at a time.
+          $ref: "#/components/schemas/Condition"
+          x-order: 16
 
     GenericError:
       type: object

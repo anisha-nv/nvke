@@ -21,20 +21,42 @@ CONTAINERD_VERSION="${CONTAINERD_VERSION:-2.3.0}"
 RUNC_VERSION="${RUNC_VERSION:-v1.2.5}"
 CNI_VERSION="${CNI_VERSION:-v1.6.0}"
 CRICTL_VERSION="${CRICTL_VERSION:-v1.36.0}"
-ARCH="${ARCH:-amd64}"
+# Ask the guest rather than thread an arch through cloud-init. Defaulting to
+# amd64 put amd64 binaries in an arm64 guest, which only failed once kubeadm
+# ran. dpkg's names are the ones the downloads below expect.
+ARCH="${ARCH:-$(dpkg --print-architecture 2>/dev/null || true)}"
+if [[ -z "${ARCH}" ]]; then
+	case "$(uname -m)" in
+		x86_64) ARCH=amd64 ;;
+		aarch64|arm64) ARCH=arm64 ;;
+		*) echo "install-k8s-community: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+	esac
+fi
 
 log() { echo "install-k8s-community: $*"; }
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 
+# --retry alone covers HTTP responses and timeouts, not a stream-level error.
+# A run lost 7 downloads to "curl: (92) HTTP/2 stream 1 was not closed cleanly:
+# PROTOCOL_ERROR", which it did not retry, and the guest then failed at kubeadm
+# init with no mention of the download. --retry-all-errors covers it.
+#
+# No --retry-delay: setting it replaces curl's exponential backoff with a flat
+# wait. At `--retry 3 --retry-delay 2` the two guests download the same
+# binaries at the same moment from one egress address, and dl.k8s.io answered
+# vm-2 with four 403s two seconds apart -- the whole retry window was six
+# seconds. Exponential backoff bounded by --retry-max-time rides that out.
+CURL=(curl -fsSL --retry 5 --retry-all-errors --retry-max-time 120)
+
 # dl.k8s.io serves <binary>.sha256 beside each binary. Fetch both and compare,
 # so a truncated or substituted download fails here rather than at kubeadm init.
 fetch_k8s_binary() {
 	local name="$1" dest="$2"
 	local base="https://dl.k8s.io/release/${K8S_VERSION}/bin/linux/${ARCH}"
-	curl -fsSL --retry 3 -o "${tmp}/${name}" "${base}/${name}"
-	curl -fsSL --retry 3 -o "${tmp}/${name}.sha256" "${base}/${name}.sha256"
+	"${CURL[@]}" -o "${tmp}/${name}" "${base}/${name}"
+	"${CURL[@]}" -o "${tmp}/${name}.sha256" "${base}/${name}.sha256"
 	echo "$(cat "${tmp}/${name}.sha256")  ${tmp}/${name}" | sha256sum -c - >/dev/null
 	install -m 0755 "${tmp}/${name}" "${dest}/${name}"
 	log "installed ${name} ${K8S_VERSION}"
@@ -42,7 +64,7 @@ fetch_k8s_binary() {
 
 fetch_verified() {
 	local url="$1" out="$2" want="$3"
-	curl -fsSL --retry 3 -o "${out}" "${url}"
+	"${CURL[@]}" -o "${out}" "${url}"
 	if [ -n "${want}" ]; then
 		echo "${want}  ${out}" | sha256sum -c - >/dev/null
 	fi

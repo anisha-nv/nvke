@@ -15,11 +15,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	nkeproto "github.com/NVIDIA/nke/agent/pkg/agent/proto"
+	nkeproto "github.com/dsx-ai-factory/nke/agent/pkg/agent/proto"
 
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/kubeadmconfig"
-	"github.com/NVIDIA/nke/controller/internal/nodes"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/kubeadmconfig"
+	"github.com/dsx-ai-factory/nke/controller/internal/nodes"
 )
 
 type cachedJoinStrings struct {
@@ -111,6 +111,7 @@ func (a *Activities) kubeadmJoin(ctx context.Context, node db.Node) (KubeadmJoin
 	if err != nil {
 		return KubeadmJoinResult{}, err
 	}
+	joinConfig.KubernetesVersion = cluster.KubernetesVersion
 	joinConfig.SystemReservedMemory = nodePool.SystemReservedMemory
 	joinConfig.KubeReservedMemory = nodePool.KubeReservedMemory
 
@@ -144,8 +145,8 @@ func (a *Activities) kubeadmJoin(ctx context.Context, node db.Node) (KubeadmJoin
 			return KubeadmJoinResult{}, err
 		}
 	}
-	if err := a.ensureKubeadmPatches(ctx, node, nodePool); err != nil {
-		return KubeadmJoinResult{}, fmt.Errorf("failed to prepare kubeadm patches on node %s: %w", node.Name, err)
+	if err := a.ensureKubeadmFiles(ctx, node, artifacts.Files); err != nil {
+		return KubeadmJoinResult{}, fmt.Errorf("failed to prepare kubeadm files on node %s: %w", node.Name, err)
 	}
 
 	// ExecuteKubeadmJoin only starts the join; the agent runs kubeadm join in a

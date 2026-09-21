@@ -21,9 +21,9 @@ import (
 
 	"github.com/lmittmann/tint"
 
-	"github.com/NVIDIA/nke/controller/nico-sim/internal/app"
-	nvmconfig "github.com/NVIDIA/nke/controller/nico-sim/internal/config"
-	"github.com/NVIDIA/nke/controller/nico-sim/internal/seed"
+	"github.com/dsx-ai-factory/nke/controller/nico-sim/internal/app"
+	nvmconfig "github.com/dsx-ai-factory/nke/controller/nico-sim/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/nico-sim/internal/seed"
 )
 
 // runTestServer starts a nico-sim instance configured for integration testing.
@@ -44,7 +44,7 @@ func runTestServer() {
 	var logHandler slog.Handler
 	switch nvmconfig.ParseLogFormat() {
 	case nvmconfig.LogFormatText:
-		logHandler = tint.NewHandler(os.Stderr, &tint.Options{
+		logHandler = tint.NewTextHandler(os.Stderr, &tint.Options{
 			Level:      slog.LevelInfo,
 			TimeFormat: time.TimeOnly,
 			NoColor:    os.Getenv("NO_COLOR") != "",

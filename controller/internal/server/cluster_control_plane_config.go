@@ -11,8 +11,9 @@ import (
 	"github.com/google/uuid"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
-	"github.com/NVIDIA/nke/controller/api"
-	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/api"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/nodes"
 )
 
 // GetClusterControlPlane returns a read-only view of a cluster's control plane:
@@ -38,19 +39,34 @@ func (s *clusterService) GetClusterControlPlane(
 		return nil, fmt.Errorf("failed to list control-plane nodes: %w", err)
 	}
 
-	var readyNodeCount int
+	var readyNodeCount, deletingNodeCount, deleteRequestedNodeCount int
 	for i := range cpNodes {
 		if db.BoolFromConditionStatus(cpNodes[i].Conditions.KubernetesReady.Status) {
 			readyNodeCount++
 		}
+		// Deleting and DeleteRequested are mutually exclusive, so a node counts
+		// toward exactly one of these: teardown running, or accepted and queued.
+		if nodes.IsDeleting(cpNodes[i]) {
+			deletingNodeCount++
+		} else if nodes.IsDeleteRequested(cpNodes[i]) {
+			deleteRequestedNodeCount++
+		}
+	}
+
+	rolloutByNode, err := controlPlaneRolloutByNode(ctx, s.db, cpNodes)
+	if err != nil {
+		return nil, err
 	}
 
 	status := api.ControlPlaneStatus{
-		NodeCount:             len(cpNodes),
-		ReadyNodeCount:        readyNodeCount,
-		KubernetesVersion:     dbCluster.KubernetesVersion,
-		ControlPlaneUpgrading: apiConditionFromDB(dbCluster.Conditions.ControlPlaneUpgrading),
-		CpNodesRecycling:      apiConditionFromDB(dbCluster.Conditions.CPNodesRecycling),
+		NodeCount:                len(cpNodes),
+		ReadyNodeCount:           readyNodeCount,
+		DeletingNodeCount:        deletingNodeCount,
+		DeleteRequestedNodeCount: deleteRequestedNodeCount,
+		KubernetesVersion:        dbCluster.KubernetesVersion,
+		ControlPlaneUpgrading:    apiConditionFromDB(dbCluster.Conditions.ControlPlaneUpgrading),
+		CpNodesRecycling:         apiConditionFromDB(dbCluster.Conditions.CPNodesRecycling),
+		Rollout:                  controlPlaneRolloutSummary(dbCluster, cpNodes, rolloutByNode),
 	}
 
 	out, err := APIClusterFromDB(&dbCluster)
@@ -61,6 +77,62 @@ func (s *clusterService) GetClusterControlPlane(
 		Config: *out.ControlPlaneConfig,
 		Status: status,
 	}), nil
+}
+
+// controlPlaneRolloutSummary rolls the per-node rollout state up to the cluster
+// level. It is nil for node-pool-managed control planes (no control-plane
+// controller-managed nodes), matching the per-node behavior where those nodes
+// carry no rollout status.
+//
+// Each managed node lands in exactly one of three mutually exclusive buckets, so
+// the counts always sum to managedNodeCount:
+//   - pending: the node's pinned configuration has drifted from desired and it
+//     still needs recycling (db.IsControlPlaneRolloutRequired is true).
+//   - upToDate: the node has converged to the desired configuration and is Ready
+//     (kubernetesReady is True). Only these nodes are actually running the
+//     desired software.
+//   - inProgress: the node already carries the desired configuration but is not
+//     yet Ready — a freshly recycled node still coming up. Counting these as up
+//     to date would overstate converged capacity mid-rollout.
+//
+// The inProgress boolean reflects the cluster's CPNodesRecycling condition;
+// recyclingEnabled reflects the recycling gate that decides whether pending
+// drift is reconciled automatically.
+func controlPlaneRolloutSummary(
+	cluster db.Cluster,
+	cpNodes []db.Node,
+	rolloutByNode map[uuid.UUID]*api.ControlPlaneRolloutStatus,
+) *api.ControlPlaneRolloutSummary {
+	var managed, upToDate, pending, inProgress int
+	for i := range cpNodes {
+		if !cpNodes[i].IsManagedByControlPlaneController() {
+			continue
+		}
+		managed++
+		status, ok := rolloutByNode[cpNodes[i].ID]
+		if !ok {
+			continue
+		}
+		switch {
+		case status.Pending:
+			pending++
+		case db.BoolFromConditionStatus(cpNodes[i].Conditions.KubernetesReady.Status):
+			upToDate++
+		default:
+			inProgress++
+		}
+	}
+	if managed == 0 {
+		return nil
+	}
+	return &api.ControlPlaneRolloutSummary{
+		ManagedNodeCount:    managed,
+		UpToDateNodeCount:   upToDate,
+		PendingNodeCount:    pending,
+		InProgressNodeCount: inProgress,
+		InProgress:          db.BoolFromConditionStatus(cluster.Conditions.CPNodesRecycling.Status),
+		RecyclingEnabled:    cluster.EnableCPNodeRecycling,
+	}
 }
 
 // validateCreateClusterLevelControlPlane validates the cluster-level control
@@ -200,7 +272,7 @@ func validateMergedCAPIControlPlaneSpec(spec db.ControlPlaneConfigSpec) error {
 		return newBadRequestErrorf("controlPlaneConfig.infra.machineTemplate is required")
 	}
 	var bootstrapFiles []api.CloudInitFile
-	if files := apiCloudInitFilesFromDB(spec.CapiBootstrapFiles); files != nil {
+	if files := apiCloudInitFilesFromDB(spec.Capi.BootstrapFiles); files != nil {
 		bootstrapFiles = *files
 	}
 	if err := validateCloudInitFiles(bootstrapFiles); err != nil {

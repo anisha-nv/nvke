@@ -9,25 +9,25 @@ below is on `main`; the steps the CLI does not cover are marked.
 | Command | What it does | Status |
 |---|---|---|
 | `nkectl generate sitespec <name> --nodes hosts.csv` | Writes a site spec for `bootstrap site` from a node CSV. `--set path=value` fills in what the CSV does not carry. | Available |
-| `nkectl bootstrap site -f sitespec.yaml` | Stands up an ephemeral Kind cluster running CWE, has CWE create the site cluster on the spec's hosts through `nke-agent`, writes `<name>.kubeconfig`, tears the Kind cluster down. `--dry-run` validates the spec only. | Available |
+| `nkectl bootstrap site -f sitespec.yaml` | Stands up an ephemeral Kind cluster running CWE, has CWE create the site cluster on the spec's hosts through `nke-agent`, writes `<name>.kubeconfig` and `<name>-etcd-encryption-key.json`, tears the Kind cluster down. `--dry-run` validates the spec only. | Available |
 | Install the site controller on the new cluster | Deploy the controller Helm chart (`controller/deploy/charts/controller`). No `nkectl` command yet. | Not in the CLI |
 | `nkectl config set-site --url <cwe-url> --kubeconfig <path>` | Points the CLI at a site controller. `use-site` switches between entries, `view` prints the config. | Available |
 | `nkectl get providers` | Lists the Cluster API infrastructure providers the site controller can use, with their state. Alpha. | Available |
 | `nkectl create cluster -f spec.yaml` | Creates a tenant cluster from a `CreateClusterRequest` YAML. `-f -` reads stdin. | Available |
-| `nkectl get clusters` | Lists tenant clusters. `-c <name>` filters, `-o json\|yaml` changes the format. | Available |
-| `nkectl get clusters --cluster <name>` | Shows one tenant cluster. `-o json\|yaml` changes the format. | Available |
-| `nkectl get kubeconfig <name>` | Fetches a tenant cluster's admin kubeconfig. | In Review ([#269](https://github.com/NVIDIA/nke/pull/269)) |
+| `nkectl get clusters [name ...]` | Lists tenant clusters. Names narrow to those clusters. `-o json\|yaml` changes the format. | Available |
+| `nkectl get kubeconfig <name>` | Fetches a tenant cluster's admin kubeconfig. `--output-file` writes it to a file instead of stdout. | Available |
 | `nkectl delete cluster <name>` | Deletes a tenant cluster. | Available |
-| `nkectl update cluster <name>` | Updates a mutable cluster property (Kubernetes version, etcd encryption, remote access, control plane config). | Planned |
-| `nkectl create nodepool -f spec.yaml` | Adds a node pool to an existing cluster from a `CreateNodePoolRequest` YAML. `-f -` reads stdin. | Planned |
-| `nkectl get nodepools` | Lists node pools. `--cluster <name>` filters by cluster. | Planned |
-| `nkectl delete nodepool <name> --cluster <name>` | Removes a node pool from a cluster. | Planned |
-| `nkectl update nodepool <name> --cluster <name>` | Updates a mutable node pool property (desired count, instance type). | Planned |
+| `nkectl patch cluster <name>` | PATCHes a mutable cluster property (Kubernetes version, etcd encryption, remote access, control plane config). `--patch` takes an inline YAML document, `--patch-file` a file (or stdin via `-`). | Available |
+| `nkectl create nodepool -f spec.yaml` | Adds a node pool to an existing cluster from a `CreateNodePoolRequest` YAML. `-f -` reads stdin. | Available |
+| `nkectl get nodepools [name ...]` | Lists node pools. Names narrow to those pools, `--cluster <name>` to one cluster. `-o json\|yaml` changes the format. | Available |
+| `nkectl delete nodepool <name> --cluster <name>` | Removes a node pool from a cluster. Deleting the last joined control-plane pool is rejected; delete the cluster instead. | Available |
+| `nkectl patch nodepool <name> --cluster <name>` | PATCHes a node pool. `--patch` takes an inline YAML document, `--patch-file` a file (or stdin via `-`). `desiredNodeCount` is the only field supported so far. | Available |
 | `nkectl version` | Prints version, commit and build date. `-o short\|yaml\|json`. | Available |
 
-`cluster` and `clusters` are aliases on `create`, `get` and `delete`. Global
-flags: `--site <name>` overrides the active site for one invocation, `-v`
-enables debug logging, `--json-logs` emits logs as JSON.
+`cluster` and `clusters` are aliases on `create`, `get`, `patch` and `delete`,
+as are `nodepool` and `nodepools` on `create`, `get`, `patch` and `delete`.
+Global flags: `--site <name>` overrides the active site for one invocation,
+`-v` enables debug logging, `--json-logs` emits logs as JSON.
 
 ## Example
 
@@ -68,8 +68,11 @@ REGISTRY_API_KEY=... nkectl bootstrap site -f sitespec.yaml
 
 The command needs nerdctl and containerd on the host, and network reach to
 the hosts' `nke-agent` ports. On success it
-writes `my-tier0-site.kubeconfig` in the working directory (`--kubeconfig-out`
-changes the path) and removes the Kind cluster. On failure it writes cluster
+writes `my-tier0-site.kubeconfig` and `my-tier0-site-etcd-encryption-key.json`
+in the working directory (`--kubeconfig-out` and `--encryption-key-out` change
+the paths) and removes the Kind cluster. Every control-plane node holds the
+etcd encryption key; the key file is a convenience for installing a controller
+later and the copy a disaster recovery needs. Move it off the host. On failure it writes cluster
 diagnostics to `cluster-diagnostics/` first; `--keep-bootstrap-cluster` keeps
 the Kind cluster for debugging.
 
@@ -89,9 +92,10 @@ nkectl config set-site --name my-tier0-site \
 nkectl config view
 ```
 
-`--url` is the CWE API. `--kubeconfig` is the site cluster's kubeconfig.
+`--url` is the CWE API. `--kubeconfig` is the site cluster's kubeconfig; `get
+providers` and `get kubeconfig` read the cluster directly and need it.
 
-CWE API commands (`get`/`create`/`describe`/`delete` clusters) use that
+CWE API commands (`get`/`create`/`patch`/`delete` clusters) use that
 kubeconfig to authenticate: they read the audience from ConfigMap
 `cloud-workflow-engine/nke-auth-config` and mint a TokenRequest for
 `nke-clients/nke-client`. If the ConfigMap is absent, authentication is off
@@ -142,22 +146,88 @@ is a starting point.
 
 ```bash
 nkectl get clusters
-nkectl get clusters --cluster <cluster-name>
-nkectl get clusters --cluster <cluster-name> -o yaml
+nkectl get clusters <cluster-name>
+nkectl get clusters <cluster-name> -o yaml
 ```
 
 ### 8. Get the tenant cluster's kubeconfig
 
-`nkectl get kubeconfig <cluster-name>` is in review
-([#269](https://github.com/NVIDIA/nke/pull/269)). Until it merges, CWE
-publishes the kubeconfig as a Secret in the site cluster:
-
 ```bash
-kubectl --kubeconfig ./my-tier0-site.kubeconfig -n nke-system \
-  get secret <cluster-name>-admin-kubeconfig -o jsonpath='{.data.value}' | base64 -d
+nkectl get kubeconfig <cluster-name> --output-file ./tenant.kubeconfig
 ```
 
-### 9. Delete the tenant cluster
+Without `--output-file`, the kubeconfig is written to stdout. This reads the
+site cluster directly, the same as `get providers`, so it needs the site
+kubeconfig from step 4.
+
+### 9. Patch the tenant cluster
+
+```bash
+# Bump the Kubernetes version
+nkectl patch cluster my-cluster --patch 'controlPlaneKubernetesVersion: 1.31.0'
+
+# From a patch file
+nkectl patch cluster my-cluster --patch-file patch.yaml
+```
+
+Only the fields in the patch document are changed. `nkectl patch cluster
+--help` covers `--patch`, `--patch-file`, and field clearing in full.
+
+### 10. Add a node pool
+
+```bash
+nkectl create nodepool -f pool.yaml
+
+# or from stdin
+cat pool.yaml | nkectl create nodepool -f -
+```
+
+The spec is a `CreateNodePoolRequest`; the schema is served at `/api/docs` on
+the site controller. A file holding several documents is rejected; create one
+pool per invocation.
+
+`name`, `nodeNamePrefix`, `desiredNodeCount` and `clusterID` are required;
+`nkectl get clusters <name>` reports the cluster's ID. A pool carries either a
+`nico` or an `infra` payload, never both, and that is where the node type is
+chosen.
+
+[examples/nico-mock-nodepool.yaml](../examples/nico-mock-nodepool.yaml) is a
+starting point. Provisioning is asynchronous, the same as cluster creation.
+
+### 11. Scale a node pool
+
+```bash
+nkectl patch nodepool <nodepool-name> --cluster <cluster-name> --patch 'desiredNodeCount: 8'
+
+# From a file ('-' reads stdin)
+nkectl patch nodepool <nodepool-name> --cluster <cluster-name> --patch-file patch.yaml
+```
+
+Node pool names are unique within a cluster, so `--cluster` is what decides
+which pool is scaled. `desiredNodeCount` is the only field this command
+supports today; the API accepts more, but anything else is rejected before the
+request is sent.
+
+Scaling is asynchronous: the command returns once CWE has recorded the change,
+and the site controller provisions or tears down nodes to match it. A rejected
+scale-up, such as one the cluster's pod CIDR has no room for, is reported with
+CWE's own message. There is no confirmation prompt, so a lower count starts
+removing nodes straight away.
+
+
+### 12. Delete a node pool
+
+```bash
+nkectl delete nodepool <nodepool-name> --cluster <cluster-name>
+```
+
+Node pool names are unique within a cluster, so `--cluster` is what decides
+which pool is resolved. Deletion is asynchronous and the nodes are drained
+before removal; run `nkectl get nodepools --cluster <cluster-name>` to check
+on it. Deleting the last joined control-plane node pool of a cluster is
+rejected with CWE's own message — delete the cluster instead.
+
+### 13. Delete the tenant cluster
 
 ```bash
 nkectl delete cluster <cluster-name>

@@ -20,6 +20,14 @@ endif
 # so it is dropped from the environment the recipes pass on.
 unexport GOWORK
 
+# go.work owns the Go version. strcase (vendored via teleport/api) asserts its
+# Unicode tables match the stdlib's, so a toolchain newer than the `go`
+# directive panics at init -- controller/Makefile:7 has pinned against that
+# for a while. Exporting it here extends the same pin to every module this
+# Makefile delegates to. An explicit GOTOOLCHAIN, as CI sets, still wins.
+GOTOOLCHAIN ?= go$(shell awk '/^go /{print $$2; exit}' $(CURDIR)/go.work)
+export GOTOOLCHAIN
+
 GO      ?= go
 BIN_DIR ?= $(CURDIR)/bin
 
@@ -51,7 +59,7 @@ LICENSE_FILES = git ls-files -- '*.go' '*.sh' '*.py' '*.js' '*.css' '*.html' '*.
 
 # Modules in go.work — every module in the repository. Building needs no
 # NVIDIA credentials: the one still-INTERNAL dependency
-# (github.com/NVIDIA/cluster-api-provider-nico) is carried in the committed
+# (github.com/dsx-ai-factory/cluster-api-provider-nico) is carried in the committed
 # vendor/ tree, so `build` gives an outside contributor the same result as CI.
 # Re-vendoring (inside `work-sync`) is the only step that needs access to it.
 WORK_MODULES := agent \
@@ -256,7 +264,7 @@ work-check: ## Verify go.work and go.work.sum are complete and current. (run by 
 	   printf '%s\n' "$$gone" | sed 's/^/    /'; exit 1; \
 	 fi
 	@# Re-deriving workspace freshness needs the module graph over the network,
-	@# which includes github.com/NVIDIA/cluster-api-provider-nico — INTERNAL
+	@# which includes github.com/dsx-ai-factory/cluster-api-provider-nico — INTERNAL
 	@# visibility until it is open-sourced, so unreachable from public runners
 	@# and outside contributors. Builds are unaffected (the dependency is in the
 	@# committed vendor/ tree); only this freshness re-derivation needs access,
@@ -278,7 +286,7 @@ work-check: ## Verify go.work and go.work.sum are complete and current. (run by 
 	@# landing in one module without the workspace being refreshed, and the
 	@# untracked check catches a package that vendoring ADDS, which git diff
 	@# alone would miss.
-	@if (cd controller && GOWORK=off $(GO) mod download github.com/NVIDIA/cluster-api-provider-nico >/dev/null 2>&1); then \
+	@if (cd controller && GOWORK=off $(GO) mod download github.com/dsx-ai-factory/cluster-api-provider-nico >/dev/null 2>&1); then \
 		echo "- Checking the workspace, go.work.sum, vendor/ and every go.mod agree..."; \
 		$(GO) work sync || exit 1; \
 		for m in $(WORK_MODULES); do \
@@ -296,7 +304,7 @@ work-check: ## Verify go.work and go.work.sum are complete and current. (run by 
 		echo "go.work, go.work.sum and vendor/ are up to date."; \
 	else \
 		echo "NOTE: skipped the workspace freshness re-derivation:"; \
-		echo "  github.com/NVIDIA/cluster-api-provider-nico is not fetchable from here"; \
+		echo "  github.com/dsx-ai-factory/cluster-api-provider-nico is not fetchable from here"; \
 		echo "  (INTERNAL until open-sourced). The static checks above all passed."; \
 	fi
 
@@ -413,9 +421,11 @@ API_DEPENDENTS := controller cli controller/test/e2e
 # matching it costs nothing.
 RACE_MODULES := agent \
                 cli \
+                cluster-api-provider-provisioned \
                 controller \
                 controller/nico-sim \
-                controller/test/e2e
+                controller/test/e2e \
+                os-image
 
 # Root lint covers every module CI lints. Root fmt excludes generated API code,
 # whose formatting belongs to controller's generator.
@@ -644,8 +654,8 @@ license-deps-check: ## Check dependency licenses in every workspace module. (run
 		echo "- dependency licences: $$module"; \
 		GOTOOLCHAIN=local ./controller/bin/go-licenses check "./$$module/..." \
 			--disallowed_types=restricted,reciprocal,forbidden,unknown \
-			--ignore github.com/NVIDIA/nke \
-			--ignore github.com/NVIDIA/cluster-api-provider-nico || exit 1; \
+			--ignore github.com/dsx-ai-factory/nke \
+			--ignore github.com/dsx-ai-factory/cluster-api-provider-nico || exit 1; \
 	 done
 
 notices: ## Regenerate third-party notices for redistributed binaries.

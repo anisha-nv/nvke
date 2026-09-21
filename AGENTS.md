@@ -60,7 +60,7 @@ This changed in #76, which replaced the internal carbide SDK
 only `agent/` built from public dependencies.
 
 **One internal dependency remains**, and it does not block you:
-`github.com/NVIDIA/cluster-api-provider-nico` is an internal GitHub repository,
+`github.com/dsx-ai-factory/cluster-api-provider-nico` is an internal GitHub repository,
 and it is carried in the committed `vendor/` tree. Building, testing and linting
 all read the vendor tree, so they work without access to it. **Only `go work
 vendor` resolves it for real** — so re-vendoring after a dependency bump needs
@@ -120,7 +120,7 @@ build pass. Removing those dependencies is tracked work with its own design.
   certificates, or `.env` files.** Nothing resembling a credential belongs in
   this repository, in test fixtures, or in example manifests or profiles. This
   repository is being prepared to go public and its full history goes with it.
-  Use placeholder values such as `REDACTED` or `example-token`. `FWE_API_KEY`,
+  Use placeholder values such as `REDACTED` or `example-token`.
   `DB_CONNECTION_STRING` and the SPIFFE socket path are supplied by the
   environment at runtime — never inline a real value. If you find a real secret
   already committed, **stop and report it** rather than pushing a fix that
@@ -161,6 +161,11 @@ build pass. Removing those dependencies is tracked work with its own design.
   using `github.com/stretchr/testify`.
 - **Imports** are grouped stdlib, third-party, then this module, separated by
   blank lines.
+- **Line wrapping:** prefer single-line Go function declarations, using 150
+  characters as a guideline rather than a hard limit. Keep one or two parameters
+  inline unless the resulting line is exceptionally long; use multiline
+  parameter blocks when they materially improve readability. When wrapping, put
+  every parameter on its own line.
 - Exported types and functions carry doc comments starting with the identifier
   name.
 
@@ -202,7 +207,7 @@ func (s *NodeAgentServer) reset(ctx context.Context) error {
 
 ```go
 // Preferred: FIXME with a tracking link. TODO: fails the linter in controller/.
-// FIXME: https://github.com/NVIDIA/nke/issues/<N> — drop once the provider interface lands.
+// FIXME: https://github.com/dsx-ai-factory/nke/issues/<N> — drop once the provider interface lands.
 
 // Deprecated: an unbounded TODO with no owner and no ticket.
 // TODO: clean this up later
@@ -297,11 +302,14 @@ of green ticks with the other checks simply missing. If you are reviewing, check
 that the checks you care about are *present*, not just passing:
 
 ```bash
-gh pr checks <number> --repo NVIDIA/nke --json name,workflow
+gh pr checks <number> --repo dsx-ai-factory/nke --json name,workflow
 ```
 
-See [docs/branch-protection-settings.md](docs/branch-protection-settings.md) for
-which checks fall into which group.
+Which checks block a merge is a repository setting, not a file. Read it live:
+
+```bash
+gh api repos/dsx-ai-factory/nke/rules/branches/main --jq '[.[].type]'
+```
 
 ## Skills
 

@@ -51,7 +51,7 @@ $(info $$DEB_VERSION is [${DEB_VERSION}])
 RELEASE_LDFLAGS ?= -s -w -buildid=
 
 # -trimpath removes the build machine's filesystem paths from the binary. These
-# binaries are published to ghcr.io/nvidia/nke-agent, so without it every
+# binaries are published to ghcr.io/dsx-ai-factory/nke/agent, so without it every
 # release carries the layout of whatever machine built it, and two builds of the
 # same commit from different directories differ.
 LDFLAGS += -trimpath -ldflags="-X main.VERSION=$(VERSION) $(RELEASE_LDFLAGS)"
@@ -66,7 +66,11 @@ BUF_VERSION := v1.65.0
 
 GIT_HOOKS_DIR := $(shell git rev-parse --git-path hooks 2>/dev/null || echo .git/hooks)
 
-BUILD_DIR=build/deb
+BIN_DIR ?= $(CURDIR)/bin
+NFPM_BIN ?= $(BIN_DIR)/nfpm
+AGENT_PACKAGING_DIR := $(abspath ../os-image/packages/nke-agent/packaging)
+# Optional exact output path for consumers such as the Packer image build.
+DEB_OUTPUT ?=
 
 ##@ Help
 .PHONY: help
@@ -143,6 +147,12 @@ buf: ## Install buf if not present or wrong version
 	@$(GOBIN)/buf version 2>/dev/null | grep -q $(BUF_VERSION) || \
 		go install github.com/bufbuild/buf/cmd/buf@$(BUF_VERSION)
 
+# One definition of where the generated Go lands. PROTO_GEN_FILES expands when
+# this file is parsed, so check-protos sees the committed set before
+# clean-proto removes it.
+PROTO_DIR       := pkg/agent/proto
+PROTO_GEN_FILES := $(wildcard $(PROTO_DIR)/*.pb.go)
+
 .PHONY: protos
 protos: buf clean-proto ## Generate proto files using buf
 	$(GOBIN)/buf generate
@@ -152,14 +162,33 @@ proto-fmt: buf ## Format proto files using buf
 	$(GOBIN)/buf format -w
 
 .PHONY: check-protos
-check-protos: buf ## Check if proto files need formatting or regeneration
+check-protos: buf ## Check proto formatting, and that *.pb.go matches the .proto
 	@$(GOBIN)/buf format --diff --exit-code \
  || \
 		(echo "❌ Proto files need formatting. Run 'make proto-fmt' to fix." && false)
+	@# Regenerate and diff, the shape controller/Makefile:126-134 uses for the
+	@# OpenAPI output. Without it this target only ever checked its own
+	@# formatter, so a .proto change committed without `make protos` reached
+	@# main unseen. Expects a clean working directory.
+	@# git diff reports nothing for an untracked path, so a new generated file
+	@# would pass silently -- check tracking first, as notices-check does.
+	@for f in $(PROTO_GEN_FILES); do \
+		git ls-files --error-unmatch "$$f" >/dev/null 2>&1 \
+			|| { echo "❌ $$f is not tracked. Run 'make protos' and commit it."; exit 1; }; \
+	done
+	@$(MAKE) --no-print-directory protos
+	@git diff --exit-code -- $(PROTO_DIR) \
+		|| { echo "❌ *.pb.go is stale. Run 'make protos' and commit the result."; exit 1; }
+	@# git diff says nothing about a path git is not tracking, so a newly
+	@# generated file would otherwise pass while never being committed. Same
+	@# guard as Makefile's licences-check.
+	@untracked=$$(git ls-files --others --exclude-standard -- $(PROTO_DIR)); \
+	 [ -z "$$untracked" ] \
+		|| { echo "❌ generated proto files are not tracked. Run 'make protos' and commit them:"; printf '%s\n' "$$untracked" | sed 's/^/    /'; exit 1; }
 
 .PHONY: clean-proto
 clean-proto: ## Remove generated proto files
-	rm -f pkg/agent/proto/*.pb.go
+	rm -f $(PROTO_DIR)/*.pb.go
 
 ##@ Code quality
 .PHONY: fmt vet lint test
@@ -232,7 +261,7 @@ clean: ## Remove all build artifacts except protos
 # cgo is left to Go on a native host and turned off when cross-compiling.
 #
 # On a native Linux runner this is a no-op: cgo stays on, the binary links
-# against libc, and `Depends: libc6` in scripts/control is true. That is what
+# against libc, and `Depends: libc6` in the nfpm spec is true. That is what
 # deb.yml relies on by giving each architecture a runner of its own arch.
 #
 # Cross-compiling is where it matters. Go turns cgo off by itself when there is
@@ -282,44 +311,23 @@ package-all: package-amd64 package-arm64
 
 package: package-all ## Default package = all arches
 
-# Helper to build the deb package for a specific arch
+# Use the same pinned nfpm as the other node packages.
+.PHONY: nfpm
+nfpm: $(NFPM_BIN) ## Build the pinned Debian packaging tool.
+
+$(NFPM_BIN):
+	@GOBIN=$(abspath $(dir $(NFPM_BIN))) go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v$(NFPM_VERSION)
+
 # Usage: $(call build_deb,amd64)
 define build_deb
-	@echo "Building Debian package for $(1)..."
-	$(eval ARCH_BUILD_DIR := $(BUILD_DIR)_$(1))
-	@echo "Building Debian package for $(1)..."
-	rm -rf $(ARCH_BUILD_DIR)
-	mkdir -p $(ARCH_BUILD_DIR)/DEBIAN
-	mkdir -p $(ARCH_BUILD_DIR)/usr/local/bin
-	mkdir -p $(ARCH_BUILD_DIR)/etc/systemd/system/
-
-	cp -r bin/linux_$(1)/* $(ARCH_BUILD_DIR)/usr/local/bin/
-
-	cp ./scripts/*.service $(ARCH_BUILD_DIR)/etc/systemd/system/
-
-	for f in control postinst prerm postrm; do \
-		[ -f ./scripts/$$f ] && sed "s/{{VERSION}}/$(DEB_VERSION)/g" ./scripts/$$f > $(ARCH_BUILD_DIR)/DEBIAN/$$f; \
-	done
-
-	for s in ./scripts/*.service; do \
-		sed "s/{{VERSION}}/$(DEB_VERSION)/g" $$s > $(ARCH_BUILD_DIR)/etc/systemd/system/$$(basename $$s); \
-	done
-
-	@# Not `sed -i "s/..."`: BSD sed reads the script as the -i backup suffix and
-	@# the filename as the script, so this failed on a stock Mac before
-	@# `make deb-amd64` reached fakeroot.
-	sed "s/Architecture: .*/Architecture: $(1)/" $(ARCH_BUILD_DIR)/DEBIAN/control > $(ARCH_BUILD_DIR)/DEBIAN/control.new
-	mv $(ARCH_BUILD_DIR)/DEBIAN/control.new $(ARCH_BUILD_DIR)/DEBIAN/control
-
-	chmod 755 $(ARCH_BUILD_DIR)/DEBIAN/postinst
-	chmod 755 $(ARCH_BUILD_DIR)/DEBIAN/prerm
-	chmod 755 $(ARCH_BUILD_DIR)/DEBIAN/postrm
-	fakeroot dpkg-deb --build $(ARCH_BUILD_DIR) bin/nke-agent_$(DEB_VERSION)_$(1).deb
+	cd "$(AGENT_PACKAGING_DIR)" && ARCH="$(1)" DEB_VERSION="$(DEB_VERSION)" \
+		AGENT_DIR="$(CURDIR)" "$(abspath $(NFPM_BIN))" package -f nfpm.yaml -p deb \
+		-t "$(abspath $(or $(DEB_OUTPUT),bin/nke-agent_$(DEB_VERSION)_$(1).deb))"
 endef
 
 ##@ Debian Packaging
 
-# The .deb declares `Depends: libc6` (scripts/control), so the binary inside it
+# The .deb declares `Depends: libc6` (the nfpm spec), so the binary inside it
 # must link against libc. That happens only when cgo is on, and Go turns cgo off
 # by itself when cross-compiling, because there is no C toolchain for the target.
 #
@@ -343,7 +351,7 @@ define assert_dynamic
 		case "$$linkage" in \
 			*"dynamically linked"*) ;; \
 			*) echo "ERROR: bin/linux_$(1)/nke-agent is not dynamically linked, so"; \
-			   echo "  'Depends: libc6' in scripts/control is wrong for it."; \
+			   echo "  'Depends: libc6' in the nfpm spec is wrong for it."; \
 			   echo "  Go disables cgo when cross-compiling, so build the $(1) package"; \
 			   echo "  on a $(1) host, as deb.yml does. Override with"; \
 			   echo "  AGENT_SKIP_LINKAGE_CHECK=1 for a package you will not release."; \
@@ -355,11 +363,11 @@ endef
 
 .PHONY: deb-amd64 deb-arm64 deb-all debs
 
-deb-amd64: build-amd64 ## Build the amd64 Debian package (advisory; not in the merge gate)
+deb-amd64: build-amd64 $(NFPM_BIN) ## Build the amd64 Debian package (advisory; not in the merge gate)
 	$(call assert_dynamic,amd64)
 	$(call build_deb,amd64)
 
-deb-arm64: build-arm64 ## Build the arm64 Debian package (advisory; not in the merge gate)
+deb-arm64: build-arm64 $(NFPM_BIN) ## Build the arm64 Debian package (advisory; not in the merge gate)
 	$(call assert_dynamic,arm64)
 	$(call build_deb,arm64)
 

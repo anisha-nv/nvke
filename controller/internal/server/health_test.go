@@ -17,8 +17,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/testutil"
+	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/testutil"
 )
 
 func TestHealthzAlwaysHealthyWithoutDependencyChecks(t *testing.T) {
@@ -133,7 +133,6 @@ func TestServerHealthEndpoints(t *testing.T) {
 	mockDB := &testutil.MockDB{}
 	mockDB.On("Ping", mock.Anything).Return(nil).Once()
 	cfg := config.Config{
-		FWEAPIKey:            "test-key",
 		ManagedByK8sPlatform: false,
 		ProfilesDir:          "./profiles",
 	}

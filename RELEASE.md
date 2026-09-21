@@ -75,7 +75,7 @@ git push upstream cli/v0.2.0
 ```
 
 The prefix is the module's directory because Go requires it: the module
-`github.com/NVIDIA/nke/cli` can only be resolved by a tag named `cli/vX.Y.Z`.
+`github.com/dsx-ai-factory/nke/cli` can only be resolved by a tag named `cli/vX.Y.Z`.
 `.github/workflows/release.yml` reads the directory back off the tag and checks
 it against `go.work`, so a prefix naming no module fails the run.
 
@@ -84,8 +84,9 @@ themselves, after they have built and verified the real artifacts:
 
 | Tag | Workflow | What ships |
 |---|---|---|
-| `agent/vX.Y.Z` | `agent-deb-publish.yml` (+ `agent-artifact.yml`) | `.deb`s, GitHub Release assets, GHCR binary |
-| `os-image/vX.Y.Z` | `os-image-artifact.yml` | qcow2 on GHCR (`ghcr.io/nvidia/nke/os-image`), `nke-os-image-check` on the GitHub Release |
+| `agent/vX.Y.Z` | `agent-deb-publish.yml` (+ `agent-artifact.yml`) | `.deb`s, GitHub Release assets, GHCR binary, NVCR binary + `.deb`, S3/CloudFront `.deb` |
+| `os-image/vX.Y.Z` | `os-image-artifact.yml` | qcow2 on GHCR, NVCR, and S3/CloudFront; `nke-os-image-check` on the GitHub Release |
+| `cli/vX.Y.Z` | `release.yml` (+ `cli-artifact.yml`, `cli-artifact-nvcr.yml`, `cli-s3-publish.yml`) | binaries on GitHub Release, GHCR, NVCR, S3/CloudFront |
 
 An `os-image/` tag that fails Packer or the boot-smoke test never publishes the
 OCI artifact and never promotes the GitHub Release out of draft.
@@ -95,15 +96,43 @@ additionally publishes the controller image and Helm chart:
 
 | Workflow | What it publishes |
 |---|---|
-| `image-nvcr.yml` | multi-arch image to `nvcr.io/<org>/controller`, then promotes that released image to `ghcr.io/nvidia/nke/controller` with `crane copy`, preserving the digest and the full index |
-| `chart-publish.yml` | chart to `ghcr.io/nvidia/nke/charts/controller` |
-| `chart-publish-nvcr.yml` | chart to `nvcr.io/<org>/controller-chart` |
+| `image-nvcr.yml` | multi-arch image to `nvcr.io/<org>/nke-controller`, promotes that released image to DSX as `nvcr.io/<dsx-org-team>/nke-controller`, and promotes release tags to `ghcr.io/dsx-ai-factory/nke/nke-controller` |
+| `chart-publish.yml` | chart to `ghcr.io/dsx-ai-factory/nke/charts/nke-controller` |
+| `chart-publish-nvcr.yml` | chart to `nvcr.io/<org>/nke-controller-chart` and `nvcr.io/<dsx-org-team>/nke-controller-chart` |
 
 Every `main` commit already publishes the image and chart to NVCR. GHCR receives
 released versions only, which is why a chart built from a tag can safely point at
-`ghcr.io/nvidia/nke/controller:<version>` while a chart built from `main` could not.
-Releases from `controller/v0.1.1-rc.1` onward are present on GHCR; `controller/v0.1.0`
-predates the promotion job and was never copied there.
+`ghcr.io/dsx-ai-factory/nke/nke-controller:<version>` while a chart built from `main` could not.
+Releases before the repository moved to `dsx-ai-factory` on 2026-09-12 were promoted to
+`ghcr.io/nvidia/nke/controller` instead: `controller/v0.1.1-rc.1` to `rc.3` are there,
+`controller/v0.1.0` predates the promotion job, and the `rc.4` promotion failed, so that
+image exists nowhere. Later releases land under `ghcr.io/dsx-ai-factory/nke`.
+
+DSX receives the controller image from `image-nvcr.yml`, after the NKE multi-arch
+manifest exists. It receives the controller chart from `chart-publish-nvcr.yml`.
+Both use separate credentials from the same protected GitHub environment:
+
+| Name | Type | Purpose |
+|---|---|---|
+| `NKE_NGC_ORG` | variable | Source NGC org for `nvcr.io/<org>/nke-controller` |
+| `NGC_REGISTRY_TOKEN_NKE` | secret | Read/write token for the source NKE NGC org |
+| `DSX_NGC_ORG_TEAM` | variable | Destination NGC org/team, for example `<org>/components-dev` |
+| `NGC_REGISTRY_TOKEN_DSX` | secret | Write token for the DSX NGC org/team |
+
+The source and destination both live on `nvcr.io`, but they may require different
+NGC tokens. Docker auth stores one credential per registry host, so the DSX
+promotion pulls the source image into a local OCI layout with the NKE token, then
+logs in with the DSX token and pushes that same index to
+`nvcr.io/<dsx-org-team>/nke-controller`. Immutable tags
+(`sha-<commit>` and the git-described version) are treated as idempotent only
+when an existing destination digest matches the source digest; a mismatch fails
+the run. The `edge` tag is mutable and moves only on `main`.
+
+The DSX chart is packaged from the controller chart as `nke-controller-chart`,
+the same chart artifact name used for the NKE NVCR chart, and pushed to
+`oci://nvcr.io/<dsx-org-team>`. Its chart version is the controller git describe
+string without the leading `v`, while `appVersion` keeps the leading `v` so the
+rendered Deployment pulls the same image tag promoted by `image-nvcr.yml`.
 
 Push tags to `upstream`. The release workflow has no repository guard, so a tag
 pushed to a fork cuts a real release there.
@@ -119,9 +148,9 @@ body from `CHANGELOG.md`. Nothing is created by hand.
 After the tag push, confirm that any CI release pipelines complete
 successfully (node OS-image bake, chart publish, etc.). For `os-image/v*`, that is
 the **OS Image Artifact** check: Packer, boot-smoke, then `oras` to
-`ghcr.io/nvidia/nke/os-image`. For `controller/v*`, confirm the **Image
+`ghcr.io/dsx-ai-factory/nke/os-image`. For `controller/v*`, confirm the **Image
 NVCR** and **Chart Publish** checks, then that the promoted image is present at
-`ghcr.io/nvidia/nke/controller:<version>`.
+`ghcr.io/dsx-ai-factory/nke/nke-controller:<version>`.
 
 ## Hotfix releases
 

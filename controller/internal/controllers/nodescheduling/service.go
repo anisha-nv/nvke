@@ -6,31 +6,18 @@ package nodescheduling
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
-	"github.com/google/uuid"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/constants"
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/temporal/workflows"
+	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/constants"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/temporal/workflows"
 )
-
-var ErrForgeResourcesTemporarilyUnavailable = errors.New("forge resources temporarily unavailable")
-
-// ForgePlacementSpec describes the Forge networking placement to check before
-// starting a node provisioning workflow.
-type ForgePlacementSpec struct {
-	InstanceTypeID uuid.UUID
-	SubnetIDs      []uuid.UUID
-	VpcPrefixIDs   []uuid.UUID
-}
 
 // Service owns shared node scheduling side effects.
 type Service struct {
@@ -58,15 +45,6 @@ func NewService(
 		logger:            logger,
 		cweTemporalClient: cweTemporalClient,
 	}
-}
-
-// RetryAfter returns the scheduler retry interval for temporary external
-// unavailability such as Forge capacity or provider readiness.
-func (s *Service) RetryAfter() time.Duration {
-	if s.cfg.NodeSchedulingRetryInterval > 0 {
-		return s.cfg.NodeSchedulingRetryInterval
-	}
-	return 2 * time.Minute
 }
 
 // ScheduleCAPIInfraNodes starts ProvisionNode workflows without Forge

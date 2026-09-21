@@ -11,7 +11,7 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/NVIDIA/nke/controller
+        - github.com/dsx-ai-factory/nke/controller
     gofumpt:
       extra-rules: true
 
@@ -23,7 +23,7 @@ run:
   # This module resolves its dependencies through the repository's committed
   # workspace vendor/ tree (see docs/go-workspace.md); without this golangci
   # falls back to network module resolution, which fails on the INTERNAL
-  # github.com/NVIDIA/cluster-api-provider-nico dependency.
+  # github.com/dsx-ai-factory/cluster-api-provider-nico dependency.
   modules-download-mode: vendor
 
 output:
@@ -190,7 +190,7 @@ linters:
     goimports:
       # Might need customization per project
       local-prefixes:
-        - github.com/NVIDIA/nke/controller
+        - github.com/dsx-ai-factory/nke/controller
     govet:
       enable-all: true
       disable:
@@ -318,18 +318,9 @@ linters:
         text: 'var-naming'
         linters:
           - revive
-      # Allow var-naming for forge API package
-      - path: 'internal/providers/forge/api/.*'
-        text: 'var-naming'
-        linters:
-          - revive
       # Allow var-naming for utils package
       - path: 'internal/utils/.*'
         text: 'var-naming'
-        linters:
-          - revive
-      # Allow stutter in type name ForgeProvider - it's clearer than just Provider
-      - text: 'type name will be used as forge.ForgeProvider'
         linters:
           - revive
       # Allow stutter in the internal/rollout framework's established public API

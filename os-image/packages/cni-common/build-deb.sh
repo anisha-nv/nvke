@@ -15,7 +15,7 @@ set -euo pipefail
 [[ $# -eq 3 ]] || { echo "usage: $(basename "$0") <version> <bundle-dir> <out-dir>" >&2; exit 2; }
 : "${CNI:?}" "${PRODUCT:?}" "${CONTENT_SPEC:?}" "${CONTENT_KIND:?}"
 
-ARCH=amd64
+ARCH="${ARCH:-amd64}"
 # Package names carry the stream without a leading v, matching what
 # agent/internal/agent/cni.go asks apt for.
 STREAM="${1#v}"

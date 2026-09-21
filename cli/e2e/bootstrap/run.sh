@@ -2,79 +2,48 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# nkectl bootstrap-site e2e entrypoint, invoked by `make test-e2e-bootstrap`
-# and the "nkectl bootstrap e2e" CI workflow. Scoped to `bootstrap site`
-# specifically — cli/e2e/ is the home for e2e suites covering other nkectl
-# commands too, each in its own subdirectory alongside this one.
+# `nkectl bootstrap site` e2e entrypoint, invoked by `make test-e2e-bootstrap`
+# and the "nkectl bootstrap e2e" CI workflow.
 #
-# Grown incrementally, one stage per change, alongside `nkectl bootstrap
-# site`'s real implementation — each stage below is added only once the code
-# it exercises exists, so this script and the command it drives are never out
-# of sync.
+# Stages:
+#   1. Fake node containers come up and nke-agent answers on each.
+#   2. `bootstrap site`, run in the background. The moment its ephemeral Kind
+#      cluster is ready this suite bridges the two container networks and
+#      proves packets cross both ways. The command then deploys Postgres,
+#      Temporal, SPIRE and CWE, builds a cluster over the pre-provisioned
+#      hosts, writes its kubeconfig and exits 0.
+#   3. Every fake node's spire-agent attested to that SPIRE server over TPM.
+#      The EK thumbprints were an input to the command, so a bootstrap that
+#      deployed SPIRE without the TPM attestor, or dropped the allowlist,
+#      leaves every agent locked out.
+#   4. Every site spec node reports Ready through the kubeconfig the command
+#      wrote -- the cluster an operator gets, not the bootstrap cluster.
+#      Check the API endpoint, BGP next-hops and readiness through the VIP.
+#      Set NKECTL_E2E_CONTROL_PLANE_VIP="" to disable VIP coverage.
+#   5. Traefik serves a whoami Deployment on that cluster: hosts that already
+#      existed now serve traffic like any other cluster.
 #
-# Current stages:
-#   1. Fake node containers come up and nke-agent answers on each — proves
-#      the fixture a later change's real dispatch will depend on, ahead of
-#      that change actually reaching it. The wait for readiness lives in the
-#      substrate package (cli/e2e/bootstrap/substrate), not here: `nodes-up`
-#      does not return until every node's agent is confirmed active.
-#   2. `bootstrap site` stands up the ephemeral bootstrap Kind cluster
-#      (cli/internal/bootstrapengine), deploys Postgres, Temporal, SPIRE and CWE
-#      onto it (cli/internal/cwedeploy) and waits for CWE to report healthy on
-#      /readyz, then stops at its not-yet-implemented workflow-dispatch stub.
-#      Both the CWE-healthy line and the stub error are asserted by name, so a
-#      change that silently skips the deploy is caught here. The stub assertion
-#      does not require the command to fail -- see the stage itself.
-#   3. The Kind cluster is confirmed gone afterwards. It is torn down by this
-#      script rather than by the command, because stage 4 needs it kept alive.
-#   4. TPM node attestation. The fake nodes boot
-#      with a software TPM and a spire-agent already looking for the SPIRE
-#      server. `bootstrap site` is given their EK thumbprints, in the
-#      site spec, and deploys SPIRE with them allowlisted; the check is that
-#      the agents got in.
-#   5. The cluster itself. `bootstrap site` posts the site spec to CWE as a
-#      Cluster API cluster whose infrastructure is the pre-provisioned hosts
-#      (a ProvisionedCluster and a ProvisionedMachineTemplate), waits for it to
-#      finish, and writes out its kubeconfig. The command now exits 0.
-#   6. Every node of that cluster reports Ready through that kubeconfig.
-#   7. Hello world. Traefik is installed on the new cluster and a whoami
-#      Deployment is served through it, and this suite asks for the page. That
-#      is the end-to-end statement the earlier stages only imply: a cluster
-#      built out of hosts that already existed serves traffic like any other.
+# Everything created is registered for teardown as it is created, and the EXIT
+# trap runs those registrations in reverse, whatever the exit. A failing exit
+# first collects diagnostics into NKECTL_BOOTSTRAP_DIAGNOSTICS_DIR.
 #
-# This suite needs BOTH runtimes on the host:
+# The suite runs entirely on nerdctl/containerd, which `make -C cli
+# check-no-docker` keeps true. It needs on the host: nerdctl and a containerd
+# for kind to drive (nkectl sets KIND_EXPERIMENTAL_PROVIDER=nerdctl
+# unconditionally; kind states 1.7.0 as its minimum), buildkitd for `nerdctl
+# build` to reach, and root or sudo to install iptables FORWARD rules and
+# the SPIRE VIP. `cli/hack/bootstrap-e2e-host.sh install-runtime` sets up the
+# first two the way CI does.
 #
-#   - nerdctl >= 1.7.0 and a containerd for it to talk to. The ephemeral
-#     cluster runs there, because nkectl drives kind through
-#     KIND_EXPERIMENTAL_PROVIDER=nerdctl unconditionally (see
-#     cli/internal/bootstrapengine). See the CI workflow
-#     (.github/workflows/nkectl-bootstrap-e2e.yml) for the standalone install
-#     this repo has verified; the version floor is kind's stated minimum for
-#     its nerdctl provider, and only 2.3.5 is actually exercised here.
-#   - Docker. The fake-node fixture and all three fixture images still build
-#     and run through it (see nodes-up and the ensure-*-image targets in
-#     cli/Makefile), and this script bridges those images into containerd
-#     below with `docker save | nerdctl load`.
+# jq is required for BGP route checks when the control-plane VIP is enabled.
 #
-# It also needs root, or to be run under sudo: attaching the bootstrap cluster
-# to the node network installs an iptables rule and assigns the SPIRE VIP to a
-# bridge. Without it the run fails at "the bootstrap cluster was never
-# attached to the node network", after the images have already been built.
-#
-# The fake nodes emulate a TPM with swtpm, which asks the kernel for a device
-# through /dev/vtpmx. This script loads tpm_vtpm_proxy if it is not already
-# there; a host that cannot load it cannot run this suite.
-#
-# NKECTL_CWE_IMAGE must already be present in DOCKER's image store -- built
-# there, or pulled with `docker pull` -- before this script runs. The bridging
-# loop below reads it with `docker save`, so an image pulled only into
-# containerd fails there with "reference does not exist". nkectl then loads it
-# into the kind cluster rather than pulling from inside the cluster (see
-# cmd/nkectl/bootstrap.go's ensureImageAvailable), so no registry credentials
-# are needed past that point. CI builds the image locally rather than pulling
-# it (see the workflow's "Build CWE image" step).
+# NKECTL_CWE_IMAGE must already be in containerd's image store: nkectl saves it
+# from there and loads it into the kind cluster rather than pulling from inside
+# the cluster, so no registry credentials are needed past that point.
 
 set -Eeuo pipefail
+
+# ── Configuration ──────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLI_DIR="$(dirname "$(dirname "${SCRIPT_DIR}")")"
@@ -84,162 +53,273 @@ NKECTL="${NKECTL:-${CLI_DIR}/bin/nkectl}"
 # by hand. Only the cluster name is fixed here.
 E2E_CLUSTER_NAME="nke-e2e"
 BOOTSTRAP_KIND_CLUSTER="${NKECTL_BOOTSTRAP_CLUSTER_NAME:-nkectl-bootstrap}"
+BOOTSTRAP_CONTROL_PLANE="${BOOTSTRAP_KIND_CLUSTER}-control-plane"
+# The fake-node fixture, as the substrate package names it: N containers on one
+# private network, named by prefix and index. The defaults here mirror
+# substrate.DefaultConfig; override the same variables to change both.
+NODE_COUNT="${NKECTL_E2E_NODES:-3}"
+NODE_PREFIX="${NKECTL_E2E_NAME_PREFIX:-node}"
+NODE_NETWORK="${NKECTL_E2E_NETWORK:-nkectl-e2e-nodes}"
+NODE1="nkectl-e2e-${NODE_PREFIX}1"
+# The port nke-agent listens on, as the site spec's nodeAgentPort defaults it.
+NODE_AGENT_PORT=15005
 # SiteSpec generation records the exact journal boundary and expected result
 # for every node here. The later check reads the same file after bootstrap.
 export NKECTL_E2E_ATTESTATION_BASELINE="${CLI_DIR}/.local/attestation-baseline.json"
 # Where the node images' spire-agents were built to look for the SPIRE server.
 SPIRE_VIP="${NKECTL_E2E_SPIRE_SERVER_ADDRESS:-172.26.0.2}"
-# The init node, which is also where the finished cluster's API server ends up:
-# no controlPlaneVIP is set, so kubeadm uses the first control-plane node's IP.
-# It matches the first row of the generated node CSV, and it is the address
-# stages 6 and 7 use.
+# Use a value that differs from bootstrap's derived
+# "<bootstrap-cluster>.nke.local" default. The generated site spec and the
+# pre-provisioned agents must receive this same explicit trust domain, or node
+# attestation fails.
+SPIRE_TRUST_DOMAIN="${NKECTL_E2E_SPIRE_TRUST_DOMAIN:-nkectl-e2e.example.test}"
+export NKECTL_E2E_SPIRE_TRUST_DOMAIN="${SPIRE_TRUST_DOMAIN}"
+# First CSV node, used for Traefik access. CWE may initialize another node.
 INIT_NODE_IP="${NKECTL_E2E_INIT_NODE_IP:-172.26.0.10}"
-# Where Traefik is published on the new cluster, and where stage 7 asks for the
+# Where Traefik is published on the new cluster, and where stage 5 asks for the
 # page. In the NodePort range, and clear of the SPIRE server's 30081.
 TRAEFIK_NODE_PORT="${NKECTL_E2E_TRAEFIK_NODE_PORT:-30082}"
-# Where `bootstrap site` writes the finished cluster's kubeconfig.
+# Where `bootstrap site` writes the finished cluster's kubeconfig, and the key
+# that encrypts its etcd data.
 TENANT_KUBECONFIG="${SCRIPT_DIR}/.tenant.kubeconfig"
-: "${NKECTL_CWE_IMAGE:?NKECTL_CWE_IMAGE must name the CWE image to deploy, already pulled locally (see comment above)}"
-export NKECTL_CWE_IMAGE
+ETCD_KEY_FILE="${SCRIPT_DIR}/.etcd-encryption-key.json"
+BOOTSTRAP_LOG="${SCRIPT_DIR}/.bootstrap.log"
 
-# OS profiles, without which CWE fails its schema migration. Built from
-# controller/test/fixtures rather than pulled: the fleet image lives in
-# nke-site-deploy, which this suite does not depend on.
-export NKECTL_CWE_PROFILES_IMAGE="${NKECTL_CWE_PROFILES_IMAGE:-cwe-profiles:local}"
+# Keep the VIP outside the node subnet so nodes route through the host's
+# BGP-learned /32 instead of ARPing for another node's loopback address.
+# An explicit empty value disables the VIP; an unset variable uses the default.
+CONTROL_PLANE_VIP="${NKECTL_E2E_CONTROL_PLANE_VIP-172.26.1.1}"
+if [ -n "${CONTROL_PLANE_VIP}" ] && ! command -v jq >/dev/null 2>&1; then
+  printf 'FAIL: jq is required for the control-plane VIP checks\n' >&2
+  exit 1
+fi
+# FRR learns the VIP /32 from kube-vip and installs it in the host routing table.
+BGP_CONTAINER="nkectl-e2e-bgp"
+FRR_IMAGE="${NKECTL_E2E_FRR_IMAGE:-quay.io/frrouting/frr:9.1.0}"
+REPO_ROOT="$(dirname "${CLI_DIR}")"
+BGP_FILES_DIR="${REPO_ROOT}/controller/hack/bgp-containers"
+# Scratch dir for the rendered FRR config, bind-mounted into the container.
+BGP_RENDER_DIR="${SCRIPT_DIR}/.bgp"
+: "${NKECTL_CWE_IMAGE:?NKECTL_CWE_IMAGE must name the CWE image to deploy, already present in containerd (see comment above)}"
+export NKECTL_CWE_IMAGE
 
 # The Cluster API infrastructure provider for hosts that already exist, built
 # below from this checkout. Without it the CAPI objects CWE writes have no
-# controller and the cluster never leaves provisioning. nkectl loads it into the
-# bootstrap cluster the same way it loads the CWE and profiles images, and finds
-# the kustomize base to render by walking up to go.work — so only the image has
-# to be named here.
+# controller and the cluster never leaves provisioning. nkectl finds the
+# kustomize base by walking up to go.work, so only the image is named here.
 export NKECTL_CAPI_PROVISIONED_IMAGE="${NKECTL_CAPI_PROVISIONED_IMAGE:-cluster-api-provider-provisioned:local}"
 
-# Where a failed bootstrap writes its cluster dump. Set explicitly rather than
-# left to nkectl's default, which is relative to the working directory: CI runs
-# this from cli/, but a developer running it from the repo root would otherwise
-# scatter the bundle somewhere the CI artifact path does not match.
+# Where a failed bootstrap writes its cluster dump. Set explicitly because
+# nkectl's default is relative to the working directory, which would put the
+# bundle where the CI artifact path does not match.
 DIAGNOSTICS_DIR="${CLI_DIR}/cluster-diagnostics"
 export NKECTL_BOOTSTRAP_DIAGNOSTICS_DIR="${DIAGNOSTICS_DIR}"
 
-# `kind create cluster` merges into $KUBECONFIG, defaulting to ~/.kube/config
-# if unset -- own scratch path instead, so this run never touches (or takes
-# ownership of) the caller's default kubeconfig. This matters most for the
-# CI job, which runs this whole script under `sudo -E`: without
-# this, `kind create cluster` running as root would leave ~/.kube/config
-# root-owned, and a later, unrelated cleanup step running as the normal user
-# (helm/kind-action's own post-job step) would fail with "permission denied"
-# trying to update it.
+# `kind create cluster` merges into $KUBECONFIG, defaulting to ~/.kube/config:
+# use a scratch path so this run never takes ownership of the caller's. Under
+# CI's `sudo -E` that file would otherwise end up root-owned, and a later step
+# running as the normal user could not update it.
 KUBECONFIG_DIR="$(mktemp -d)"
 export KUBECONFIG="${KUBECONFIG_DIR}/config"
 CNI_BUNDLE_DIR="$(mktemp -d)"
 
-# KUBECONFIG alone is not enough: helm caches API discovery under
-# ~/.kube/cache and creates ~/.kube mode 0750 to do it, so under `sudo -E`
-# that directory is root-owned and the normal user cannot write the lock file
-# next to it either. `kubectl --raw` does not do this; helm does, on every
-# install. KUBECACHEDIR moves that cache into the same scratch directory.
+# KUBECONFIG alone is not enough: helm caches API discovery under ~/.kube/cache
+# and creates ~/.kube mode 0750 to do it, root-owned under `sudo -E`.
+# KUBECACHEDIR moves that cache into the same scratch directory.
 export KUBECACHEDIR="${KUBECONFIG_DIR}/cache"
+
+# ── Helpers ────────────────────────────────────────────────────────────────
 
 log() { printf '[nkectl-bootstrap-e2e] %s\n' "$*"; }
 
-# kind resolves a cluster through its provider, so ask the same one bootstrap
-# site used. Bare, kind asks Docker, sees none of nerdctl's clusters, and
-# answers "no" without checking anything.
-kind_lists_bootstrap_cluster() {
-  KIND_EXPERIMENTAL_PROVIDER=nerdctl kind get clusters 2>/dev/null |
-    grep -Fxq "${BOOTSTRAP_KIND_CLUSTER}"
+# fail logs one or more lines as a failure and exits 1. The EXIT trap then
+# collects diagnostics and tears down whatever was created.
+fail() {
+  log "FAIL: $1"
+  shift
+  local line
+  for line in "$@"; do log "  ${line}"; done
+  exit 1
 }
 
-nodes_up=false
-bootstrap_cluster_cleanup_pending=false
-spire_vip_device=""
-nerdctl_bridge=""
-nerdctl_node_access=false
-
-collect_node_diagnostics() {
-  local node_count="${NKECTL_E2E_NODES:-3}"
-  local name_prefix="${NKECTL_E2E_NAME_PREFIX:-node}"
-  local i node output
-
-  mkdir -p "${DIAGNOSTICS_DIR}" || return 0
-  log "collecting kubelet and containerd diagnostics from ${node_count} fake node(s)"
-  for ((i = 1; i <= node_count; i++)); do
-    node="nkectl-e2e-${name_prefix}${i}"
-    output="${DIAGNOSTICS_DIR}/host-diagnostics-${name_prefix}${i}.txt"
-    {
-      printf '### journalctl: kubelet and containerd\n'
-      docker exec "${node}" journalctl -u kubelet -u containerd \
-        --boot --no-pager --output=short-iso-precise --lines=10000 || true
-
-      printf '\n### systemctl status\n'
-      docker exec "${node}" systemctl status kubelet containerd --no-pager || true
-
-      printf '\n### crictl ps -a\n'
-      docker exec "${node}" crictl ps -a || true
-
-      printf '\n### crictl pods\n'
-      docker exec "${node}" crictl pods || true
-
-      printf '\n### crictl info\n'
-      docker exec "${node}" crictl info || true
-
-      printf '\n### ip addr\n'
-      docker exec "${node}" ip addr || true
-
-      printf '\n### ip route\n'
-      docker exec "${node}" ip route || true
-
-      printf '\n### CNI files\n'
-      docker exec "${node}" ls -la /etc/cni/net.d /opt/cni/bin || true
-    } >"${output}" 2>&1
-  done
-}
+# defer registers a command for the EXIT trap, which runs registrations in
+# reverse order. Register the teardown *before* the operation it undoes: under
+# `set -e` an operation can fail partway and exit on the spot, so the teardown
+# has to already be there. Each one is best-effort, so a partial state never
+# blocks the rest.
+DEFERRED=()
+defer() { DEFERRED+=("$*"); }
 
 cleanup() {
-  local status=$?
-  if [ "${status}" -ne 0 ] && [ "${nodes_up}" = true ]; then
-    collect_node_diagnostics
+  local status=$? i
+  if [ "${status}" -ne 0 ] && [ "${nodes_started}" = true ]; then
+    collect_diagnostics
   fi
+  for ((i = ${#DEFERRED[@]} - 1; i >= 0; i--)); do
+    eval "${DEFERRED[$i]}" || true
+  done
 
-  # --keep-bootstrap-cluster means the command no longer cleans up after
-  # itself, so a failure between it and the explicit teardown below would
-  # otherwise leak a cluster that the next run's stage 3 then trips over.
-  if [ "${bootstrap_cluster_cleanup_pending}" = true ]; then
-    log "tearing down the kept bootstrap kind cluster"
-    KIND_EXPERIMENTAL_PROVIDER=nerdctl \
-      kind delete cluster --name "${BOOTSTRAP_KIND_CLUSTER}" || true
-  fi
-  if [ "${nodes_up}" = true ]; then
-    if [ "${nerdctl_node_access}" = true ]; then
-      log "removing nerdctl access to the node network"
-      iptables -t raw -D PREROUTING -i "${nerdctl_bridge}" \
-        -d "${NKECTL_E2E_SUBNET:-172.26.0.0/24}" -j ACCEPT 2>/dev/null || true
-    fi
-    if [ -n "${spire_vip_device}" ]; then
-      log "removing ${SPIRE_VIP} from ${spire_vip_device}"
-      ip address del "${SPIRE_VIP}/32" dev "${spire_vip_device}" 2>/dev/null || true
-    fi
-    log "tearing down fake node containers"
-    make -C "${CLI_DIR}" nodes-down || true
-  fi
-
-  # Same class of bug as the KUBECONFIG one above, and the same cause: under
-  # `sudo -E` nkectl wrote this bundle as root. The CI step
-  # that uploads it runs as the normal user, which cannot so much as traverse
-  # into a root-owned 0750 directory -- so without this the diagnostics are
-  # collected and then silently dropped, on exactly the failing runs they
-  # exist for. Hand ownership back instead of loosening nkectl's file modes:
-  # the bundle contains whatever the pod logs contained.
+  # Same cause as the KUBECONFIG scratch path above: under `sudo -E` nkectl
+  # writes this bundle as root, and the CI step that uploads it runs as the
+  # normal user, which cannot traverse a root-owned 0750 directory. Hand
+  # ownership back rather than loosening nkectl's file modes.
   if [ -n "${SUDO_UID:-}" ] && [ -d "${DIAGNOSTICS_DIR}" ]; then
     log "restoring ownership of ${DIAGNOSTICS_DIR} to uid ${SUDO_UID}"
     chown -R "${SUDO_UID}:${SUDO_GID:-${SUDO_UID}}" "${DIAGNOSTICS_DIR}" || true
   fi
 
-  rm -f "${TENANT_KUBECONFIG}" "${SCRIPT_DIR}/.bootstrap.log"
-  rm -rf "${KUBECONFIG_DIR}" "${CNI_BUNDLE_DIR}"
+  rm -f "${TENANT_KUBECONFIG}" "${ETCD_KEY_FILE}" "${BOOTSTRAP_LOG}"
+  rm -rf "${KUBECONFIG_DIR}" "${CNI_BUNDLE_DIR}" "${BGP_RENDER_DIR}"
 }
+nodes_started=false
 trap cleanup EXIT
+
+# wait_until retries CMD every INTERVAL seconds until it succeeds or DEADLINE
+# seconds have passed. Returns 0 once CMD succeeds, 1 if the deadline passes.
+wait_until() {
+  local deadline=$((SECONDS + $1)) interval="$2"
+  shift 2
+  while [ "${SECONDS}" -lt "${deadline}" ]; do
+    if "$@"; then return 0; fi
+    sleep "${interval}"
+  done
+  return 1
+}
+
+# The teardowns that defer registers, one per thing created.
+teardown_nodes() {
+  log "tearing down fake node containers"
+  make -C "${CLI_DIR}" nodes-down || true
+}
+# Bare, kind asks Docker, sees none of nerdctl's clusters and answers "no"
+# without checking, so ask the provider `bootstrap site` used.
+kind_lists_bootstrap_cluster() {
+  KIND_EXPERIMENTAL_PROVIDER=nerdctl kind get clusters 2>/dev/null |
+    grep -Fxq "${BOOTSTRAP_KIND_CLUSTER}"
+}
+
+# `bootstrap site` is given --keep-bootstrap-cluster, so this suite owns the
+# kept cluster's removal; one left behind would trip the next run's stage 2.
+# The failure-path net; the happy path deletes at the end, where it can assert.
+teardown_bootstrap_cluster() {
+  log "tearing down the kept bootstrap kind cluster"
+  KIND_EXPERIMENTAL_PROVIDER=nerdctl \
+    kind delete cluster --name "${BOOTSTRAP_KIND_CLUSTER}" || true
+}
+remove_forward_rules() {
+  log "removing the cross-bridge forwarding rules"
+  iptables -D FORWARD -i "$1" -o "$2" -j ACCEPT 2>/dev/null || true
+  iptables -D FORWARD -i "$2" -o "$1" -j ACCEPT 2>/dev/null || true
+}
+remove_spire_vip() {
+  log "removing ${SPIRE_VIP} from $1"
+  ip address del "${SPIRE_VIP}/32" dev "$1" 2>/dev/null || true
+}
+
+remove_vip_forward_rule() {
+  iptables -D FORWARD -i "$1" -o "$1" -j ACCEPT 2>/dev/null || true
+}
+teardown_bgp_speaker() {
+  # Let zebra withdraw its routes before removing the container.
+  log "stopping the FRR BGP speaker ${BGP_CONTAINER}"
+  nerdctl stop --time 10 "${BGP_CONTAINER}" >/dev/null 2>&1 || true
+  nerdctl rm -f "${BGP_CONTAINER}" >/dev/null 2>&1 || true
+  # Remove routes left behind if FRR could not withdraw them.
+  ip route del "${CONTROL_PLANE_VIP}/32" 2>/dev/null || true
+}
+
+# check_api_server accepts a VIP, server URL, and whitespace-separated node IPs.
+# Without a VIP, any control-plane node may be the API endpoint.
+check_api_server() {
+  local vip="$1" server="$2" cp_node_ips="$3" ip
+  if [ -n "${vip}" ]; then
+    [ "${server}" = "https://${vip}:6443" ]
+    return $?
+  fi
+
+  for ip in ${cp_node_ips}; do
+    if [ "${server}" = "https://${ip}:6443" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# bgp_vip_nexthops prints sorted, unique next-hop IPs for the VIP /32.
+bgp_vip_nexthops() {
+  local out
+  out="$(nerdctl exec "${BGP_CONTAINER}" vtysh -c \
+    "show bgp ipv4 unicast ${CONTROL_PLANE_VIP}/32 json" 2>/dev/null)" || return 0
+  printf '%s' "${out}" | jq -r '.paths[]?.nexthops[]?.ip // empty' 2>/dev/null | sort -u || true
+}
+
+# Which registry each side's pulls resolve to. A pull that falls through to
+# upstream is the difference between a 30 second install and a helm timeout,
+# so a slow run that still passes wants this too.
+registry_routing() {
+  echo "### ${NODE1}: /etc/containerd/certs.d/docker.io/hosts.toml"
+  nerdctl exec "${NODE1}" cat /etc/containerd/certs.d/docker.io/hosts.toml
+  echo "### ${BOOTSTRAP_CONTROL_PLANE}: /etc/containerd/certs.d/docker.io/hosts.toml"
+  nerdctl exec "${BOOTSTRAP_CONTROL_PLANE}" cat /etc/containerd/certs.d/docker.io/hosts.toml
+}
+
+# collect_diagnostics writes what a failed run needs once the containers are
+# gone: the host's forwarding and network state, each node's journals and
+# runtime state, and where each side's image pulls were routed.
+collect_diagnostics() {
+  local i node output
+  mkdir -p "${DIAGNOSTICS_DIR}" || return 0
+
+  log "collecting host forwarding and network state (for the cross-bridge path)"
+  {
+    echo "### iptables -S FORWARD"; iptables -S FORWARD
+    echo "### iptables -S CNI-ISOLATION-STAGE-1"; iptables -S CNI-ISOLATION-STAGE-1
+    echo "### iptables -S CNI-ISOLATION-STAGE-2"; iptables -S CNI-ISOLATION-STAGE-2
+    echo "### iptables -t nat -S CNI-HOSTPORT-DNAT"; iptables -t nat -S CNI-HOSTPORT-DNAT
+    echo "### nerdctl network inspect"; nerdctl network inspect kind "${NODE_NETWORK}"
+    registry_routing
+    if [ -n "${CONTROL_PLANE_VIP}" ]; then
+      echo "### ip route show ${CONTROL_PLANE_VIP}/32"; ip route show "${CONTROL_PLANE_VIP}/32" || true
+      echo "### nerdctl logs ${BGP_CONTAINER} (tail 100)"; nerdctl logs "${BGP_CONTAINER}" --tail 100 || true
+      echo "### vtysh show bgp summary"; nerdctl exec "${BGP_CONTAINER}" vtysh -c 'show bgp summary' || true
+      echo "### node1 lo addresses"; nerdctl exec "${NODE1}" ip -4 addr show lo || true
+      echo "### node1 kube-vip manifest"; nerdctl exec "${NODE1}" cat /etc/kubernetes/manifests/kube-vip.yaml || true
+      echo "### node1 vip containers"; nerdctl exec "${NODE1}" sh -c 'crictl ps -a | grep -i vip' || true
+    fi
+  } > "${DIAGNOSTICS_DIR}/host-network.txt" 2>&1 || true
+
+  log "collecting kubelet, containerd, nke-agent and spire-agent diagnostics from ${NODE_COUNT} fake node(s)"
+  for ((i = 1; i <= NODE_COUNT; i++)); do
+    node="nkectl-e2e-${NODE_PREFIX}${i}"
+    output="${DIAGNOSTICS_DIR}/host-diagnostics-${NODE_PREFIX}${i}.txt"
+    {
+      printf '### journalctl: kubelet, containerd, nke-agent, spire-agent\n'
+      nerdctl exec "${node}" journalctl -u kubelet -u containerd -u nke-agent -u spire-agent \
+        --boot --no-pager --output=short-iso-precise --lines=10000 || true
+
+      printf '\n### systemctl status\n'
+      nerdctl exec "${node}" systemctl status kubelet containerd --no-pager || true
+
+      printf '\n### crictl ps -a\n'
+      nerdctl exec "${node}" crictl ps -a || true
+
+      printf '\n### crictl pods\n'
+      nerdctl exec "${node}" crictl pods || true
+
+      printf '\n### crictl info\n'
+      nerdctl exec "${node}" crictl info || true
+
+      printf '\n### ip addr\n'
+      nerdctl exec "${node}" ip addr || true
+
+      printf '\n### ip route\n'
+      nerdctl exec "${node}" ip route || true
+
+      printf '\n### CNI files\n'
+      nerdctl exec "${node}" ls -la /etc/cni/net.d /opt/cni/bin || true
+    } >"${output}" 2>&1
+  done
+}
 
 # ── Stage 1: fake nodes ──────────────────────────────────────────────────
 
@@ -249,39 +329,26 @@ BUNDLE_ARCH="$(go env GOARCH)" \
 CAPD_CNI_MANIFESTS_DEB_PATH="${CNI_BUNDLE_DIR}/nke-cni-calico-manifests-3.30.1_3.30.1_all.deb"
 export CAPD_CNI_MANIFESTS_DEB_PATH
 if [ ! -f "${CAPD_CNI_MANIFESTS_DEB_PATH}" ]; then
-  log "FAIL: no Calico manifests package was built"
-  exit 1
+  fail "no Calico manifests package was built"
 fi
 
 log "starting fake node containers"
-# Set before the call, not after: `nodes-up` can fail after creating some
-# containers (e.g. node3 fails to start while node1/node2 succeeded). Under
-# `set -e` that failure exits the script immediately, so cleanup must already
-# know to tear down whatever got created rather than skipping it because the
-# call never "finished". `nodes-down` is safe to run against a partial or
-# nonexistent fixture.
-nodes_up=true
+# `nodes-up` can fail after creating some containers; `nodes-down` is safe
+# against a partial or nonexistent fixture, and diagnostics are only worth
+# collecting once there are nodes to ask.
+nodes_started=true
+defer teardown_nodes
 make -C "${CLI_DIR}" nodes-up
 
 log "PASS: all fake nodes are up with TPM and SPIRE services ready"
 
-# ── Stages 2-4: bootstrap, then TPM attestation ─────────────────────────
+# ── Stage 2: bootstrap site ─────────────────────────────────────────────
 #
-# The fake nodes booted with a software TPM and a spire-agent already pointed at
-# SPIRE_VIP:30081 — the address `bootstrap site` puts its SPIRE server on. They
-# have been retrying since. So this stage does not configure or start anything
-# on them: it records their EK thumbprints in the site spec, runs the command,
-# and checks the agents got in.
-#
-# That ordering is the point. The thumbprints are an *input* to `bootstrap
-# site`, which seeds them into the SPIRE server it installs. A bootstrap that
-# deployed SPIRE without wiring the TPM attestor, or dropped the allowlist, or
-# put the server somewhere else, leaves every agent locked out and fails here.
-#
-# The command is given --keep-bootstrap-cluster, because the agents need the
-# cluster to still be there when they reach it, and this stage tears it down
-# itself afterwards. The "cluster is gone" assertion is kept, at the end,
-# against that explicit teardown.
+# The fake nodes booted with a software TPM and a spire-agent already pointed
+# at SPIRE_VIP:30081, the address `bootstrap site` puts its SPIRE server on,
+# and have been retrying since. This stage only records their EK thumbprints in
+# the site spec and runs the command; the next one checks the agents got in.
+
 if [ ! -c /dev/vtpmx ]; then
   log "loading the vTPM proxy driver (/dev/vtpmx)"
   sudo modprobe tpm_vtpm_proxy 2>/dev/null || {
@@ -291,57 +358,39 @@ if [ ! -c /dev/vtpmx ]; then
   }
 fi
 if [ ! -c /dev/vtpmx ]; then
-  log "FAIL: no /dev/vtpmx. The fake nodes emulate a TPM with swtpm, which asks"
-  log "  the kernel to allocate one through that device, so this suite cannot run"
-  log "  without it. There are two causes, and the kernel config separates them:"
-  log ""
-  log "    grep CONFIG_TCG_VTPM_PROXY /boot/config-$(uname -r)"
-  log ""
-  log "  =m       built, just not installed or loaded. Install"
-  log "           linux-modules-extra-$(uname -r) and modprobe tpm_vtpm_proxy."
-  log "           Persist it with:"
-  log "             echo tpm_vtpm_proxy | sudo tee /etc/modules-load.d/tpm_vtpm_proxy.conf"
-  log "  not set  this kernel never built it, and no package will supply it."
-  log "           Ubuntu enables it on some flavours and versions and not others"
-  log "           (6.8-azure yes; 6.11-azure and 6.17-azure no), so this is an"
-  log "           ordinary outcome rather than a broken machine. Run on a host"
-  log "           whose kernel has it -- the CI workflow pins its runner for"
-  log "           exactly this reason."
-  exit 1
+  fail "no /dev/vtpmx. The fake nodes emulate a TPM with swtpm, which asks" \
+    "the kernel to allocate one through that device, so this suite cannot run" \
+    "without it. There are two causes, and the kernel config separates them:" \
+    "" \
+    "  grep CONFIG_TCG_VTPM_PROXY /boot/config-$(uname -r)" \
+    "" \
+    "=m       built, just not installed or loaded. Install" \
+    "         linux-modules-extra-$(uname -r) and modprobe tpm_vtpm_proxy." \
+    "         Persist it with:" \
+    "           echo tpm_vtpm_proxy | sudo tee /etc/modules-load.d/tpm_vtpm_proxy.conf" \
+    "not set  this kernel never built it, and no package will supply it." \
+    "         Ubuntu enables it on some flavours and versions and not others" \
+    "         (6.8-azure yes; 6.11-azure and 6.17-azure no), so this is an" \
+    "         ordinary outcome rather than a broken machine. Run on a host" \
+    "         whose kernel has it -- the CI workflow pins its runner for" \
+    "         exactly this reason."
 fi
-
-log "building the profiles image (${NKECTL_CWE_PROFILES_IMAGE})"
-make -C "${CLI_DIR}" ensure-profiles-image CWE_PROFILES_IMAGE="${NKECTL_CWE_PROFILES_IMAGE}"
 
 log "building the provisioned CAPI provider image (${NKECTL_CAPI_PROVISIONED_IMAGE})"
 make -C "${CLI_DIR}" ensure-provisioned-provider-image \
   CAPI_PROVISIONED_IMAGE="${NKECTL_CAPI_PROVISIONED_IMAGE}"
 
-# The workflow and ensure-* targets build these images through `docker`:
-# `nerdctl build` needs a running buildkitd, which this suite does not stand
-# up (a second daemon alongside the containerd-nerdctl.service the CI job
-# already installs -- see nkectl-bootstrap-e2e.yml). A local Docker image is
-# invisible to nerdctl's separate containerd instance, and nkectl loads from
-# containerd, so bridge all three images across once here.
-image_platform="$(go env GOOS)/$(go env GOARCH)"
-for image in "${NKECTL_CWE_IMAGE}" "${NKECTL_CWE_PROFILES_IMAGE}" "${NKECTL_CAPI_PROVISIONED_IMAGE}"; do
-  log "loading ${image} for ${image_platform} into nerdctl's containerd (built via docker above)"
-  docker save --platform="${image_platform}" "${image}" | nerdctl load
-done
-
-# The completed images are sufficient from this point. On GitHub's 14 GB
-# runner, retaining their BuildKit intermediates competes with the container
-# storage needed by the bootstrap cluster and three site nodes.
+# The completed images are sufficient from this point. On a CI runner,
+# retaining their BuildKit intermediates competes with the container storage
+# needed by the bootstrap cluster and three site nodes.
 if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-  log "removing Docker build cache before cluster provisioning"
-  docker builder prune --all --force
+  log "removing the BuildKit cache before cluster provisioning"
+  nerdctl builder prune --all --force || true
 fi
 
-# The site spec is generated, not committed, so this lane exercises the command
-# an operator runs rather than a fixture kept in step with it by hand. The
-# thumbprints and the bootstrap CA could not be committed anyway: a TPM's
-# endorsement key is created along with the container, and a private key does
-# not belong in a repository.
+# The site spec is generated, not committed: it exercises the command an
+# operator runs, and a TPM's endorsement key is created with the container so
+# the thumbprints could not be committed anyway.
 log "collecting each node's TPM EK thumbprint and the bootstrap CA"
 HOSTS_CSV="${SCRIPT_DIR}/.hosts.csv"
 # shellcheck disable=SC2046 # the assignments are the documented output contract
@@ -356,6 +405,12 @@ if [[ -n "${NKECTL_E2E_SPIRE_CA_CERT:-}" && -n "${NKECTL_E2E_SPIRE_CA_KEY:-}" ]]
              --set "spire.caKeyFile=${NKECTL_E2E_SPIRE_CA_KEY}")
 fi
 
+# Omit the VIP field when disabled.
+vip_set=()
+if [ -n "${CONTROL_PLANE_VIP}" ]; then
+  vip_set=(--set "cluster.controlPlaneVIP=${CONTROL_PLANE_VIP}")
+fi
+
 log "generating the site spec: nkectl generate sitespec ${E2E_CLUSTER_NAME} --nodes ${NKECTL_E2E_HOSTS_CSV}"
 RENDERED_SITESPEC="${SCRIPT_DIR}/.sitespec.rendered.yaml"
 "${NKECTL}" generate sitespec "${E2E_CLUSTER_NAME}" \
@@ -366,74 +421,206 @@ RENDERED_SITESPEC="${SCRIPT_DIR}/.sitespec.rendered.yaml"
   --set cluster.podCidr=192.168.0.0/16 \
   --set cluster.serviceCidr=10.96.0.0/12 \
   --set cluster.kubeletConfig.systemReservedMemory=512Mi \
+  --set "spire.trustDomain=${SPIRE_TRUST_DOMAIN}" \
   "${spire_set[@]}" \
+  "${vip_set[@]}" \
   > "${RENDERED_SITESPEC}"
 
-grep -qE '^[[:space:]]+tpmEkThumbprint:' "${RENDERED_SITESPEC}" ||
-  { log "FAIL: no TPM EK thumbprints reached ${RENDERED_SITESPEC}"; exit 1; }
+# One thumbprint per node, init node included; stage 4 expects that many nodes.
+expected_nodes=$(grep -cE '^[[:space:]]+tpmEkThumbprint:' "${RENDERED_SITESPEC}" || true)
+if [ "${expected_nodes}" -eq 0 ]; then
+  fail "no TPM EK thumbprints reached ${RENDERED_SITESPEC}"
+fi
 if [[ ${#spire_set[@]} -gt 0 ]]; then
   grep -qE '^[[:space:]]*caCertFile:' "${RENDERED_SITESPEC}" ||
-    { log "FAIL: a bootstrap CA was supplied but did not reach ${RENDERED_SITESPEC}"; exit 1; }
+    fail "a bootstrap CA was supplied but did not reach ${RENDERED_SITESPEC}"
 fi
-log "allowlisting $(grep -cE '^[[:space:]]+tpmEkThumbprint:' "${RENDERED_SITESPEC}") EK thumbprint(s)"
+grep -qE "^[[:space:]]*trustDomain:[[:space:]]*['\"]?${SPIRE_TRUST_DOMAIN}['\"]?[[:space:]]*$" \
+  "${RENDERED_SITESPEC}" ||
+  fail "SPIRE trust domain ${SPIRE_TRUST_DOMAIN} did not reach ${RENDERED_SITESPEC}"
+if [ -n "${CONTROL_PLANE_VIP}" ]; then
+  # Quoted or unquoted, either is valid YAML for a string scalar.
+  grep -qE "^[[:space:]]*controlPlaneVIP:[[:space:]]*\"?${CONTROL_PLANE_VIP}\"?[[:space:]]*$" "${RENDERED_SITESPEC}" ||
+    { log "FAIL: controlPlaneVIP ${CONTROL_PLANE_VIP} did not reach ${RENDERED_SITESPEC}"; exit 1; }
+  log "control-plane VIP set to ${CONTROL_PLANE_VIP} in the site spec"
+fi
+log "allowlisting ${expected_nodes} EK thumbprint(s)"
+
+# Start before bootstrap so joining nodes can reach the VIP through BGP.
+start_bgp_speaker() {
+  local router_id listen_range
+
+  # kube-vip peers with the default gateway. Read it and the node subnet from
+  # the live network, skipping IPv6 entries that may have no gateway.
+  router_id="$(nerdctl network inspect "${NODE_NETWORK}" \
+    --format '{{range .IPAM.Config}}{{.Gateway}} {{end}}' \
+    | awk '{for (i=1;i<=NF;i++) if ($i ~ /^[0-9]+(\.[0-9]+){3}$/) {print $i; exit}}')"
+  listen_range="$(nerdctl network inspect "${NODE_NETWORK}" \
+    --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' \
+    | awk '{for (i=1;i<=NF;i++) if ($i ~ /^[0-9]+(\.[0-9]+){3}\/[0-9]+$/) {print $i; exit}}')"
+  [ -n "${router_id}" ] || { log "FAIL: could not read the ${NODE_NETWORK} gateway for the FRR router-id"; return 1; }
+  [ -n "${listen_range}" ] || { log "FAIL: could not read the ${NODE_NETWORK} subnet for the FRR listen range"; return 1; }
+  log "FRR router-id=${router_id} listen-range=${listen_range} (node network ${NODE_NETWORK})"
+
+  # Reuse the controller's FRR fixture with this network's addresses.
+  rm -rf "${BGP_RENDER_DIR}"
+  mkdir -p "${BGP_RENDER_DIR}"
+  sed -e "s|@ROUTER_ID@|${router_id}|g" \
+      -e "s|@LISTEN_RANGE@|${listen_range}|g" \
+      "${BGP_FILES_DIR}/frr.conf.tmpl" > "${BGP_RENDER_DIR}/frr.conf"
+  cp "${BGP_FILES_DIR}/vtysh.conf" "${BGP_RENDER_DIR}/vtysh.conf"
+  cp "${BGP_FILES_DIR}/daemons" "${BGP_RENDER_DIR}/daemons"
+
+  # A leftover container from an aborted run would make `run` fail on the name.
+  nerdctl rm -f "${BGP_CONTAINER}" >/dev/null 2>&1 || true
+
+  # Host networking lets zebra install routes used by both nerdctl bridges.
+  # Capabilities match controller/hack/bgp-containers/up.sh.
+  defer teardown_bgp_speaker
+  nerdctl run -d --name "${BGP_CONTAINER}" \
+    --net host \
+    --cap-add NET_ADMIN --cap-add SYS_ADMIN --cap-add NET_BIND_SERVICE \
+    -v "${BGP_RENDER_DIR}/frr.conf:/etc/frr/frr.conf" \
+    -v "${BGP_RENDER_DIR}/vtysh.conf:/etc/frr/vtysh.conf" \
+    -v "${BGP_RENDER_DIR}/daemons:/etc/frr/daemons" \
+    "${FRR_IMAGE}" >/dev/null || { log "FAIL: could not start the FRR BGP speaker"; return 1; }
+
+  if ! wait_until 30 1 nerdctl exec "${BGP_CONTAINER}" vtysh -c 'show version' >/dev/null 2>&1; then
+    log "FAIL: FRR (${BGP_CONTAINER}) did not become ready within 30s"
+    nerdctl logs "${BGP_CONTAINER}" 2>&1 | sed 's/^/  /' || true
+    return 1
+  fi
+  log "PASS: FRR BGP speaker ${BGP_CONTAINER} is up (image ${FRR_IMAGE}, pulled from quay.io)"
+}
+
+if [ -n "${CONTROL_PLANE_VIP}" ]; then
+  log "starting the FRR BGP speaker for control-plane VIP ${CONTROL_PLANE_VIP}"
+  start_bgp_speaker || exit 1
+fi
 
 # No chart is named here. What gets installed is pinned in
 # cli/internal/cwedeploy, which is the thing under test: the SPIFFE project's
 # public hardened charts, needing no registry credential of their own.
+# The command never overwrites a key file and refuses to start over one, so a
+# leftover from an interrupted run has to go first.
+rm -f "${ETCD_KEY_FILE}"
+
 log "running: nkectl bootstrap site -f ${RENDERED_SITESPEC} --keep-bootstrap-cluster --timeout 15m" \
   "(NKECTL_CWE_IMAGE=${NKECTL_CWE_IMAGE}," \
-  "NKECTL_CWE_PROFILES_IMAGE=${NKECTL_CWE_PROFILES_IMAGE}," \
   "NKECTL_CAPI_PROVISIONED_IMAGE=${NKECTL_CAPI_PROVISIONED_IMAGE})"
 
-# In the background, because the run has to be joined while it is still going.
+# In the background, because the attach below has to happen *during* the run:
+# CWE and the spire-agents talk over the node network, which the bootstrap
+# cluster is not on, because the nodes came up before it existed.
 #
-# The command no longer stops after deploying CWE: it creates the cluster and
-# waits for CWE to build it on the fake nodes. CWE reaches those nodes, and
-# their spire-agents reach SPIRE, over the node network — which the bootstrap
-# cluster is not on, because the nodes came up before it existed. So the attach
-# below has to happen *during* the run rather than after it, or nothing on
-# either side of that route ever completes.
-#
-# Set before the call, not after: the command can fail after creating the
-# cluster it was told to keep, and cleanup has to already know to remove it.
-bootstrap_cluster_cleanup_pending=true
-BOOTSTRAP_LOG="${SCRIPT_DIR}/.bootstrap.log"
-"${NKECTL}" bootstrap site -f "${RENDERED_SITESPEC}" --keep-bootstrap-cluster \
-  --timeout 15m --kubeconfig-out "${TENANT_KUBECONFIG}" >"${BOOTSTRAP_LOG}" 2>&1 &
+# --keep-bootstrap-cluster: this suite's EXIT trap removes the cluster, and the
+# teardown registers here because the command can fail after creating it.
+defer teardown_bootstrap_cluster
+# setsid makes nkectl a process-group leader so abort_bootstrap can signal the
+# kind, nerdctl and helm it drives as one group; nkectl does not forward
+# signals to its children.
+setsid "${NKECTL}" bootstrap site -f "${RENDERED_SITESPEC}" --keep-bootstrap-cluster \
+  --timeout 15m --kubeconfig-out "${TENANT_KUBECONFIG}" \
+  --encryption-key-out "${ETCD_KEY_FILE}" >"${BOOTSTRAP_LOG}" 2>&1 &
 bootstrap_pid=$!
 
-attach_bootstrap_to_node_network() {
-  local node_network="${NKECTL_E2E_NETWORK:-nkectl-e2e-nodes}"
-  local network_id bridge nerdctl_network_id
-  network_id="$(docker network inspect --format '{{.Id}}' "${node_network}")" || return 1
-  bridge="$(docker network inspect --format '{{index .Options "com.docker.network.bridge.name"}}' "${node_network}")" || return 1
-  if [ -z "${bridge}" ] || [ "${bridge}" = "<no value>" ]; then
-    bridge="br-${network_id:0:12}"
-  fi
-  ip link show "${bridge}" >/dev/null || return 1
-  nerdctl_network_id="$(nerdctl network inspect --format '{{.Id}}' kind)" || return 1
-  nerdctl_bridge="br-${nerdctl_network_id:0:12}"
-  ip link show "${nerdctl_bridge}" >/dev/null || return 1
-
-  # Docker drops packets addressed directly to its containers when they
-  # arrive from another bridge. Permit only this Kind bridge and node subnet,
-  # so CWE can call the node agents while both runtimes remain isolated.
-  iptables -t raw -I PREROUTING 1 -i "${nerdctl_bridge}" \
-    -d "${NKECTL_E2E_SUBNET:-172.26.0.0/24}" -j ACCEPT || return 1
-  nerdctl_node_access=true
-  ip address replace "${SPIRE_VIP}/32" dev "${bridge}" || return 1
-  spire_vip_device="${bridge}"
+# abort_bootstrap stops the background `bootstrap site` and its children before
+# this script exits -- nkectl runs as a process-group leader, so the whole
+# group is signalled and reaped. Otherwise the EXIT trap would delete the
+# cluster the command is still driving.
+abort_bootstrap() {
+  kill -- "-${bootstrap_pid}" 2>/dev/null || kill "${bootstrap_pid}" 2>/dev/null || true
+  wait "${bootstrap_pid}" 2>/dev/null || true
+  cat "${BOOTSTRAP_LOG}" || true
+  exit 1
 }
 
-# Attach as soon as Kind reports the bootstrap cluster ready. This is before CWE
-# is deployed, so changing the container's networks cannot reset the CWE create
-# request. It is also after Kind has finished configuring the control-plane
-# container, so the additional network cannot affect cluster creation.
+# cross_bridge_reachable tests forwarding between the two networks, not the
+# service on the far side. Refused is the pass: the packet crossed and the far
+# side answered that nothing is listening. A timeout is the failure, and is
+# what the CNI firewall's cross-bridge DROP looks like. bash's /dev/tcp gives
+# that distinction for free, neither image shipping curl.
+cross_bridge_reachable() {
+  local from="$1" ip="$2" port="$3" what="$4"
+  local out rc
+  out="$(nerdctl exec "${from}" timeout 5 bash -c "exec 3<>/dev/tcp/${ip}/${port}" 2>&1)" && rc=0 || rc=$?
+  case "${rc}" in
+    0) log "  ${what}: ${ip}:${port} accepted the connection"; return 0 ;;
+    124) log "FAIL: ${what}: ${ip}:${port} timed out -- packets are not crossing the bridges"; return 1 ;;
+    *)
+      if printf '%s' "${out}" | grep -qi "refused"; then
+        log "  ${what}: ${ip}:${port} reachable (refused; nothing listening yet, as expected before SPIRE)"
+        return 0
+      fi
+      log "FAIL: ${what}: ${ip}:${port} failed (exit ${rc}): ${out}"
+      return 1
+      ;;
+  esac
+}
+
+# probe_cross_bridge_connectivity checks both directions the moment the cluster
+# is attached; unchecked, a break here surfaces fifteen minutes later as "did
+# not report provisioned". nke-agent does not bind its port until the node has
+# an SVID and SPIRE is not deployed yet, so kind -> node is expected to be
+# refused rather than accepted. node -> kind uses the control plane's kubelet
+# port, listening as soon as the cluster is Ready.
+probe_cross_bridge_connectivity() {
+  local cp_ip ok=true
+  # From the network, not the container: the container's own inspect lists its
+  # pod bridge alongside the kind network, and ranging over both concatenates
+  # the addresses. The network knows exactly one address for it.
+  cp_ip="$(nerdctl network inspect kind --format \
+    "{{range .Containers}}{{if eq .Name \"${BOOTSTRAP_CONTROL_PLANE}\"}}{{.IPv4Address}}{{end}}{{end}}")" || return 1
+  cp_ip="${cp_ip%/*}"
+  if [ -z "${cp_ip}" ]; then
+    log "FAIL: could not find ${BOOTSTRAP_CONTROL_PLANE} on the kind network"
+    return 1
+  fi
+  cross_bridge_reachable "${BOOTSTRAP_CONTROL_PLANE}" "${INIT_NODE_IP}" "${NODE_AGENT_PORT}" "kind -> node" || ok=false
+  cross_bridge_reachable "${NODE1}" "${cp_ip}" 10250 "node -> kind" || ok=false
+  if [ "${ok}" != true ]; then
+    log "host FORWARD chain:"
+    iptables -S FORWARD | sed 's/^/  /'
+    return 1
+  fi
+  log "cross-bridge connectivity confirmed in both directions"
+}
+
+# attach_bootstrap_to_node_network bridges the two networks. Both are nerdctl
+# bridges, and nerdctl's default CNI config sets the firewall plugin's
+# ingressPolicy to "same-bridge", which DROPs any forward from one CNI bridge
+# out another. So CWE -> nke-agent and node -> SPIRE VIP are dropped by
+# default, CWE's NodePreflight times out, and no node attests. Permit exactly
+# this pair of bridges, both directions, at position 1 so it precedes the
+# isolation chain; nothing else on the host becomes reachable.
 #
-# Bounded separately from the command's own timeout, and abandoned if the
-# command exits first. nerdctl cannot connect a running container to another
-# network, so the Kind host mapping receives the SPIRE VIP on the Docker
-# node-network bridge instead.
+# nerdctl cannot connect a running container to another network, so the SPIRE
+# VIP goes onto the node network's bridge instead.
+attach_bootstrap_to_node_network() {
+  local node_id kind_id node_bridge kind_bridge
+  node_id="$(nerdctl network inspect --format '{{.Id}}' "${NODE_NETWORK}")" || return 1
+  node_bridge="br-${node_id:0:12}"
+  ip link show "${node_bridge}" >/dev/null || return 1
+  kind_id="$(nerdctl network inspect --format '{{.Id}}' kind)" || return 1
+  kind_bridge="br-${kind_id:0:12}"
+  ip link show "${kind_bridge}" >/dev/null || return 1
+
+  defer "remove_forward_rules ${kind_bridge} ${node_bridge}"
+  iptables -I FORWARD 1 -i "${kind_bridge}" -o "${node_bridge}" -j ACCEPT || return 1
+  iptables -I FORWARD 1 -i "${node_bridge}" -o "${kind_bridge}" -j ACCEPT || return 1
+  # VIP traffic enters and leaves the same node bridge.
+  if [ -n "${CONTROL_PLANE_VIP}" ]; then
+    defer "remove_vip_forward_rule ${node_bridge}"
+    iptables -I FORWARD 1 -i "${node_bridge}" -o "${node_bridge}" -j ACCEPT || return 1
+  fi
+  defer "remove_spire_vip ${node_bridge}"
+  ip address replace "${SPIRE_VIP}/32" dev "${node_bridge}" || return 1
+}
+
+# Attach as soon as Kind reports the cluster ready: after Kind has finished
+# with the control-plane container, and before CWE is deployed, so the extra
+# network disturbs neither. Bounded separately from the command's own timeout,
+# and abandoned if the command exits first.
 log "waiting for the bootstrap cluster to become ready, to attach it to the node network at ${SPIRE_VIP}"
 attached=false
 attach_deadline=$((SECONDS + ${NKECTL_E2E_ATTACH_TIMEOUT:-1200}))
@@ -441,6 +628,7 @@ while kill -0 "${bootstrap_pid}" 2>/dev/null && [ "${SECONDS}" -lt "${attach_dea
   if grep -q "bootstrap kind cluster ready" "${BOOTSTRAP_LOG}" 2>/dev/null; then
     if attach_bootstrap_to_node_network; then
       log "attached the bootstrap cluster at ${SPIRE_VIP}"
+      probe_cross_bridge_connectivity || abort_bootstrap
       attached=true
     else
       log "WARN: could not attach the bootstrap cluster to the node network"
@@ -454,102 +642,198 @@ if [ "${attached}" != true ]; then
   log "FAIL: the bootstrap cluster was never attached to the node network, so CWE"
   log "  cannot reach the nodes and their agents cannot reach SPIRE. Not waiting"
   log "  for a bootstrap that has no route to the hosts it is building on."
-  kill "${bootstrap_pid}" 2>/dev/null || true
-  wait "${bootstrap_pid}" 2>/dev/null || true
-  cat "${BOOTSTRAP_LOG}" || true
-  exit 1
+  abort_bootstrap
 fi
-set +e
-wait "${bootstrap_pid}"
-status=$?
-set -e
+
+status=0
+wait "${bootstrap_pid}" || status=$?
 cat "${BOOTSTRAP_LOG}"
 output="$(cat "${BOOTSTRAP_LOG}")"
 
-# ── Stage 5: the command builds the cluster and exits 0 ──────────────────
-
 if [ "${status}" -ne 0 ]; then
-  log "FAIL: nkectl bootstrap site exited ${status}"
-  exit 1
+  fail "nkectl bootstrap site exited ${status}"
 fi
 if ! grep -q "cwe deployment healthy" <<<"${output}"; then
-  log "FAIL: CWE was never confirmed healthy on /readyz"
-  exit 1
+  fail "CWE was never confirmed healthy on /readyz"
 fi
 if ! grep -q "cluster provisioned" <<<"${output}"; then
-  log "FAIL: the command exited 0 without reporting the cluster provisioned"
-  exit 1
+  fail "the command exited 0 without reporting the cluster provisioned"
 fi
 if [ ! -s "${TENANT_KUBECONFIG}" ]; then
-  log "FAIL: no kubeconfig was written to ${TENANT_KUBECONFIG}"
-  exit 1
+  fail "no kubeconfig was written to ${TENANT_KUBECONFIG}"
 fi
 log "PASS: bootstrap site created the site cluster through the CWE API"
+
+# ── Stage 3: every node attested to SPIRE over TPM ──────────────────────
 
 log "waiting for every node's spire-agent to attest"
 make -C "${CLI_DIR}" nodes-attested
 
 log "PASS: bootstrap site deployed SPIRE and every node attested to it over TPM"
 
-# ── Stage 6: every pre-provisioned host is a Ready node ──────────────────
-#
-# Through the kubeconfig the command wrote, not through the bootstrap cluster:
-# what is being checked is that an operator can now use the thing they asked
-# for. Every site spec node joins as a control-plane node, and CWE untaints
-# them, so all three must be Ready and schedulable.
-
-# One thumbprint per node, init node included -- the same count this suite
-# already asserted is non-zero before running the command.
-expected_nodes=$(grep -cE '^[[:space:]]+tpmEkThumbprint:' "${RENDERED_SITESPEC}")
-
-log "waiting for ${expected_nodes} nodes to report Ready"
-# `kubectl wait --all` only waits for the objects that exist when it starts.
-# Wait for the expected count and readiness together so that the first Ready
-# control-plane node cannot make this stage pass before CAPI creates the rest.
-# CWE joins control-plane nodes one at a time, ~6 min apart, so the third
-# kubelet starts ~13 min after the cluster is created; 600 s left no margin.
-node_ready_deadline=$((SECONDS + ${NKECTL_E2E_NODE_READY_TIMEOUT_SECONDS:-1200}))
-ready_nodes=0
-while [ "${SECONDS}" -lt "${node_ready_deadline}" ]; do
+# all_nodes_ready is the stage 4 condition. `kubectl wait --all` only waits for
+# the objects that exist when it starts, so count and readiness are checked
+# together: the first Ready node must not pass the stage before CAPI creates
+# the rest. Sets total_nodes/ready_nodes for the failure message.
+all_nodes_ready() {
+  local node_states
   node_states=$(kubectl --kubeconfig "${TENANT_KUBECONFIG}" get nodes \
     -o 'jsonpath={range .items[*]}{.metadata.name}{" "}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}' \
     2>/dev/null || true)
   total_nodes=$(printf '%s\n' "${node_states}" | awk 'NF {count++} END {print count+0}')
   ready_nodes=$(printf '%s\n' "${node_states}" | awk '$2 == "True" {count++} END {print count+0}')
-  if [ "${total_nodes}" -eq "${expected_nodes}" ] && [ "${ready_nodes}" -eq "${expected_nodes}" ]; then
-    break
-  fi
-  sleep 5
-done
+  [ "${total_nodes}" -eq "${expected_nodes}" ] && [ "${ready_nodes}" -eq "${expected_nodes}" ]
+}
 
-if [ "${ready_nodes}" -ne "${expected_nodes}" ]; then
-  log "FAIL: ${ready_nodes} of ${expected_nodes} site spec nodes became Ready"
+# ── Stage 4: every pre-provisioned host is a Ready node ─────────────────
+#
+# Every site spec node joins as a control-plane node and CWE untaints them, so
+# all must be Ready and schedulable. CWE joins them one at a time, ~6 min
+# apart, so the third kubelet starts ~13 min after the cluster is created.
+
+log "waiting for ${expected_nodes} nodes to report Ready"
+total_nodes=0
+ready_nodes=0
+if ! wait_until "${NKECTL_E2E_NODE_READY_TIMEOUT_SECONDS:-1200}" 5 all_nodes_ready; then
   kubectl --kubeconfig "${TENANT_KUBECONFIG}" get nodes -o wide || true
-  exit 1
+  fail "${ready_nodes} of ${expected_nodes} site spec nodes became Ready (${total_nodes} exist)"
 fi
 log "PASS: all ${ready_nodes} pre-provisioned hosts are Ready nodes"
 
-# ── Stage 7: hello world ────────────────────────────────────────────────
+# ── Stage 4a: control-plane VIP ───────────────────────────
 #
-# The point of the whole suite. Traefik is published on a NodePort because that
-# is a route the host has to these containers; the request carries the Ingress
-# host name so it has to match a rule Traefik read from the Ingress, rather
-# than falling through to a default backend.
+# Node IPs are the expected BGP next-hops and valid endpoints without a VIP.
+cp_node_ips="$(kubectl --kubeconfig "${TENANT_KUBECONFIG}" get nodes \
+  -o 'jsonpath={range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}' \
+  2>/dev/null | grep -E '^[0-9]' | sort -u)"
+if [ -z "${cp_node_ips}" ]; then
+  log "FAIL: could not read node InternalIPs for the API-server and BGP checks"
+  exit 1
+fi
 
-# `--repo` rather than `helm repo add`, for the same reason cli/internal/cwedeploy
-# uses it: this suite does not mutate the caller's global Helm repository list.
-# service.spec.type, not service.type: the chart puts the Service spec's own
-# fields under `spec`, and a value set at the wrong depth is silently ignored.
-# Which registries the nodes will reach. A pull that falls through to upstream
-# is the difference between a 30 second install and a helm timeout.
-log "node registry routing (${NKECTL_E2E_NAME_PREFIX:-node}1):"
-docker exec "nkectl-e2e-${NKECTL_E2E_NAME_PREFIX:-node}1" \
-  cat /etc/containerd/certs.d/docker.io/hosts.toml 2>&1 | sed 's/^/  /' || true
-# The bootstrap Kind cluster is still up (--keep-bootstrap-cluster above); its
-# node pulls the CWE stack's images, so show where those went too.
-log "bootstrap cluster registry routing (${BOOTSTRAP_KIND_CLUSTER}-control-plane):"
-nerdctl exec "${BOOTSTRAP_KIND_CLUSTER}-control-plane" \
-  cat /etc/containerd/certs.d/docker.io/hosts.toml 2>&1 | sed 's/^/  /' || true
+kubeconfig_server="$(grep -E '^[[:space:]]*server:' "${TENANT_KUBECONFIG}" | head -n1 | awk '{print $2}')"
+if ! check_api_server "${CONTROL_PLANE_VIP}" "${kubeconfig_server}" "${cp_node_ips}"; then
+  log "FAIL: unexpected kubeconfig API server ${kubeconfig_server}"
+  log "  VIP: ${CONTROL_PLANE_VIP:-disabled}; control-plane IPs: $(echo "${cp_node_ips}" | tr '\n' ' ')"
+  exit 1
+fi
+log "PASS: the written kubeconfig's API server is ${kubeconfig_server}"
+
+if [ -z "${CONTROL_PLANE_VIP}" ]; then
+  log "control-plane VIP disabled; skipping the BGP and VIP-reachability checks"
+else
+  # Wait for FRR to learn a next-hop for every control-plane node.
+  expected_hops="${cp_node_ips}"
+  log "waiting for FRR to learn ${CONTROL_PLANE_VIP}/32 with next-hops: $(echo "${expected_hops}" | tr '\n' ' ')"
+  hops_deadline=$((SECONDS + ${NKECTL_E2E_VIP_BGP_TIMEOUT_SECONDS:-180}))
+  learned_hops=""
+  while [ "${SECONDS}" -lt "${hops_deadline}" ]; do
+    learned_hops="$(bgp_vip_nexthops)"
+    if [ "${learned_hops}" = "${expected_hops}" ]; then
+      break
+    fi
+    sleep 3
+  done
+  if [ "${learned_hops}" != "${expected_hops}" ]; then
+    log "FAIL: FRR next-hops for ${CONTROL_PLANE_VIP}/32 did not converge to the node set"
+    log "  expected: $(echo "${expected_hops}" | tr '\n' ' ')"
+    log "  learned:  $(echo "${learned_hops}" | tr '\n' ' ')"
+    nerdctl exec "${BGP_CONTAINER}" vtysh -c "show bgp ipv4 unicast ${CONTROL_PLANE_VIP}/32" 2>&1 | sed 's/^/  /' || true
+    nerdctl exec "${BGP_CONTAINER}" vtysh -c 'show bgp summary' 2>&1 | sed 's/^/  /' || true
+    exit 1
+  fi
+  log "host kernel route for the VIP:"
+  ip route show "${CONTROL_PLANE_VIP}/32" | sed 's/^/  /' || true
+  log "PASS: FRR learned ${CONTROL_PLANE_VIP}/32 with one next-hop per control-plane node"
+
+  # Check API readiness through the VIP.
+  if kubectl --kubeconfig "${TENANT_KUBECONFIG}" --server "https://${CONTROL_PLANE_VIP}:6443" \
+      get --raw /readyz >/dev/null 2>&1; then
+    log "PASS: the API server answered /readyz through the VIP https://${CONTROL_PLANE_VIP}:6443"
+  else
+    log "FAIL: the API server did not answer /readyz through the VIP https://${CONTROL_PLANE_VIP}:6443"
+    kubectl --kubeconfig "${TENANT_KUBECONFIG}" --server "https://${CONTROL_PLANE_VIP}:6443" get --raw /readyz || true
+    exit 1
+  fi
+fi
+
+# ── Stage 4b: etcd data is encrypted, and the saved key is the nodes' key ──
+#
+# Two checks. The first reads a Secret straight out of etcd and looks at the
+# bytes: secretbox envelope present, plaintext absent. It is the only way to
+# tell "encryption configured" from "data encrypted". The second compares the
+# key `bootstrap site` saved with the one each control-plane node runs on, by
+# digest: the file is what an operator keeps, and it has to be the right key.
+# Neither check prints key material or ciphertext.
+log "checking that etcd data is encrypted at rest"
+[ -f "${ETCD_KEY_FILE}" ] || fail "bootstrap site did not write ${ETCD_KEY_FILE}"
+key_mode=$(stat -c '%a' "${ETCD_KEY_FILE}")
+[ "${key_mode}" = "600" ] || fail "${ETCD_KEY_FILE} has mode ${key_mode}, want 600"
+
+probe_name="nkectl-e2e-encryption-probe"
+plaintext_marker="nkectl-e2e-plaintext-marker-$(date +%s)"
+kubectl --kubeconfig "${TENANT_KUBECONFIG}" -n default create secret generic "${probe_name}" \
+  --from-literal=probe="${plaintext_marker}" >/dev/null
+etcd_pod=$(kubectl --kubeconfig "${TENANT_KUBECONFIG}" -n kube-system get pods -l component=etcd \
+  -o jsonpath='{.items[0].metadata.name}')
+[ -n "${etcd_pod}" ] || fail "no etcd pod found in kube-system"
+# The raw value goes to a file, not a variable, so its bytes never reach the
+# log. Removed on exit like everything else this suite creates.
+raw_value=$(mktemp)
+defer rm -f "${raw_value}"
+kubectl --kubeconfig "${TENANT_KUBECONFIG}" -n kube-system exec "${etcd_pod}" -c etcd -- \
+  etcdctl --endpoints=https://127.0.0.1:2379 \
+    --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+    --cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt \
+    --key=/etc/kubernetes/pki/etcd/healthcheck-client.key \
+    get "/registry/secrets/default/${probe_name}" --print-value-only >"${raw_value}" 2>/dev/null ||
+  fail "could not read the probe Secret out of etcd"
+# Positive control first: an empty read would pass the plaintext check for the
+# wrong reason.
+[ -s "${raw_value}" ] || fail "the probe Secret's etcd value is empty"
+! grep -a -F -q "${plaintext_marker}" "${raw_value}" ||
+  fail "the probe Secret is stored in etcd as plaintext"
+grep -a -q 'k8s:enc:secretbox:v1:' "${raw_value}" ||
+  fail "the probe Secret's etcd value does not carry the secretbox envelope"
+rm -f "${raw_value}"
+kubectl --kubeconfig "${TENANT_KUBECONFIG}" -n default delete secret "${probe_name}" >/dev/null
+log "PASS: Secrets are stored in etcd under the secretbox envelope"
+
+log "checking that the saved key is the key every control-plane node runs on"
+# The manifest is what `bootstrap site` wrote, so its shape is known: the key
+# is the base64 "active" field. Digests are compared, never values.
+saved_active=$(sed -n 's/.*"active": "\([^"]*\)".*/\1/p' "${ETCD_KEY_FILE}" | head -1)
+[ -n "${saved_active}" ] || fail "${ETCD_KEY_FILE} carries no active key"
+saved_digest=$(printf '%s' "${saved_active}" | base64 -d | sha256sum | cut -d' ' -f1)
+for ((i = 1; i <= NODE_COUNT; i++)); do
+  node="nkectl-e2e-${NODE_PREFIX}${i}"
+  node_digest=$(nerdctl exec "${node}" \
+    awk '/secret:/ {printf "%s", $2; exit}' /etc/kubernetes/kube-api-encryption/encryption-config.yaml \
+    | sha256sum | cut -d' ' -f1)
+  [ "${node_digest}" = "${saved_digest}" ] ||
+    fail "${node} runs a different etcd encryption key than ${ETCD_KEY_FILE} holds"
+done
+log "PASS: the saved etcd encryption key matches all ${NODE_COUNT} control-plane nodes"
+
+# hello_world_served is the stage 5 condition. whoami answers with the request
+# it received, so "Hostname:" in the body is the pod talking, not Traefik's own
+# error page. The request carries the Ingress host name so it has to match a
+# rule Traefik read from the Ingress rather than falling through to a default.
+hello_world_served() {
+  curl -fsS --max-time 5 -H "Host: hello.nke.local" \
+    "http://${INIT_NODE_IP}:${TRAEFIK_NODE_PORT}/" | grep -q "Hostname:"
+}
+
+# ── Stage 5: hello world ────────────────────────────────────────────────
+#
+# Traefik is published on a NodePort because that is a route the host has to
+# these containers. `--repo` rather than `helm repo add`, so this suite does
+# not mutate the caller's global repository list. service.spec.type, not
+# service.type: the chart puts the Service spec's fields under `spec`, and a
+# value set at the wrong depth is silently ignored.
+
+log "registry routing for this run:"
+registry_routing 2>&1 | sed 's/^/  /' || true
 
 log "installing traefik on the new cluster"
 helm --kubeconfig "${TENANT_KUBECONFIG}" upgrade --install traefik traefik \
@@ -568,52 +852,32 @@ kubectl --kubeconfig "${TENANT_KUBECONFIG}" apply -f "${SCRIPT_DIR}/manifests/he
 kubectl --kubeconfig "${TENANT_KUBECONFIG}" -n hello-world rollout status deployment/whoami --timeout=5m
 
 log "asking for the page at http://${INIT_NODE_IP}:${TRAEFIK_NODE_PORT}/ (Host: hello.nke.local)"
-served=false
-for _ in $(seq 1 60); do
-  # whoami answers with the request it received, so "Hostname:" in the body is
-  # the pod talking, not Traefik's own error page.
-  if curl -fsS --max-time 5 -H "Host: hello.nke.local" \
-    "http://${INIT_NODE_IP}:${TRAEFIK_NODE_PORT}/" | grep -q "Hostname:"; then
-    served=true
-    break
-  fi
-  sleep 5
-done
-if [ "${served}" != true ]; then
-  log "FAIL: hello world was never served through Traefik"
+if ! wait_until 300 5 hello_world_served; then
   kubectl --kubeconfig "${TENANT_KUBECONFIG}" -n hello-world get all,ingress || true
   kubectl --kubeconfig "${TENANT_KUBECONFIG}" -n traefik logs deployment/traefik --tail=100 || true
-  exit 1
+  fail "hello world was never served through Traefik"
 fi
 log "PASS: the cluster built from pre-provisioned hosts serves hello world through Traefik"
 
-# Positive control for the "cluster is gone" check below. kind exits 0 and
-# prints "No kind clusters found." even when its provider is unreachable, so an
-# empty answer there means either "deleted" or "cannot see anything" -- and the
-# check cannot tell them apart. Confirming the cluster IS listed first is what
-# makes its later absence evidence.
+# ── This suite's own teardown ───────────────────────────────────────────
+#
+# Deleted here rather than left to the EXIT trap, which can only swallow a
+# failed delete. A cluster left registered makes the next run stop on a name
+# clash instead.
+#
+# Positive control first: kind exits 0 and prints "No kind clusters found."
+# even when its provider is unreachable, so absence alone proves nothing.
 if ! kind_lists_bootstrap_cluster; then
-  log "FAIL: ${BOOTSTRAP_KIND_CLUSTER} is not registered before teardown, so this"
-  log "  suite cannot see the nerdctl provider and the check below proves nothing"
-  exit 1
+  fail "${BOOTSTRAP_KIND_CLUSTER} is not registered before teardown" \
+    "so this suite cannot see the nerdctl provider and the check below proves nothing"
 fi
 
 log "tearing down the bootstrap kind cluster kept for attestation"
 KIND_EXPERIMENTAL_PROVIDER=nerdctl \
   kind delete cluster --name "${BOOTSTRAP_KIND_CLUSTER}"
-bootstrap_cluster_cleanup_pending=false
 
-# This checks the delete above, not the command's own cleanup: `bootstrap site`
-# was given --keep-bootstrap-cluster, so it deliberately left the cluster
-# running and this suite owns tearing it down. What it earns is the next run --
-# a cluster left registered here makes stage 1 trip over it. That `bootstrap
-# site` removes its own cluster when it is not told to keep one is checked in
-# TestRunBootstrapSiteCreatesTheCluster, which can assert on the kind call
-# itself rather than inferring it from what is left behind.
-#
 if kind_lists_bootstrap_cluster; then
-  log "FAIL: kind cluster ${BOOTSTRAP_KIND_CLUSTER} is still registered after this suite deleted it"
   KIND_EXPERIMENTAL_PROVIDER=nerdctl kind get clusters || true
-  exit 1
+  fail "kind cluster ${BOOTSTRAP_KIND_CLUSTER} is still registered after this suite deleted it"
 fi
 log "PASS: this suite's teardown left no ${BOOTSTRAP_KIND_CLUSTER} cluster behind"

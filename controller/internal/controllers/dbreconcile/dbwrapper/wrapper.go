@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
 const (
@@ -327,28 +327,6 @@ func (w *DB) UpdateNode(ctx context.Context, node *db.Node) (db.Node, error) {
 		return updated, err
 	}
 	return updated, nil
-}
-
-func (w *DB) UpdateNodeForgeDetails(ctx context.Context, nodeID uuid.UUID, forgeInstanceID, forgeMachineID, ip *string) error {
-	if forgeInstanceID == nil && forgeMachineID == nil && ip == nil {
-		return w.DB.UpdateNodeForgeDetails(ctx, nodeID, forgeInstanceID, forgeMachineID, ip)
-	}
-
-	previous, err := w.DB.GetNode(ctx, nodeID)
-	if err != nil {
-		return fmt.Errorf("failed to get node before Forge details update: %w", err)
-	}
-
-	if err := w.DB.UpdateNodeForgeDetails(ctx, nodeID, forgeInstanceID, forgeMachineID, ip); err != nil {
-		return err
-	}
-
-	updated, err := w.DB.GetNode(ctx, nodeID)
-	if err != nil {
-		return fmt.Errorf("failed to get node after Forge details update: %w", err)
-	}
-
-	return w.enqueueNodes(ctx, previous, updated)
 }
 
 func (w *DB) UpdateNodeTeleportRegistered(ctx context.Context, nodeID uuid.UUID, condition db.Condition) error {

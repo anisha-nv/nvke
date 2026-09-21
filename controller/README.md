@@ -53,13 +53,13 @@ Then edit `.env.local` to add your personal settings for host-local CWE runs. Th
 
 ### Go Private Module Configuration
 
-Not needed for an ordinary build. This module has no `gitlab-master.nvidia.com` dependency since #76, and its one internal dependency — `github.com/NVIDIA/cluster-api-provider-nico` — is carried in the repository's committed `vendor/` tree. `GOPROXY=off make build` from the repository root compiles every module with no credentials at all.
+Not needed for an ordinary build. This module has no `gitlab-master.nvidia.com` dependency since #76, and its one internal dependency — `github.com/dsx-ai-factory/cluster-api-provider-nico` — is carried in the repository's committed `vendor/` tree. `GOPROXY=off make build` from the repository root compiles every module with no credentials at all.
 
 You need this only to **re-resolve** that module rather than read the vendor tree, which in practice means running `go work vendor` or `make work-sync` after a dependency bump:
 
 ```bash
 # Tell Go not to use a public proxy for internal NVIDIA repos
-go env -w GOPRIVATE=github.com/NVIDIA/cluster-api-provider-nico
+go env -w GOPRIVATE=github.com/dsx-ai-factory/cluster-api-provider-nico
 ```
 
 Go then uses your SSH keys to authenticate. This goes away when that repository is public.
@@ -71,7 +71,7 @@ The `api/` directory is a separate Go module that other projects (e.g. controlle
 To depend on a specific version:
 
 ```bash
-go get github.com/NVIDIA/nke/controller/api@v0.0.1
+go get github.com/dsx-ai-factory/nke/controller/api@v0.0.1
 ```
 
 Use the latest tagged version or a specific semver (e.g. `@v0.0.5`) as needed.
@@ -83,6 +83,9 @@ Use the latest tagged version or a specific semver (e.g. `@v0.0.5`) as needed.
 - `CAPI + Tilt (recommended)`: bring up a local Kind management cluster with CAPD, then run `tilt up` for an end-to-end local stack.
 - `Manual local/remote worker run`: work on the CWE worker without the local CAPI management-cluster flow by using `make run-local` or `make run-remote`.
 - `UI-only development`: port-forward a live CWE deployment and run the local UI dev server against it.
+
+For the controller-to-node-agent TLS/JWT transport configuration, see
+[Configuring node-agent TLS/JWT authentication](docs/configuring-node-agent-tls-jwt.md).
 
 ## CAPI + Tilt Development (Recommended)
 
@@ -138,9 +141,6 @@ make capd-up
 # optional if your kind cluster name is not cwe-capi
 # export KIND_CLUSTER_NAME=<your-kind-cluster-name>
 
-# required for Forge/NGC-backed operations
-export FWE_API_KEY=${NGC_API_KEY}
-
 # required: copy the template and fill in the credentials it declares
 cp .env.tilt.example .env.tilt
 
@@ -155,7 +155,13 @@ tilt up
   controller through Helm. VM and container clusters select different sites
   through the same endpoint and controller. `cp tilt_config.json.example
   tilt_config.json` provides the local starting point.
-- Tilt no longer hard-requires `FWE_API_KEY` just to start. When NICo is enabled and `FWE_API_KEY` is unset, the NICo provider forces Forge `test` mode for local development.
+- `nico_sim_backends` controls which local nico-sim backends Tilt prepares.
+  `["container"]` uses container-backed mock NICo and skips VM-only host
+  requirements such as dnsmasq, Linux inotify sysctl tuning, BGP route setup,
+  and VM log shipping. This is the default; use `["container", "vm"]` when you
+  explicitly want the local nico-vms path.
+- CAPNICo reaches nico-sim through `NICO_SIM_ENDPOINT_HOST` when set. Otherwise
+  Tilt uses `host.docker.internal` on macOS and the Kind gateway on Linux.
 - `.env.tilt` configures in-cluster CWE env overrides. Keep host-local settings in `.env.local`.
 - `DGXC_TENANT_USER`, `DGXC_TENANT_PASSWORD`, `CNPG_SUPERUSER_PASSWORD`, `CNPG_CLOUD_PASSWORD`, and `CNPG_TEMPORAL_PASSWORD` have no defaults — set them in `.env.tilt` or export them, or `tilt up` fails with the list of what is missing. `CNPG_SUPERUSER_PASSWORD` is what the local postgres chart is installed with, so changing it after the first `tilt up` requires deleting the postgres PVC.
 - Personal Tilt customizations can go in `tilt.d/*.tilt` or `tilt.d/*.star`.
@@ -173,16 +179,18 @@ Then enable the single NICo provider:
 
 ```json
 {
-  "providers": ["capi_core", "bgp-containers", "nico"]
+  "providers": ["capi_core", "bgp-containers", "nico"],
+  "nico_sim_backends": ["container"]
 }
 ```
 
 With no additional NICo configuration, Tilt starts nico-sim, installs the
 released CAPNICo Helm chart, and points the `nico-credentials` Secret at
-nico-sim. One CAPNICo controller can then operate the seeded `nico-vms` and
-`nico-containers` sites at the same time. Export `NGC_API_KEY` in the shell that
-runs Tilt so Helm and the management cluster can pull the released chart and
-image.
+nico-sim. The example config prepares only the seeded `nico-containers` site.
+To operate the seeded `nico-vms` site as well, set
+`"nico_sim_backends": ["container", "vm"]`. Export `NGC_API_KEY` in the shell
+that runs Tilt so Helm and the management cluster can pull the released chart
+and image.
 
 Use the buttons on the `nico-sim` resource in the Tilt UI to create the VM,
 inspect its status, read its console log, and delete it. The create and delete
@@ -344,7 +352,7 @@ The helper script lives at `./hack/create-forge-nico-cluster.sh`. It assumes:
 `cluster-api-provider-nico` reads NICo credentials from a Secret in its own
 manager namespace; one Secret is shared by every `NicoCluster` the provider
 manages. See the [cluster-api-provider-nico
-README](https://github.com/NVIDIA/cluster-api-provider-nico#install)
+README](https://github.com/dsx-ai-factory/cluster-api-provider-nico#install)
 for the full set of keys.
 
 Pull the Forge tenant token from Vault and apply it as a Secret in the
@@ -430,7 +438,7 @@ kubectl port-forward -n temporal svc/temporal-web 18233:8080
 
 And now you're ready to build and run CWE:
 ```bash
-TEMPORAL_HOST_PORT=localhost:17233 FWE_API_KEY=<NGC API KEY> go run ./cmd/worker/main.go
+TEMPORAL_HOST_PORT=localhost:17233 go run ./cmd/worker/main.go
 ```
 
 You should now see the Swagger UI at http://localhost:8080/api/docs.

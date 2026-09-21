@@ -12,32 +12,31 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	nicov1 "github.com/NVIDIA/cluster-api-provider-nico/api/v1alpha1"
+	nicov1 "github.com/dsx-ai-factory/cluster-api-provider-nico/api/v1alpha1"
 
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/testutil"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/testutil"
 )
 
-func TestNicoMachineRotation_NicoMachineReadyCondition(t *testing.T) {
+func TestNicoMachineRotation_NicoMachineProvisionedCondition(t *testing.T) {
 	conditions := []metav1.Condition{{
 		Type:   "Other",
 		Status: metav1.ConditionTrue,
 	}, {
-		Type:   clusterv1.ReadyCondition,
+		Type:   nicov1.MachineProvisionedCondition,
 		Status: metav1.ConditionFalse,
 		Reason: "CreateFailed",
 	}}
 
-	readyCondition := nicoMachineReadyCondition(conditions)
+	provisionedCondition := nicoMachineProvisionedCondition(conditions)
 
-	if assert.NotNil(t, readyCondition) {
-		assert.Equal(t, clusterv1.ReadyCondition, readyCondition.Type)
-		assert.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+	if assert.NotNil(t, provisionedCondition) {
+		assert.Equal(t, nicov1.MachineProvisionedCondition, provisionedCondition.Type)
+		assert.Equal(t, metav1.ConditionFalse, provisionedCondition.Status)
 	}
-	assert.Nil(t, nicoMachineReadyCondition(nil))
+	assert.Nil(t, nicoMachineProvisionedCondition(nil))
 }
 
 func TestNicoMachineRotation_IsNicoNetworkExhaustionMessage(t *testing.T) {
@@ -449,7 +448,9 @@ func TestActivities_RotateNicoMachineInstanceType(t *testing.T) {
 			ClusterID:                   clusterID,
 			ControlPlane:                true,
 			ControlPlaneConfigurationID: configurationID,
-			InstanceTypeID:              firstInstanceTypeID,
+			Nico: &db.NicoNodeProvider{
+				InstanceTypeID: firstInstanceTypeID,
+			},
 		}
 	}
 
@@ -479,18 +480,13 @@ func TestActivities_RotateNicoMachineInstanceType(t *testing.T) {
 			wantInstanceTypeID: missingInstanceTypeID.String(),
 			wantErrorContains:  []string{"is not in configured instance type preference"},
 		},
-		"errors when pinned control plane config has only legacy flat fields": {
-			node:               controlPlaneNode(),
-			instanceTypeID:     firstInstanceTypeID.String(),
-			controlPlaneConfig: db.ControlPlaneConfigSpec{InstanceTypePreference: []uuid.UUID{firstInstanceTypeID, secondInstanceTypeID}},
-			wantInstanceTypeID: firstInstanceTypeID.String(),
-			wantErrorContains:  []string{"nico control-plane provider payload is required"},
-		},
 		"no-op when node has no pinned control plane configuration": {
 			node: &db.Node{
-				ID:             uuid.New(),
-				ControlPlane:   true,
-				InstanceTypeID: firstInstanceTypeID,
+				ID:           uuid.New(),
+				ControlPlane: true,
+				Nico: &db.NicoNodeProvider{
+					InstanceTypeID: firstInstanceTypeID,
+				},
 			},
 			instanceTypeID:     firstInstanceTypeID.String(),
 			wantInstanceTypeID: firstInstanceTypeID.String(),
@@ -565,26 +561,26 @@ func TestActivities_SeedControlPlaneInstanceType(t *testing.T) {
 	tests := map[string]parameters{
 		"seeds first preference for a type-less control plane node": {
 			node:               db.Node{ID: uuid.New(), ClusterID: clusterID, ControlPlane: true, ControlPlaneConfigurationID: configurationID},
-			nodePool:           db.NodePool{},
+			nodePool:           db.NodePool{Nico: &db.NicoNodePoolProvider{}},
 			preference:         []uuid.UUID{preferred, second},
 			expectDBLookup:     true,
 			wantInstanceTypeID: preferred,
 		},
 		"keeps an already-resolved instance type": {
 			node:               db.Node{ID: uuid.New(), ClusterID: clusterID, ControlPlane: true, ControlPlaneConfigurationID: configurationID},
-			nodePool:           db.NodePool{InstanceTypeID: persisted},
+			nodePool:           db.NodePool{Nico: &db.NicoNodePoolProvider{InstanceTypeID: persisted}},
 			expectDBLookup:     false,
 			wantInstanceTypeID: persisted,
 		},
 		"no-op for a non-control-plane node": {
 			node:               db.Node{ID: uuid.New()},
-			nodePool:           db.NodePool{},
+			nodePool:           db.NodePool{Nico: &db.NicoNodePoolProvider{}},
 			expectDBLookup:     false,
 			wantInstanceTypeID: uuid.Nil,
 		},
 		"stays nil when the pinned preference is empty": {
 			node:               db.Node{ID: uuid.New(), ClusterID: clusterID, ControlPlane: true, ControlPlaneConfigurationID: configurationID},
-			nodePool:           db.NodePool{},
+			nodePool:           db.NodePool{Nico: &db.NicoNodePoolProvider{}},
 			preference:         nil,
 			expectDBLookup:     true,
 			wantInstanceTypeID: uuid.Nil,
@@ -596,9 +592,6 @@ func TestActivities_SeedControlPlaneInstanceType(t *testing.T) {
 			t.Parallel()
 
 			nodePool := params.nodePool
-			nodePool.SetNico(db.NicoNodePoolProvider{
-				InstanceTypeID: nodePool.InstanceTypeID,
-			})
 
 			mockDB := &testutil.MockDB{}
 			if params.expectDBLookup {
@@ -613,7 +606,9 @@ func TestActivities_SeedControlPlaneInstanceType(t *testing.T) {
 			createCtx := &capiMachineCreateContext{node: params.node, nodePool: nodePool}
 			require.NoError(t, a.seedControlPlaneInstanceType(context.Background(), createCtx))
 
-			assert.Equal(t, params.wantInstanceTypeID, createCtx.nodePool.InstanceTypeID)
+			poolNico, err := createCtx.nodePool.NicoProvider()
+			require.NoError(t, err)
+			assert.Equal(t, params.wantInstanceTypeID, poolNico.InstanceTypeID)
 			if !params.expectDBLookup {
 				mockDB.AssertNotCalled(t, "GetControlPlaneConfiguration", mock.Anything, mock.Anything)
 			}
@@ -627,6 +622,5 @@ func nicoControlPlaneConfigSpec(instanceTypePreference []uuid.UUID) db.ControlPl
 		Nico: &db.NicoControlPlaneProvider{
 			InstanceTypePreference: append([]uuid.UUID(nil), instanceTypePreference...),
 		},
-		InstanceTypePreference: append([]uuid.UUID(nil), instanceTypePreference...),
 	}
 }

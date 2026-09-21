@@ -36,15 +36,14 @@ load("ext://uibutton", "cmd_button", "text_input")
 #   ctx.provider_dir  (string)  Absolute path to the provider's root directory.
 #
 # Output — returned struct with:
-#   cwe_resource_deps  (list[string])  Tilt resource names CWE should depend on.
-#                                      Appended to the CWE k8s_resource resource_deps.
-#   cwe_env_overrides  (dict[string, string])  Env vars injected into CWE's chart
-#                                              values (e.g. FORGE_URL, FWE_API_KEY).
+#   cwe_resource_deps  (list[string])           Tilt resource names CWE should depend on.
+#                                               Appended to the CWE k8s_resource resource_deps.
+#   cwe_env_overrides  (dict[string, string])   Env vars injected into CWE's chart values.
 #   cwe_chart_flags    (list[string], optional) Additional Helm flags for CWE.
-#   preflight_script   (string, optional)      Bash fragment appended to the
-#                                              check-management-cluster preflight script.
-#                                              Use to assert provider-required tooling or
-#                                              CRDs are present in the cluster.
+#   preflight_script   (string, optional)       Bash fragment appended to the
+#                                               check-management-cluster preflight script.
+#                                               Use to assert provider-required tooling or
+#                                               CRDs are present in the cluster.
 #
 # Inside register(), the provider creates its own Tilt resources (local_resource,
 # helm_resource, etc.) and returns the struct to wire itself into CWE.
@@ -120,8 +119,11 @@ if "nico" in _provider_names and "nico-vm" in _provider_names:
          "from NGC) are mutually exclusive: both install a CAPNICo controller into " +
          "capnico-system and own the 'nico-credentials' secret. Enable only one.")
 
+# CWE accepts only the API provider blocks in SUPPORTED_INFRA_PROVIDERS. The
+# 'nico' provider (nico-sim) serves the container and the nico-vms backends;
+# the e2e suite submits Infra blocks to the first and Nico blocks to the second.
 _supported_infra_providers = []
-if "nico-vms" in _provider_names:
+if "nico" in _provider_names or "nico-vms" in _provider_names:
     _supported_infra_providers.append("nico")
 if "capd" in _provider_names or "nico" in _provider_names or "nico-vm" in _provider_names:
     _supported_infra_providers.append("infra")
@@ -965,14 +967,11 @@ _cwe_permissive_mode = os.getenv(
 
 _cwe_chart_extra_env_names = [
     "TEMPORAL_UI_URL",
-    "NODE_SCHEDULING_RETRY_INTERVAL",
     "NODE_HEALTH_CHECK_POLLING_INTERVAL",
     "NODE_HEALTH_CHECK_INTERVAL",
     "NODE_PROVISIONING_TIMEOUT",
     "NODE_REBOOT_POLLING_INTERVAL",
     "LOG_LEVEL",
-    "FORGE_URL",
-    "FORGE_ENVIRONMENT",
     "LOCAL_DEV_FORCE_DOCKER_MACHINE_BOOTSTRAP",
     "SPIRE_SERVER_API_ADDRESS",
     "SSL_CERT_FILE",
@@ -981,11 +980,6 @@ _cwe_chart_extra_env = []
 for _name in _cwe_chart_extra_env_names:
     if _name in _tilt_env:
         _cwe_chart_extra_env.append({"name": _name, "value": _tilt_env[_name]})
-if _tilt_env.get("FWE_API_KEY", "") != "":
-    _cwe_chart_extra_env.append({
-        "name": "FWE_API_KEY",
-        "value": _tilt_env["FWE_API_KEY"],
-    })
 # PROVISION_CONTROL_PLANE_WITH_CONTROL_PLANE_CONTROLLER is honored from the
 # process environment first (with the .env.tilt value as a fallback) so CI lanes
 # can toggle control-plane-controller provisioning per run without editing a file.
@@ -996,6 +990,16 @@ if _cwe_provision_cp_with_controller != "":
     _cwe_chart_extra_env.append({
         "name": "PROVISION_CONTROL_PLANE_WITH_CONTROL_PLANE_CONTROLLER",
         "value": _cwe_provision_cp_with_controller,
+    })
+# Same process-env-first pattern as above, so CI can disable soft reboot without touching the
+# production default.
+_cwe_node_reboot_soft_reboot_enabled = os.getenv(
+    "NODE_REBOOT_SOFT_REBOOT_ENABLED",
+    _tilt_env.get("NODE_REBOOT_SOFT_REBOOT_ENABLED", ""))
+if _cwe_node_reboot_soft_reboot_enabled != "":
+    _cwe_chart_extra_env.append({
+        "name": "NODE_REBOOT_SOFT_REBOOT_ENABLED",
+        "value": _cwe_node_reboot_soft_reboot_enabled,
     })
 for _name in _required_cred_names:
     _cwe_chart_extra_env.append({"name": _name, "value": _required_creds[_name]})
@@ -1025,7 +1029,8 @@ _cwe_chart_flags = [
     "--set-string", "nkeOIDCAuth.caBundleSecret.key=ca.crt",
     "--set-string", "spiffe.trustDomain=%s" % SPIRE_TRUST_DOMAIN,
     "--set-string", "spiffe.spire.serverAddress=%s" % _tilt_env.get("SPIRE_SERVER_ADDRESS", _kind_site_controller_vip),
-    "--set-string", "supportedInfraProviders=%s" % ",".join(_supported_infra_providers),
+    # helm splits --set-string on commas; escape the one inside the value.
+    "--set-string", "supportedInfraProviders=%s" % "\\,".join(_supported_infra_providers),
     "--set-json", "env=%s" % encode_json(_cwe_chart_extra_env),
     "--wait",
     "--timeout", "10m",

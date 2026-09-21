@@ -31,7 +31,7 @@ cd os-image   && make notices
 not set `GOWORK=off`), for two different reasons. The controller and nkectl read
 the committed `vendor/` tree, which is a workspace-level construct — that is what
 lets them run without downloading the internal `cluster-api-provider-nico`.
-`os-image` requires `github.com/NVIDIA/nke/agent`, which resolves only through
+`os-image` requires `github.com/dsx-ai-factory/nke/agent`, which resolves only through
 the workspace's `use` directive; with the workspace off, `go-licenses` fails with
 `go.mod file not found` before it collects anything.
 
@@ -59,7 +59,7 @@ check enforced it.
 
 It was open for a long time with the reason *"`controller/go.mod` requires two
 modules that are not public"*. That stopped being true when
-[#76](https://github.com/NVIDIA/nke/pull/76) removed them, leaving one INTERNAL
+[#76](https://github.com/dsx-ai-factory/nke/pull/76) removed them, leaving one INTERNAL
 module, `cluster-api-provider-nico`. Two mechanical problems kept it open after
 that, and both are worth writing down because neither is obvious:
 

@@ -15,9 +15,9 @@ import (
 
 	"github.com/lmittmann/tint"
 
-	"github.com/NVIDIA/nke/controller/nico-sim/internal/app"
-	nvmconfig "github.com/NVIDIA/nke/controller/nico-sim/internal/config"
-	"github.com/NVIDIA/nke/controller/nico-sim/internal/seed"
+	"github.com/dsx-ai-factory/nke/controller/nico-sim/internal/app"
+	nvmconfig "github.com/dsx-ai-factory/nke/controller/nico-sim/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/nico-sim/internal/seed"
 )
 
 func main() {
@@ -32,7 +32,7 @@ func main() {
 	var logHandler slog.Handler
 	switch nvmconfig.ParseLogFormat() {
 	case nvmconfig.LogFormatText:
-		logHandler = tint.NewHandler(os.Stdout, &tint.Options{
+		logHandler = tint.NewTextHandler(os.Stdout, &tint.Options{
 			Level:      slog.LevelInfo,
 			TimeFormat: time.TimeOnly,
 			NoColor:    os.Getenv("NO_COLOR") != "",

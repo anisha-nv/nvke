@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	corev1 "k8s.io/api/core/v1"
@@ -18,10 +19,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile/dbwrapper"
-	dbfilters "github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile/filters"
-	"github.com/NVIDIA/nke/controller/internal/controllers/tenant"
-	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile/dbwrapper"
+	dbfilters "github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile/filters"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/tenant"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
 // Reconciler reconciles tenant Kubernetes Node status into CWE nodes.
@@ -29,16 +30,21 @@ type Reconciler struct {
 	clusterID uuid.UUID
 	db        *dbwrapper.DB
 	client    ctrlclient.Client
+	logger    *slog.Logger
 }
 
 // NewRegistrar returns a tenant-manager registrar for Kubernetes Node health.
-func NewRegistrar(database *dbwrapper.DB) tenant.Registrar {
+func NewRegistrar(database *dbwrapper.DB, logger *slog.Logger) tenant.Registrar {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return func(clusterID uuid.UUID, manager ctrl.Manager) error {
 		controllerName, controllerOptions := controllerRegistration(clusterID)
 		reconciler := &Reconciler{
 			clusterID: clusterID,
 			db:        database,
 			client:    manager.GetClient(),
+			logger:    logger.With("clusterID", clusterID),
 		}
 
 		return ctrl.NewControllerManagedBy(manager).
@@ -111,10 +117,23 @@ func (r *Reconciler) updateKubernetesHealth(ctx context.Context, nodeID uuid.UUI
 
 		previousConditions := lockedNode.Conditions
 		applyKubernetesNodeHealth(&lockedNode, kubeNode)
-		if lockedNode.Conditions == previousConditions {
+		if lockedNode.Conditions.Equal(previousConditions) {
+			r.logger.Debug("Kubernetes node health unchanged, skipping update",
+				"nodeID", nodeID, "nodeName", lockedNode.Name)
 			return nil
 		}
 
+		r.logger.Info("Kubernetes node health changed, updating node",
+			"nodeID", nodeID,
+			"nodeName", lockedNode.Name,
+			"changes", describeConditionChanges(previousConditions, lockedNode.Conditions),
+		)
+		r.logger.Debug("Kubernetes node health change detail",
+			"nodeID", nodeID,
+			"nodeName", lockedNode.Name,
+			"previousConditions", previousConditions,
+			"newConditions", lockedNode.Conditions,
+		)
 		_, err = tx.UpdateNode(ctx, &lockedNode)
 		return err
 	})

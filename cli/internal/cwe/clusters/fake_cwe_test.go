@@ -4,7 +4,9 @@
 package clusters
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,11 +15,38 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/spf13/cobra"
 
-	"github.com/NVIDIA/nke/cli/internal/clients"
-	"github.com/NVIDIA/nke/cli/internal/config"
-	api "github.com/NVIDIA/nke/controller/api"
+	"github.com/dsx-ai-factory/nke/cli/internal/clients"
+	"github.com/dsx-ai-factory/nke/cli/internal/config"
+	api "github.com/dsx-ai-factory/nke/controller/api"
 )
+
+// run executes cmd with args and returns everything it wrote.
+func run(t *testing.T, cmd *cobra.Command, args ...string) (string, error) {
+	t.Helper()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	return out.String(), err
+}
+
+// clientFnErr is a clientFn that always returns an error. Commands that pass
+// arg/flag validation will reach the API call and return this error — used to
+// confirm a command is wired correctly without a real CWE deployment.
+func clientFnErr() (*clients.CWEClient, error) {
+	return nil, &notConfiguredError{}
+}
+
+type notConfiguredError struct{}
+
+func (e *notConfiguredError) Error() string { return "no site configured" }
+
+func isNotConfigured(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no site configured")
+}
 
 // fakeCWE is an httptest server answering the cluster endpoints nkectl calls,
 // backed by an in-memory slice.
@@ -32,11 +61,23 @@ type fakeCWE struct {
 	posted   []api.CreateClusterJSONRequestBody
 	requests []string
 	server   *httptest.Server
+
+	// lastBody captures the most recent PATCH request body, so a test can
+	// assert on the literal wire bytes the CLI sent rather than a decoded
+	// struct, which would hide an omitempty regression.
+	lastBody []byte
+
+	// patchFailStatus/patchFailMessage, when patchFailStatus is nonzero,
+	// make the next PATCH answer with that status and message instead of
+	// applying it — for testing server-side rejection without blocking the
+	// preceding GET that resolves the cluster name.
+	patchFailStatus  int
+	patchFailMessage string
 }
 
 // newFakeCWE starts a fake CWE seeded with clusters, and returns it together
-// with a ClientFn wired to it.
-func newFakeCWE(t *testing.T, seed ...api.Cluster) (*fakeCWE, ClientFn) {
+// with a CWEClientFn wired to it.
+func newFakeCWE(t *testing.T, seed ...api.Cluster) (*fakeCWE, CWEClientFn) {
 	t.Helper()
 	f := &fakeCWE{clusters: seed}
 	f.server = httptest.NewServer(f)
@@ -44,9 +85,9 @@ func newFakeCWE(t *testing.T, seed ...api.Cluster) (*fakeCWE, ClientFn) {
 	return f, clientFnFor(f.server.URL)
 }
 
-// newBrokenCWE returns a ClientFn for a server that answers every request with
+// newBrokenCWE returns a CWEClientFn for a server that answers every request with
 // status and body, for the error paths.
-func newBrokenCWE(t *testing.T, status int, body string) ClientFn {
+func newBrokenCWE(t *testing.T, status int, body string) CWEClientFn {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -60,7 +101,7 @@ func newBrokenCWE(t *testing.T, status int, body string) ClientFn {
 // clientFnFor builds a real CWEClient against url. Nothing here is a stub: the
 // client is the one the binary uses, so a change to its URL handling, status
 // checks or error parsing shows up in these tests.
-func clientFnFor(url string) ClientFn {
+func clientFnFor(url string) CWEClientFn {
 	return func() (*clients.CWEClient, error) {
 		return clients.New(config.SiteConfig{URL: url})
 	}
@@ -78,6 +119,22 @@ func (f *fakeCWE) stored() []api.Cluster {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]api.Cluster(nil), f.clusters...)
+}
+
+// lastRequestBody returns the most recent PATCH request's raw body.
+func (f *fakeCWE) lastRequestBody() []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]byte(nil), f.lastBody...)
+}
+
+// failPatch makes the next PATCH answer with status and message instead of
+// applying it.
+func (f *fakeCWE) failPatch(status int, message string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.patchFailStatus = status
+	f.patchFailMessage = message
 }
 
 func (f *fakeCWE) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -103,6 +160,8 @@ func (f *fakeCWE) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.create(w, r)
 	case isItem && r.Method == http.MethodGet:
 		f.get(w, id)
+	case isItem && r.Method == http.MethodPatch:
+		f.patch(w, r, id)
 	case isItem && r.Method == http.MethodDelete:
 		f.remove(w, id)
 	default:
@@ -152,6 +211,45 @@ func (f *fakeCWE) create(w http.ResponseWriter, r *http.Request) {
 	}
 	f.clusters = append(f.clusters, cl)
 	writeJSON(w, http.StatusCreated, cl)
+}
+
+// patch answers PATCH /clusters/{id}, storing the raw request body for
+// lastRequestBody and merging the decoded fields onto the stored cluster.
+// If failPatch was called, it answers with that status/message instead.
+func (f *fakeCWE) patch(w http.ResponseWriter, r *http.Request, id string) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, api.GenericError{Message: "reading body: " + err.Error()})
+		return
+	}
+	f.lastBody = body
+
+	if f.patchFailStatus != 0 {
+		status, message := f.patchFailStatus, f.patchFailMessage
+		f.patchFailStatus, f.patchFailMessage = 0, ""
+		writeJSON(w, status, api.GenericError{Message: message})
+		return
+	}
+
+	var req api.UpdateClusterRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, api.GenericError{Message: "malformed body: " + err.Error()})
+		return
+	}
+	for i, c := range f.clusters {
+		if c.ID.String() != id {
+			continue
+		}
+		if req.ControlPlaneKubernetesVersion != nil {
+			f.clusters[i].ControlPlaneKubernetesVersion = *req.ControlPlaneKubernetesVersion
+		}
+		if req.TeleportEnabled != nil {
+			f.clusters[i].TeleportEnabled = req.TeleportEnabled
+		}
+		writeJSON(w, http.StatusOK, f.clusters[i])
+		return
+	}
+	writeJSON(w, http.StatusNotFound, api.GenericError{Message: "cluster " + id + " not found"})
 }
 
 func (f *fakeCWE) get(w http.ResponseWriter, id string) {

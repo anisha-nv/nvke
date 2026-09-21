@@ -20,41 +20,41 @@ import (
 	"go.uber.org/automaxprocs/maxprocs"
 	"golang.org/x/sync/errgroup"
 
-	nicov1 "github.com/NVIDIA/cluster-api-provider-nico/api/v1alpha1"
+	nicov1 "github.com/dsx-ai-factory/cluster-api-provider-nico/api/v1alpha1"
 
-	"github.com/NVIDIA/nke/controller/internal/agent"
-	"github.com/NVIDIA/nke/controller/internal/auth"
-	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/controllers/automode"
-	"github.com/NVIDIA/nke/controller/internal/controllers/capi"
-	"github.com/NVIDIA/nke/controller/internal/controllers/certrenewal"
-	"github.com/NVIDIA/nke/controller/internal/controllers/controlplane"
-	"github.com/NVIDIA/nke/controller/internal/controllers/controlplanenodescheduler"
-	"github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile/dbwrapper"
-	"github.com/NVIDIA/nke/controller/internal/controllers/nodeagentreadiness"
-	"github.com/NVIDIA/nke/controller/internal/controllers/nodepool"
-	"github.com/NVIDIA/nke/controller/internal/controllers/nodepoolnodescheduler"
-	"github.com/NVIDIA/nke/controller/internal/controllers/nodeprovisioningmonitor"
-	"github.com/NVIDIA/nke/controller/internal/controllers/nodeset"
-	"github.com/NVIDIA/nke/controller/internal/controllers/teleporttoken"
-	"github.com/NVIDIA/nke/controller/internal/controllers/tenant"
-	"github.com/NVIDIA/nke/controller/internal/controllers/tenant/csr"
-	tenantnoderemediation "github.com/NVIDIA/nke/controller/internal/controllers/tenant/noderemediation"
-	tenantnodestatus "github.com/NVIDIA/nke/controller/internal/controllers/tenant/nodestatus"
-	"github.com/NVIDIA/nke/controller/internal/controllers/tenantaccess"
-	"github.com/NVIDIA/nke/controller/internal/controllers/tpmpubhashes"
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/db/migrations"
-	"github.com/NVIDIA/nke/controller/internal/dbmetrics"
-	"github.com/NVIDIA/nke/controller/internal/kube"
-	"github.com/NVIDIA/nke/controller/internal/metrics"
-	"github.com/NVIDIA/nke/controller/internal/otelx"
-	"github.com/NVIDIA/nke/controller/internal/runbook"
-	"github.com/NVIDIA/nke/controller/internal/server"
-	"github.com/NVIDIA/nke/controller/internal/spiffe"
-	"github.com/NVIDIA/nke/controller/internal/teleport"
-	"github.com/NVIDIA/nke/controller/internal/temporal"
-	"github.com/NVIDIA/nke/controller/internal/version"
+	"github.com/dsx-ai-factory/nke/controller/internal/agent"
+	"github.com/dsx-ai-factory/nke/controller/internal/auth"
+	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/automode"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/capi"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/certrenewal"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/controlplane"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/controlplanenodescheduler"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile/dbwrapper"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/nodeagentreadiness"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/nodepool"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/nodepoolnodescheduler"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/nodeprovisioningmonitor"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/nodeset"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/teleporttoken"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/tenant"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/tenant/csr"
+	tenantnoderemediation "github.com/dsx-ai-factory/nke/controller/internal/controllers/tenant/noderemediation"
+	tenantnodestatus "github.com/dsx-ai-factory/nke/controller/internal/controllers/tenant/nodestatus"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/tenantaccess"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/tpmpubhashes"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/db/migrations"
+	"github.com/dsx-ai-factory/nke/controller/internal/dbmetrics"
+	"github.com/dsx-ai-factory/nke/controller/internal/kube"
+	"github.com/dsx-ai-factory/nke/controller/internal/metrics"
+	"github.com/dsx-ai-factory/nke/controller/internal/otelx"
+	"github.com/dsx-ai-factory/nke/controller/internal/runbook"
+	"github.com/dsx-ai-factory/nke/controller/internal/server"
+	"github.com/dsx-ai-factory/nke/controller/internal/spiffe"
+	"github.com/dsx-ai-factory/nke/controller/internal/teleport"
+	"github.com/dsx-ai-factory/nke/controller/internal/temporal"
+	"github.com/dsx-ai-factory/nke/controller/internal/version"
 )
 
 const (
@@ -130,10 +130,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	switch {
+	case cfg.AuthConfigPath == "":
+		metrics.SetAuthMode("off")
+	case cfg.PermissiveMode:
+		metrics.SetAuthMode("permissive")
+	default:
+		metrics.SetAuthMode("enforcing")
+	}
+
 	// Get cloud-workflow-engine workload trust domain and bundle
 	trustDomain, err := getSpiffeTrustDomain(ctx, cfg, logger)
 	if err != nil {
 		logger.Error("Failed to get SPIFFE trust domain and bundle", "error", err)
+		os.Exit(1)
+	}
+	nodeAgentClient, err := agent.NewClient(ctx, cfg, trustDomain, logger)
+	if err != nil {
+		logger.Error("Failed to create node-agent client", "error", err)
 		os.Exit(1)
 	}
 
@@ -154,6 +168,15 @@ func main() {
 	// Run any new DB migrations
 	if err := migrations.Migrate(ctx, bunDB); err != nil {
 		logger.Error("Failed to migrate database", "error", err)
+		os.Exit(1)
+	}
+
+	// Re-parent legacy node-pool-managed control planes onto the control-plane
+	// controller when this site has opted in. No-op when the flag is off; fails
+	// closed on a half-migrated fleet. Temporary — remove once the flag is on by
+	// default everywhere.
+	if err := db.MigrateControlPlaneToController(ctx, bunDB, cfg.UseControlPlaneControllerForControlPlane()); err != nil {
+		logger.Error("Failed to migrate control plane to controller", "error", err)
 		os.Exit(1)
 	}
 
@@ -183,7 +206,10 @@ func main() {
 	controllerRuntimeLogger := logger.With("logger", "controller-runtime")
 	k8sControllerManager, err := kube.NewRuntimeManager(
 		controllerRuntimeLogger,
-		cfg.SpireServerNamespace,
+		kube.RuntimeManagerOptions{
+			ConfigMapCacheNamespace: cfg.SpireServerNamespace,
+			LeaderElectionNamespace: cfg.PodNamespace,
+		},
 		spirev1alpha1.AddToScheme,
 		nicov1.AddToScheme,
 	)
@@ -191,8 +217,6 @@ func main() {
 		logger.Error("Failed to create Kubernetes controller manager", "error", err)
 		os.Exit(1)
 	}
-	nodeAgentClient := agent.NewClient(cfg, trustDomain)
-
 	tenantClientProvider := kube.NewDBClusterTenantClientProvider(
 		dbInstance,
 		managementK8sClient,
@@ -384,7 +408,7 @@ func main() {
 	}
 	if !cfg.NodeHealthCheckDisabled {
 		tenantRegistrars = append(tenantRegistrars,
-			tenantnodestatus.NewRegistrar(dbInstance),
+			tenantnodestatus.NewRegistrar(dbInstance, logger.With("logger", "tenant-node-health-controller")),
 			tenantnoderemediation.NewRegistrar(
 				cfg,
 				dbInstance,

@@ -8,18 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 
 	"github.com/google/uuid"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/constants"
-	"github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile"
-	"github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile/dbwrapper"
-	dbfilters "github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile/filters"
-	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/constants"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile/dbwrapper"
+	dbfilters "github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile/filters"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
 // Controller is responsible for reconciling node pools.
@@ -318,11 +317,6 @@ func buildBaseNodeSet(nodePool db.NodePool) *db.NodeSet {
 		SystemReservedMemory: nodePool.SystemReservedMemory,
 		KubeReservedMemory:   nodePool.KubeReservedMemory,
 		TeleportEnabled:      nodePool.TeleportEnabled,
-		// SubnetIDs and VpcPrefixIDs are copied from the legacy NodePool columns
-		// to satisfy the DB notnull constraint. These legacy flat fields will be
-		// deprecated once all consumers read from the typed provider payloads.
-		SubnetIDs:    slices.Clone(nodePool.SubnetIDs),
-		VpcPrefixIDs: slices.Clone(nodePool.VpcPrefixIDs),
 	}
 }
 

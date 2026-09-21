@@ -14,10 +14,10 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	nicov1 "github.com/NVIDIA/cluster-api-provider-nico/api/v1alpha1"
+	nicov1 "github.com/dsx-ai-factory/cluster-api-provider-nico/api/v1alpha1"
 
-	"github.com/NVIDIA/nke/controller/internal/capi"
-	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/capi"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
 func (a *Activities) shouldRotateNicoMachineNetworkCandidate(ctx context.Context, machine *clusterv1.Machine) (bool, error) {
@@ -36,16 +36,16 @@ func (a *Activities) shouldRotateNicoMachineNetworkCandidate(ctx context.Context
 		return false, nil
 	}
 
-	readyCondition := nicoMachineReadyCondition(nicoMachine.Status.Conditions)
-	if readyCondition == nil ||
-		readyCondition.Status != metav1.ConditionFalse ||
-		readyCondition.Reason != nicov1.InstanceCreateFailedReason {
+	provisionedCondition := nicoMachineProvisionedCondition(nicoMachine.Status.Conditions)
+	if provisionedCondition == nil ||
+		provisionedCondition.Status != metav1.ConditionFalse ||
+		provisionedCondition.Reason != nicov1.InstanceCreateFailedReason {
 		return false, nil
 	}
-	if readyCondition.ObservedGeneration != 0 && readyCondition.ObservedGeneration < nicoMachine.Generation {
+	if provisionedCondition.ObservedGeneration != 0 && provisionedCondition.ObservedGeneration < nicoMachine.Generation {
 		return false, nil
 	}
-	if !isNicoNetworkExhaustionMessage(readyCondition.Message) {
+	if !isNicoNetworkExhaustionMessage(provisionedCondition.Message) {
 		return false, nil
 	}
 
@@ -102,8 +102,8 @@ func (a *Activities) rotateNicoMachineVpcPrefix(ctx context.Context, nicoMachine
 	}
 	if currentIndex == len(vpcPrefixIDs)-1 {
 		failureMessage := ""
-		if readyCondition := nicoMachineReadyCondition(nicoMachine.Status.Conditions); readyCondition != nil {
-			failureMessage = readyCondition.Message
+		if provisionedCondition := nicoMachineProvisionedCondition(nicoMachine.Status.Conditions); provisionedCondition != nil {
+			failureMessage = provisionedCondition.Message
 		}
 		return fmt.Errorf("all %d VPC prefixes are exhausted, error from the last NicoMachine create attempt: %s", len(vpcPrefixIDs), failureMessage)
 	}
@@ -133,8 +133,8 @@ func (a *Activities) rotateNicoMachineSubnet(ctx context.Context, nicoMachine *n
 	}
 	if currentIndex == len(subnetIDs)-1 {
 		failureMessage := ""
-		if readyCondition := nicoMachineReadyCondition(nicoMachine.Status.Conditions); readyCondition != nil {
-			failureMessage = readyCondition.Message
+		if provisionedCondition := nicoMachineProvisionedCondition(nicoMachine.Status.Conditions); provisionedCondition != nil {
+			failureMessage = provisionedCondition.Message
 		}
 		return fmt.Errorf("all %d subnets are exhausted, error from the last NicoMachine create attempt: %s", len(subnetIDs), failureMessage)
 	}
@@ -176,13 +176,13 @@ func (a *Activities) shouldRotateNicoMachineInstanceType(ctx context.Context, ma
 		return false, nil
 	}
 
-	readyCondition := nicoMachineReadyCondition(nicoMachine.Status.Conditions)
-	if readyCondition == nil ||
-		readyCondition.Status != metav1.ConditionFalse ||
-		!isNicoInstanceTypeUnavailableReason(readyCondition.Reason) {
+	provisionedCondition := nicoMachineProvisionedCondition(nicoMachine.Status.Conditions)
+	if provisionedCondition == nil ||
+		provisionedCondition.Status != metav1.ConditionFalse ||
+		!isNicoInstanceTypeUnavailableReason(provisionedCondition.Reason) {
 		return false, nil
 	}
-	if readyCondition.ObservedGeneration != 0 && readyCondition.ObservedGeneration < nicoMachine.Generation {
+	if provisionedCondition.ObservedGeneration != 0 && provisionedCondition.ObservedGeneration < nicoMachine.Generation {
 		return false, nil
 	}
 
@@ -260,9 +260,9 @@ func (a *Activities) controlPlaneInstanceTypePreference(ctx context.Context, nod
 	if err != nil {
 		return nil, fmt.Errorf("failed to get control plane configuration %s: %w", node.ControlPlaneConfigurationID, err)
 	}
-	nico := row.Config.NicoControlPlaneProvider()
-	if nico == nil {
-		return nil, fmt.Errorf("nico control-plane provider payload is required")
+	nico, err := row.Config.NicoProvider()
+	if err != nil {
+		return nil, err
 	}
 	return nico.InstanceTypePreference, nil
 }
@@ -293,9 +293,15 @@ func (a *Activities) seedControlPlaneInstanceType(ctx context.Context, createCtx
 	return nil
 }
 
-func nicoMachineReadyCondition(conditions []metav1.Condition) *metav1.Condition {
+// nicoMachineProvisionedCondition returns the NicoMachine MachineProvisioned
+// condition, which carries the specific provisioning-failure reason
+// (InstanceTypeUnavailable, InstanceTypeNotFound, InstanceCreateFailed, ...).
+// The aggregate Ready condition only summarizes those with a generic reason
+// (e.g. "NotReady"), so the rotation gates must key off MachineProvisioned to
+// see why provisioning actually failed.
+func nicoMachineProvisionedCondition(conditions []metav1.Condition) *metav1.Condition {
 	for i := range conditions {
-		if conditions[i].Type == clusterv1.ReadyCondition {
+		if conditions[i].Type == nicov1.MachineProvisionedCondition {
 			return &conditions[i]
 		}
 	}
@@ -313,7 +319,7 @@ func isNicoNetworkExhaustionMessage(message string) bool {
 	// some environments, which uses the same allocation substrings.
 	// https://github.com/NVIDIA/infra-controller/blob/fdb5d34320bdce562bbc18eb958065a047ea8dd6/rest-api/api/pkg/api/handler/instance.go#L540-L629
 	// https://github.com/NVIDIA/infra-controller/blob/fdb5d34320bdce562bbc18eb958065a047ea8dd6/crates/api-db/src/ip_allocator.rs#L60
-	// https://github.com/NVIDIA/nke/controller/-/blob/dffb36a8/internal/providers/forge/api/errors.go#L57-L72
+	// https://github.com/dsx-ai-factory/nke/controller/-/blob/dffb36a8/internal/providers/forge/api/errors.go#L57-L72
 
 	nicoPreflightExhausted := strings.Contains(normalized, "does not have enough ip addresses:") &&
 		(strings.Contains(normalized, "subnet ") || strings.Contains(normalized, "vpc prefix "))

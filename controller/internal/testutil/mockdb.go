@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 
-	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
 // MockDB is a testify mock for db.DB. Set MockTx (or GetTx) before use so RunInTx invokes the callback with it.
@@ -123,6 +123,15 @@ func (m *MockDB) GetControlPlaneConfiguration(ctx context.Context, id uuid.UUID)
 
 func (m *MockDB) ListControlPlaneConfigurationsByIDs(ctx context.Context, ids []uuid.UUID) ([]db.ControlPlaneConfiguration, error) {
 	args := m.Called(ctx, ids)
+	v, ok := args.Get(0).([]db.ControlPlaneConfiguration)
+	if !ok {
+		return nil, args.Error(1)
+	}
+	return v, args.Error(1)
+}
+
+func (m *MockDB) ListControlPlaneConfigurationsByCluster(ctx context.Context, clusterID uuid.UUID) ([]db.ControlPlaneConfiguration, error) {
+	args := m.Called(ctx, clusterID)
 	v, ok := args.Get(0).([]db.ControlPlaneConfiguration)
 	if !ok {
 		return nil, args.Error(1)
@@ -243,11 +252,6 @@ func (m *MockDB) UpdateNode(ctx context.Context, node *db.Node) (db.Node, error)
 	return v, args.Error(1)
 }
 
-func (m *MockDB) UpdateNodeForgeDetails(ctx context.Context, nodeID uuid.UUID, forgeInstanceID, forgeMachineID, ip *string) error {
-	args := m.Called(ctx, nodeID, forgeInstanceID, forgeMachineID, ip)
-	return args.Error(0)
-}
-
 func (m *MockDB) UpdateNodeTeleportRegistered(ctx context.Context, nodeID uuid.UUID, condition db.Condition) error {
 	args := m.Called(ctx, nodeID, condition)
 	return args.Error(0)
@@ -256,6 +260,11 @@ func (m *MockDB) UpdateNodeTeleportRegistered(ctx context.Context, nodeID uuid.U
 func (m *MockDB) DeleteNode(ctx context.Context, id uuid.UUID) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)
+}
+
+func (m *MockDB) TryAcquireNodeProvisioningLock(ctx context.Context, nodeID uuid.UUID) (bool, error) {
+	args := m.Called(ctx, nodeID)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockDB) ListNodeSets(ctx context.Context, filters db.NodeSetFilters) ([]db.NodeSet, error) {
@@ -500,11 +509,6 @@ func (m *MockTx) UpdateNode(ctx context.Context, node *db.Node) (db.Node, error)
 	return v, args.Error(1)
 }
 
-func (m *MockTx) UpdateNodeForgeDetails(ctx context.Context, nodeID uuid.UUID, forgeInstanceID, forgeMachineID, ip *string) error {
-	args := m.Called(ctx, nodeID, forgeInstanceID, forgeMachineID, ip)
-	return args.Error(0)
-}
-
 func (m *MockTx) UpdateNodeTeleportRegistered(ctx context.Context, nodeID uuid.UUID, condition db.Condition) error {
 	args := m.Called(ctx, nodeID, condition)
 	return args.Error(0)
@@ -513,6 +517,11 @@ func (m *MockTx) UpdateNodeTeleportRegistered(ctx context.Context, nodeID uuid.U
 func (m *MockTx) DeleteNode(ctx context.Context, id uuid.UUID) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)
+}
+
+func (m *MockTx) TryAcquireNodeProvisioningLock(ctx context.Context, nodeID uuid.UUID) (bool, error) {
+	args := m.Called(ctx, nodeID)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockDB) ListNodeConditions(ctx context.Context) ([]db.NodeConditionStatus, error) {

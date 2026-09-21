@@ -2,14 +2,14 @@
 
 NKE control-plane CLI. Bootstraps site controllers and manages tenant cluster lifecycle.
 
-**Module:** `github.com/NVIDIA/nke/cli`  
+**Module:** `github.com/dsx-ai-factory/nke/cli`  
 **Binary:** `nkectl`  
 **Releases:** `cli/v*` tags
 
 ## What it does
 
 - **Site bootstrap** — `nkectl bootstrap site` creates an ephemeral Kind cluster, deploys CWE onto it, then drives kubeadm init/join across pre-provisioned nodes via `nke-agent` gRPC; no SSH required
-- **Cluster lifecycle** — `nkectl get/create/delete clusters` manages tenant clusters through the CWE API
+- **Cluster lifecycle** — `nkectl get/create/patch/delete clusters` manages tenant clusters through the CWE API
 - **Site spec** — `nkectl generate sitespec` writes a site spec from a node CSV; `nkectl bootstrap site --dry-run` validates one without touching a node
 - **Config** — `nkectl config set-site` points the CLI at a site controller.
 
@@ -18,17 +18,17 @@ NKE control-plane CLI. Bootstraps site controllers and manages tenant cluster li
 ```bash
 # linux/amd64
 curl -fsSL -o nkectl \
-  https://github.com/NVIDIA/nke/releases/latest/download/nkectl-linux-amd64
+  https://github.com/dsx-ai-factory/nke/releases/latest/download/nkectl-linux-amd64
 chmod +x nkectl && sudo mv nkectl /usr/local/bin/
 
 # linux/arm64
 curl -fsSL -o nkectl \
-  https://github.com/NVIDIA/nke/releases/latest/download/nkectl-linux-arm64
+  https://github.com/dsx-ai-factory/nke/releases/latest/download/nkectl-linux-arm64
 chmod +x nkectl && sudo mv nkectl /usr/local/bin/
 
 # macOS (amd64 / arm64)
 curl -fsSL -o nkectl \
-  https://github.com/NVIDIA/nke/releases/latest/download/nkectl-darwin-arm64
+  https://github.com/dsx-ai-factory/nke/releases/latest/download/nkectl-darwin-arm64
 chmod +x nkectl && sudo mv nkectl /usr/local/bin/
 ```
 
@@ -40,8 +40,8 @@ nkectl version
 
 ```bash
 # Bootstrap a new site controller
-NKECTL_CWE_IMAGE=nvcr.io/<org>/controller:edge \
-NKECTL_CWE_PROFILES_IMAGE=nvcr.io/<org>/profiles:edge \
+NKECTL_CWE_IMAGE=nvcr.io/<org>/nke-controller:edge \
+NKECTL_CAPI_PROVISIONED_IMAGE=nvcr.io/<org>/cluster-api-provider-provisioned:edge \
   nkectl bootstrap site -f sitespec.yaml
 nkectl bootstrap site -f sitespec.yaml --dry-run              # validate only
 nkectl bootstrap site -f sitespec.yaml --keep-bootstrap-cluster     # leave Kind cluster for debugging
@@ -57,9 +57,20 @@ nkectl get providers -o json
 # Tenant cluster lifecycle
 nkectl get clusters                    # table with AGE and status
 nkectl get clusters -o json            # JSON output
-nkectl get clusters --cluster <name> -o yaml  # full detail for one cluster
+nkectl get clusters <name>... -o yaml  # full detail for named clusters
 nkectl create cluster -f <spec-file>   # or: cat spec.yaml | nkectl create cluster -f -
+nkectl patch cluster my-cluster --patch 'controlPlaneKubernetesVersion: 1.31.0'
+nkectl patch cluster my-cluster --patch-file patch.yaml
 nkectl delete cluster <name>           # deletes immediately; there is no prompt
+
+# Node pools
+nkectl create nodepool -f <spec-file>  # or: cat pool.yaml | nkectl create nodepool -f -
+nkectl get nodepools                   # every pool on the site
+nkectl get nodepools --cluster <name>  # pools of one cluster
+nkectl get nodepools <name>... --cluster <name> -o yaml  # full detail for named pools
+nkectl patch nodepool <name> --cluster <name> --patch 'desiredNodeCount: 8'
+nkectl patch nodepool <name> --cluster <name> --patch-file patch.yaml
+nkectl delete nodepool <name> --cluster <name>
 ```
 
 ## Authenticating to CWE
@@ -76,8 +87,11 @@ If that ConfigMap is missing, the CLI treats authentication as off and sends no
 The kubeconfig identity needs:
 
 - `create` on `serviceaccounts/token` for `nke-client` in `nke-clients`
+- `get` on `secrets` in `nke-system`, for `nkectl get kubeconfig` and
+  `nkectl get providers`, which read the management cluster directly rather
+  than through CWE
 
-A cluster-admin kubeconfig already has it. Least-privilege grants, and
+A cluster-admin kubeconfig already has both. Least-privilege grants, and
 creating the service account on a real site, are in
 [Configuring NKE API Authentication](../controller/docs/configuring-api-authentication.md).
 
@@ -155,17 +169,34 @@ The cluster name SPIRE is told is the ephemeral cluster's own name, from
 because the bootstrap cluster has one name and two ways to say it could only
 ever disagree.
 
+When SPIRE is enabled, `bootstrap site` exports the live `ClusterStaticEntry`
+CRD definition and CWE's cluster-scoped workload registration policy before it
+removes the bootstrap cluster. It writes `clusterstaticentry-crd.yaml` and
+`clusterstaticentries.yaml` in the same directory as the site kubeconfig. The
+files contain no source UIDs, resource versions, status, or other server-owned
+metadata.
+
 ### Bootstrap cluster and CWE
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `NKECTL_BOOTSTRAP_CLUSTER_NAME` | `nkectl-bootstrap` | Name of the ephemeral cluster |
 | `NKECTL_CWE_IMAGE` | required | CWE image to deploy. Side-loaded from the local image store, so it must already be pulled. |
-| `NKECTL_CWE_PROFILES_IMAGE` | required | Image holding the OS profiles tree at `/profiles` |
 | `NKECTL_CWE_CHART_PATH` | discovered | Path to the CWE chart |
+| `NKECTL_CWE_POSTGRES_CHART` | `oci://registry-1.docker.io/bitnamicharts/postgresql` | Postgres chart, as an OCI reference or a local path. Point it at a mirror or a downloaded tarball. |
+| `NKECTL_CWE_TEMPORAL_CHART` | `temporal` from `https://go.temporal.io/helm-charts` | Temporal chart, as an OCI reference or a local path. Set, it replaces the repo lookup. |
+| `NKECTL_CWE_SPIRE_CHART` | `spire` from `https://spiffe.github.io/helm-charts-hardened/` | SPIRE chart, same semantics |
+| `NKECTL_CWE_SPIRE_CRDS_CHART` | `spire-crds` from `https://spiffe.github.io/helm-charts-hardened/` | SPIRE CRDs chart, same semantics |
 | `NKECTL_CWE_HELM_TIMEOUT` | `5m` | Bounds each `helm upgrade --install --wait` |
 | `NKECTL_CWE_READY_TIMEOUT` | `5m` | Bounds the wait for CWE's `/readyz` |
 | `NKECTL_BOOTSTRAP_DIAGNOSTICS_DIR` | `cluster-diagnostics` | Where a failed bootstrap writes a cluster dump before tearing the cluster down (`--diagnostics-dir`) |
+
+The chart versions stay pinned in `nkectl` whichever source a chart comes
+from. Helm does not check a local path against the pin, so a tarball has to be
+the pinned version. With the four chart variables set, no Helm chart is
+pulled from the internet. The images those charts run still come from their
+registries (`NKECTL_BOOTSTRAP_DOCKERHUB_MIRROR` covers Docker Hub), and
+`clusterctl init` still fetches Cluster API and cert-manager from `github.com`.
 
 ## When a bootstrap fails
 

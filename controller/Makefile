@@ -19,7 +19,7 @@ ENVTEST_BIN_DIR			?= $(CURDIR)/.go/envtest
 # Kubernetes version for the envtest kube-apiserver and etcd binaries.
 ENVTEST_K8S_VERSION		?= 1.34.1
 CWE_GOFAIL_E2E_CLUSTER_CRDS	?= $(shell go env GOMODCACHE)/sigs.k8s.io/cluster-api@$(shell go list -m -f '{{.Version}}' sigs.k8s.io/cluster-api)/config/crd/bases
-CWE_GOFAIL_E2E_CAPNICO_CRDS	?= $(shell go env GOMODCACHE)/github.com/!n!v!i!d!i!a/cluster-api-provider-nico@$(shell go list -m -f '{{.Version}}' github.com/NVIDIA/cluster-api-provider-nico)/config/crd/bases
+CWE_GOFAIL_E2E_CAPNICO_CRDS	?= $(shell go env GOMODCACHE)/github.com/dsx-ai-factory/cluster-api-provider-nico@$(shell go list -m -f '{{.Version}}' github.com/dsx-ai-factory/cluster-api-provider-nico)/config/crd/bases
 
 # The licence header template lives once, at the repository root.
 REPO_ROOT ?= $(shell git rev-parse --show-toplevel)
@@ -40,7 +40,7 @@ include ../make/tool-versions.mk
 include ../make/golangci.mk
 
 # Image URL to use all building/pushing image targets
-IMG_NAME ?= nvcr.io/j7sbcjl3qgta/cloud-workflow-engine
+IMG_NAME ?= nvcr.io/j7sbcjl3qgta/nke-controller
 IMG_TAG ?= latest
 IMG ?= ${IMG_NAME}:${IMG_TAG}
 # Falls back to the commit before v0.0.0. A CI checkout is shallow and carries
@@ -130,6 +130,12 @@ generate-check: generate-api ## Verify generated API code is up to date. (run by
 		git diff --name-only -- api/models.gen.go api/server.gen.go api/client.gen.go; \
 		exit 1; \
 	fi
+	@# git diff says nothing about a path git is not tracking, so a newly
+	@# generated file would otherwise pass while never being committed. Same
+	@# guard as Makefile's licences-check.
+	@untracked=$$(git ls-files --others --exclude-standard -- api/models.gen.go api/server.gen.go api/client.gen.go); \
+	 [ -z "$$untracked" ] \
+		|| { echo "ERROR: generated API files are not tracked. Run 'make generate' and commit them:"; printf '%s\n' "$$untracked" | sed 's/^/    /'; exit 1; }
 
 RELEASE_LDFLAGS ?= -s -w -buildid= -extldflags -static
 
@@ -143,12 +149,12 @@ print-%:
 # -buildvcs=false because the version comes from the -X ldflag below. See the note
 # on work-check-offline in the root Makefile.
 build: ## Build controller into bin/.
-	CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags "-X github.com/NVIDIA/nke/controller/internal/version.Version=${BUILD_VERSION} $(RELEASE_LDFLAGS)" -o ./bin/$(WORKER_BIN_NAME) ./cmd/worker/
+	CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags "-X github.com/dsx-ai-factory/nke/controller/internal/version.Version=${BUILD_VERSION} $(RELEASE_LDFLAGS)" -o ./bin/$(WORKER_BIN_NAME) ./cmd/worker/
 
 .PHONY: fmt
 fmt: ## Format code (gofumpt + goimports; matches .golangci.yml formatters).
 	go run mvdan.cc/gofumpt@v0.11.0 -w -extra .
-	go run golang.org/x/tools/cmd/goimports@v0.48.0 -w -local github.com/NVIDIA/nke/controller .
+	go run golang.org/x/tools/cmd/goimports@v0.48.0 -w -local github.com/dsx-ai-factory/nke/controller .
 
 # GO_TEST_FLAGS lets CI add -race without the workflow having to restate the
 # test command, so `make test` stays the one definition of what "the tests" are.
@@ -217,7 +223,13 @@ ARGS ?=
 test-e2e: ## Run all NKE e2e tests; optional ARGS forwards ginkgo flags Example: make test-e2e ARGS='--label-filter="nico-vms && happy-path"'
 	cd $(E2E_DIR) && go run github.com/onsi/ginkgo/v2/ginkgo@$(GINKGO_VERSION) run -v --timeout=$(E2E_TIMEOUT) $(ARGS) .
 
-.PHONY: test-e2e-happy-path
+.PHONY: test-e2e-core-capd test-e2e-core-nico-containers test-e2e-happy-path
+test-e2e-core-capd: ## Run the bounded CAPD create, readiness, and delete lifecycle.
+	make test-e2e ARGS='--fail-on-empty --label-filter="core-docker"'
+
+test-e2e-core-nico-containers: ## Run the bounded NICo containers create, readiness, and delete lifecycle.
+	make test-e2e ARGS='--fail-on-empty --label-filter="core-nico"'
+
 test-e2e-happy-path: ## Run CAPD and NICo VMs happy-path e2e tests
 	make test-e2e ARGS='--label-filter="happy-path && (lifecycle || readiness) && !scale && !upgrade && !reboot"'
 
@@ -307,7 +319,7 @@ docker-build-multiarch: ## Build the controller image for linux/amd64 and linux/
 # Publish targets for pushing to an explicit registry (used by CI's
 # image-nvcr.yml). These deliberately do NOT use IMG_NAME/IMG: this OSS repo
 # must never default-push to the internal production image
-# (nvcr.io/j7sbcjl3qgta/cloud-workflow-engine, IMG_NAME above). The destination
+# (nvcr.io/j7sbcjl3qgta/nke-controller, IMG_NAME above). The destination
 # has no default and must be passed explicitly via IMG_REPO, guarded by
 # check-img-repo below, so a bare invocation cannot clobber it.
 #
@@ -380,19 +392,6 @@ $(GO_LICENSES):
 .PHONY: go-licenses
 go-licenses: $(GO_LICENSES) ## Build the pinned go-licenses into ./bin.
 
-# crane copies an image between registries without pulling or rebuilding it. The
-# three CAPI provider repositories use it for the same promotion, at the same
-# version.
-CRANE_VERSION ?= v0.21.9
-CRANE         ?= $(CURDIR)/bin/crane
-
-$(CRANE):
-	@echo "Installing crane $(CRANE_VERSION)..."
-	@GOBIN=$(CURDIR)/bin go install github.com/google/go-containerregistry/cmd/crane@$(CRANE_VERSION)
-
-.PHONY: crane
-crane: $(CRANE) ## Build the pinned crane into ./bin.
-
 # Permissive licenses approved for redistribution. Matches the allowlist used by
 # NVIDIA/aicr. A dependency introducing anything else - copyleft in particular -
 # fails the check and needs a conscious decision rather than silent acceptance.
@@ -417,7 +416,7 @@ license-policy-check: $(GO_LICENSES) ## Verify every third-party dependency uses
 	@# that genuinely need ignoring are named explicitly.
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO_LICENSES) check ./cmd/worker \
 		--allowed_licenses=$(ALLOWED_LICENSES) \
-		--ignore="$$(GOWORK=off go list -m),github.com/NVIDIA/nke/agent,github.com/NVIDIA/cluster-api-provider-nico"
+		--ignore="$$(GOWORK=off go list -m),github.com/dsx-ai-factory/nke/agent,github.com/dsx-ai-factory/cluster-api-provider-nico"
 
 .PHONY: notices
 notices: $(GO_LICENSES) ## Regenerate THIRD_PARTY_NOTICES.md for the released worker binary.

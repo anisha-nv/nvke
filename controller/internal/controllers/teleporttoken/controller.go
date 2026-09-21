@@ -20,17 +20,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	nicov1 "github.com/NVIDIA/cluster-api-provider-nico/api/v1alpha1"
+	nicov1 "github.com/dsx-ai-factory/cluster-api-provider-nico/api/v1alpha1"
 
-	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/constants"
-	"github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile"
-	"github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile/dbwrapper"
-	dbfilters "github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile/filters"
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/metrics"
-	"github.com/NVIDIA/nke/controller/internal/nodes"
-	"github.com/NVIDIA/nke/controller/internal/teleport"
+	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/constants"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile/dbwrapper"
+	dbfilters "github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile/filters"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/metrics"
+	"github.com/dsx-ai-factory/nke/controller/internal/nodes"
+	"github.com/dsx-ai-factory/nke/controller/internal/teleport"
 )
 
 const (
@@ -194,7 +194,7 @@ func (c *Controller) Reconcile(ctx context.Context, key dbreconcile.Key) (reconc
 		return reconcile.Result{}, err
 	}
 
-	siteID := cluster.SiteID
+	siteID := cluster.NicoSiteID()
 	eligible, err := c.isTeleportEligible(ctx, node, cluster)
 	if err != nil {
 		return reconcile.Result{}, err
@@ -443,7 +443,7 @@ func (c *Controller) createTokenForNode(ctx context.Context, node db.Node, ekPub
 	c.logger.Info("Creating Teleport TPM join token",
 		"nodeID", node.ID,
 		"nodeName", node.Name,
-		"forgeInstanceID", node.ForgeInstanceID,
+		"forgeInstanceID", node.NicoForgeInstanceID(),
 		"tokenName", tokenName,
 		"expiresAt", expiresAt,
 	)

@@ -22,7 +22,7 @@ notices-check` verifies it is up to date.
 | `github.com/beevik/etree` | BSD-2-Clause | `github.com/beevik/etree@v1.6.0` | Unknown |
 | `github.com/beorn7/perks/quantile` | MIT | `github.com/beorn7/perks@v1.0.1` | Unknown |
 | `github.com/blang/semver/v4` | MIT | `github.com/blang/semver/v4@v4.0.0` | Unknown |
-| `github.com/caarlos0/env/v11` | MIT | `github.com/caarlos0/env/v11@v11.3.1` | Unknown |
+| `github.com/caarlos0/env/v11` | MIT | `github.com/caarlos0/env/v11@v11.4.1` | Unknown |
 | `github.com/cenkalti/backoff/v5` | MIT | `github.com/cenkalti/backoff/v5@v5.0.3` | Unknown |
 | `github.com/cespare/xxhash/v2` | MIT | `github.com/cespare/xxhash/v2@v2.3.0` | Unknown |
 | `github.com/charlievieth/strcase` | MIT | `github.com/charlievieth/strcase@v0.0.5` | Unknown |
@@ -31,43 +31,43 @@ notices-check` verifies it is up to date.
 | `github.com/emicklei/go-restful/v3` | MIT | `github.com/emicklei/go-restful/v3@v3.13.0` | Unknown |
 | `github.com/evanphx/json-patch/v5` | BSD-3-Clause | `github.com/evanphx/json-patch/v5@v5.9.11` | Unknown |
 | `github.com/facebookgo/clock` | MIT | `github.com/facebookgo/clock@v0.0.0-20150410010913-600d898af40a` | Unknown |
-| `github.com/felixge/httpsnoop` | MIT | `github.com/felixge/httpsnoop@v1.0.4` | Unknown |
+| `github.com/felixge/httpsnoop` | MIT | `github.com/felixge/httpsnoop@v1.1.0` | Unknown |
 | `github.com/fsnotify/fsnotify` | BSD-3-Clause | `github.com/fsnotify/fsnotify@v1.9.0` | Unknown |
-| `github.com/fxamacker/cbor/v2` | MIT | `github.com/fxamacker/cbor/v2@v2.9.0` | Unknown |
+| `github.com/fxamacker/cbor/v2` | MIT | `github.com/fxamacker/cbor/v2@v2.9.1` | Unknown |
 | `github.com/getkin/kin-openapi` | MIT | `github.com/getkin/kin-openapi@v0.149.0` | Unknown |
-| `github.com/go-jose/go-jose/v4` | Apache-2.0 | `github.com/go-jose/go-jose/v4@v4.1.4` | Unknown |
-| `github.com/go-jose/go-jose/v4/json` | BSD-3-Clause | `github.com/go-jose/go-jose/v4@v4.1.4` | Unknown |
+| `github.com/go-jose/go-jose/v4` | Apache-2.0 | `github.com/go-jose/go-jose/v4@v4.1.5` | Unknown |
+| `github.com/go-jose/go-jose/v4/json` | BSD-3-Clause | `github.com/go-jose/go-jose/v4@v4.1.5` | Unknown |
 | `github.com/go-logr/logr` | Apache-2.0 | `github.com/go-logr/logr@v1.4.4` | Unknown |
 | `github.com/go-logr/stdr` | Apache-2.0 | `github.com/go-logr/stdr@v1.2.2` | Unknown |
-| `github.com/go-openapi/jsonpointer` | Apache-2.0 | `github.com/go-openapi/jsonpointer@v0.22.5` | Unknown |
-| `github.com/go-openapi/jsonreference` | Apache-2.0 | `github.com/go-openapi/jsonreference@v0.21.2` | Unknown |
-| `github.com/go-openapi/swag` | Apache-2.0 | `github.com/go-openapi/swag@v0.25.1` | Unknown |
-| `github.com/go-openapi/swag/cmdutils` | Apache-2.0 | `github.com/go-openapi/swag/cmdutils@v0.25.1` | Unknown |
-| `github.com/go-openapi/swag/conv` | Apache-2.0 | `github.com/go-openapi/swag/conv@v0.25.1` | Unknown |
-| `github.com/go-openapi/swag/fileutils` | Apache-2.0 | `github.com/go-openapi/swag/fileutils@v0.25.1` | Unknown |
-| `github.com/go-openapi/swag/jsonname` | Apache-2.0 | `github.com/go-openapi/swag/jsonname@v0.25.5` | Unknown |
-| `github.com/go-openapi/swag/jsonutils` | Apache-2.0 | `github.com/go-openapi/swag/jsonutils@v0.25.1` | Unknown |
-| `github.com/go-openapi/swag/loading` | Apache-2.0 | `github.com/go-openapi/swag/loading@v0.25.1` | Unknown |
-| `github.com/go-openapi/swag/mangling` | Apache-2.0 | `github.com/go-openapi/swag/mangling@v0.25.1` | Unknown |
-| `github.com/go-openapi/swag/netutils` | Apache-2.0 | `github.com/go-openapi/swag/netutils@v0.25.1` | Unknown |
-| `github.com/go-openapi/swag/stringutils` | Apache-2.0 | `github.com/go-openapi/swag/stringutils@v0.25.1` | Unknown |
-| `github.com/go-openapi/swag/typeutils` | Apache-2.0 | `github.com/go-openapi/swag/typeutils@v0.25.1` | Unknown |
-| `github.com/go-openapi/swag/yamlutils` | Apache-2.0 | `github.com/go-openapi/swag/yamlutils@v0.25.1` | Unknown |
+| `github.com/go-openapi/jsonpointer` | Apache-2.0 | `github.com/go-openapi/jsonpointer@v1.0.0` | Unknown |
+| `github.com/go-openapi/jsonreference` | Apache-2.0 | `github.com/go-openapi/jsonreference@v1.0.0` | Unknown |
+| `github.com/go-openapi/swag` | Apache-2.0 | `github.com/go-openapi/swag@v0.28.0` | Unknown |
+| `github.com/go-openapi/swag/cmdutils` | Apache-2.0 | `github.com/go-openapi/swag/cmdutils@v0.28.0` | Unknown |
+| `github.com/go-openapi/swag/conv` | Apache-2.0 | `github.com/go-openapi/swag/conv@v0.28.0` | Unknown |
+| `github.com/go-openapi/swag/fileutils` | Apache-2.0 | `github.com/go-openapi/swag/fileutils@v0.28.0` | Unknown |
+| `github.com/go-openapi/swag/jsonutils` | Apache-2.0 | `github.com/go-openapi/swag/jsonutils@v0.28.0` | Unknown |
+| `github.com/go-openapi/swag/loading` | Apache-2.0 | `github.com/go-openapi/swag/loading@v0.28.0` | Unknown |
+| `github.com/go-openapi/swag/mangling` | Apache-2.0 | `github.com/go-openapi/swag/mangling@v0.28.0` | Unknown |
+| `github.com/go-openapi/swag/netutils` | Apache-2.0 | `github.com/go-openapi/swag/netutils@v0.28.0` | Unknown |
+| `github.com/go-openapi/swag/pools` | Apache-2.0 | `github.com/go-openapi/swag/pools@v0.28.0` | Unknown |
+| `github.com/go-openapi/swag/stringutils` | Apache-2.0 | `github.com/go-openapi/swag/stringutils@v0.28.0` | Unknown |
+| `github.com/go-openapi/swag/typeutils` | Apache-2.0 | `github.com/go-openapi/swag/typeutils@v0.28.0` | Unknown |
+| `github.com/go-openapi/swag/yamlutils` | Apache-2.0 | `github.com/go-openapi/swag/yamlutils@v0.28.0` | Unknown |
 | `github.com/gobuffalo/flect` | MIT | `github.com/gobuffalo/flect@v1.0.3` | Unknown |
 | `github.com/gobwas/httphead` | MIT | `github.com/gobwas/httphead@v0.1.0` | Unknown |
 | `github.com/gobwas/pool` | MIT | `github.com/gobwas/pool@v0.2.1` | Unknown |
 | `github.com/gobwas/ws` | MIT | `github.com/gobwas/ws@v1.4.0` | Unknown |
 | `github.com/gogo/protobuf` | BSD-3-Clause | `github.com/gogo/protobuf@v1.3.2` | Unknown |
 | `github.com/golang-jwt/jwt/v5` | MIT | `github.com/golang-jwt/jwt/v5@v5.3.1` | Unknown |
-| `github.com/golang/mock/gomock` | Apache-2.0 | `github.com/golang/mock@v1.7.0-rc.1` | Unknown |
+| `github.com/golang/mock` | Apache-2.0 | `github.com/golang/mock@v1.7.0-rc.1` | Unknown |
 | `github.com/google/gnostic-models` | Apache-2.0 | `github.com/google/gnostic-models@v0.7.0` | Unknown |
 | `github.com/google/go-cmp/cmp` | BSD-3-Clause | `github.com/google/go-cmp@v0.7.0` | Unknown |
 | `github.com/google/uuid` | BSD-3-Clause | `github.com/google/uuid@v1.6.0` | Unknown |
 | `github.com/gorilla/mux` | BSD-3-Clause | `github.com/gorilla/mux@v1.8.1` | Unknown |
 | `github.com/gravitational/teleport/api` | Apache-2.0 | `github.com/gravitational/teleport/api@v0.0.0-20251224210154-05b9362bd4d6` | Unknown |
-| `github.com/gravitational/trace` | Apache-2.0 | `github.com/gravitational/trace@v1.5.1` | Unknown |
+| `github.com/gravitational/trace` | Apache-2.0 | `github.com/gravitational/trace@v1.5.4` | Unknown |
 | `github.com/grpc-ecosystem/go-grpc-middleware/v2` | Apache-2.0 | `github.com/grpc-ecosystem/go-grpc-middleware/v2@v2.3.3` | Unknown |
-| `github.com/grpc-ecosystem/grpc-gateway/v2` | BSD-3-Clause | `github.com/grpc-ecosystem/grpc-gateway/v2@v2.28.0` | Unknown |
+| `github.com/grpc-ecosystem/grpc-gateway/v2` | BSD-3-Clause | `github.com/grpc-ecosystem/grpc-gateway/v2@v2.30.0` | Unknown |
 | `github.com/jinzhu/inflection` | MIT | `github.com/jinzhu/inflection@v1.0.0` | Unknown |
 | `github.com/jonboulle/clockwork` | Apache-2.0 | `github.com/jonboulle/clockwork@v0.5.0` | Unknown |
 | `github.com/json-iterator/go` | MIT | `github.com/json-iterator/go@v1.1.12` | Unknown |
@@ -76,12 +76,12 @@ notices-check` verifies it is up to date.
 | `github.com/modern-go/reflect2` | Apache-2.0 | `github.com/modern-go/reflect2@v1.0.3-0.20250322232337-35a7c28c31ee` | Unknown |
 | `github.com/munnerz/goautoneg` | BSD-3-Clause | `github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822` | Unknown |
 | `github.com/nexus-rpc/nexus-proto-annotations/go/nexusannotations/v1` | MIT | `github.com/nexus-rpc/nexus-proto-annotations@v0.1.1-0.20260629224650-76486e7cc189` | Unknown |
-| `github.com/nexus-rpc/sdk-go/nexus` | MIT | `github.com/nexus-rpc/sdk-go@v0.6.0` | Unknown |
-| `github.com/oapi-codegen/nethttp-middleware` | Apache-2.0 | `github.com/oapi-codegen/nethttp-middleware@v1.0.2` | Unknown |
-| `github.com/oapi-codegen/runtime` | Apache-2.0 | `github.com/oapi-codegen/runtime@v1.6.0` | Unknown |
+| `github.com/nexus-rpc/sdk-go/nexus` | MIT | `github.com/nexus-rpc/sdk-go@v0.7.0` | Unknown |
+| `github.com/oapi-codegen/nethttp-middleware` | Apache-2.0 | `github.com/oapi-codegen/nethttp-middleware@v1.2.0` | Unknown |
+| `github.com/oapi-codegen/runtime` | Apache-2.0 | `github.com/oapi-codegen/runtime@v1.7.0` | Unknown |
 | `github.com/oasdiff/yaml` | BSD-3-Clause / MIT | `github.com/oasdiff/yaml@v0.1.1` | Unknown |
 | `github.com/oasdiff/yaml3` | MIT | `github.com/oasdiff/yaml3@v0.0.14` | Unknown |
-| `github.com/onsi/gomega` | MIT | `github.com/onsi/gomega@v1.42.1` | Unknown |
+| `github.com/onsi/gomega` | MIT | `github.com/onsi/gomega@v1.43.0` | Unknown |
 | `github.com/pkg/errors` | BSD-2-Clause | `github.com/pkg/errors@v0.9.1` | Unknown |
 | `github.com/pmezard/go-difflib/difflib` | BSD-3-Clause | `github.com/pmezard/go-difflib@v1.0.1-0.20181226105442-5d4384ee4fb2` | Unknown |
 | `github.com/prometheus/client_golang/internal/github.com/golang/gddo/httputil` | BSD-3-Clause | `github.com/prometheus/client_golang@v1.24.1` | Unknown |
@@ -97,16 +97,16 @@ notices-check` verifies it is up to date.
 | `github.com/spf13/cobra` | Apache-2.0 | `github.com/spf13/cobra@v1.10.2` | Unknown |
 | `github.com/spf13/pflag` | BSD-3-Clause | `github.com/spf13/pflag@v1.0.10` | Unknown |
 | `github.com/spiffe/go-spiffe/v2` | Apache-2.0 | `github.com/spiffe/go-spiffe/v2@v2.8.1` | Unknown |
-| `github.com/spiffe/spire-api-sdk/proto/spire/api` | Apache-2.0 | `github.com/spiffe/spire-api-sdk@v1.15.1` | Unknown |
-| `github.com/spiffe/spire-controller-manager` | Apache-2.0 | `github.com/spiffe/spire-controller-manager@v0.6.6` | Unknown |
+| `github.com/spiffe/spire-api-sdk/proto/spire/api` | Apache-2.0 | `github.com/spiffe/spire-api-sdk@v1.15.3` | Unknown |
+| `github.com/spiffe/spire-controller-manager` | Apache-2.0 | `github.com/spiffe/spire-controller-manager@v0.7.0` | Unknown |
 | `github.com/stretchr/objx` | MIT | `github.com/stretchr/objx@v0.5.3` | Unknown |
 | `github.com/stretchr/testify` | MIT | `github.com/stretchr/testify@v1.12.1` | Unknown |
 | `github.com/stretchr/testify/internal/difflib` | BSD-3-Clause | `github.com/stretchr/testify@v1.12.1` | Unknown |
 | `github.com/stretchr/testify/internal/spew` | ISC | `github.com/stretchr/testify@v1.12.1` | Unknown |
-| `github.com/swaggest/swgui` | Apache-2.0 | `github.com/swaggest/swgui@v1.8.2` | Unknown |
+| `github.com/swaggest/swgui` | Apache-2.0 | `github.com/swaggest/swgui@v1.8.9` | Unknown |
 | `github.com/tmthrgd/go-hex` | BSD-2-Clause / BSD-3-Clause | `github.com/tmthrgd/go-hex@v0.0.0-20190904060850-447a3041c3bc` | Unknown |
-| `github.com/twmb/murmur3` | BSD-3-Clause | `github.com/twmb/murmur3@v1.1.5` | Unknown |
-| `github.com/uber-go/tally/v4` | MIT | `github.com/uber-go/tally/v4@v4.1.1` | Unknown |
+| `github.com/twmb/murmur3` | BSD-3-Clause | `github.com/twmb/murmur3@v1.1.8` | Unknown |
+| `github.com/uber-go/tally/v4` | MIT | `github.com/uber-go/tally/v4@v4.1.17` | Unknown |
 | `github.com/uptrace/bun` | BSD-2-Clause | `github.com/uptrace/bun@v1.2.18` | Unknown |
 | `github.com/uptrace/bun/dialect/pgdialect` | BSD-2-Clause | `github.com/uptrace/bun/dialect/pgdialect@v1.2.18` | Unknown |
 | `github.com/uptrace/bun/driver/pgdriver` | BSD-2-Clause | `github.com/uptrace/bun/driver/pgdriver@v1.2.18` | Unknown |
@@ -118,18 +118,18 @@ notices-check` verifies it is up to date.
 | `github.com/vmihailenco/tagparser/v2` | BSD-2-Clause | `github.com/vmihailenco/tagparser/v2@v2.0.0` | Unknown |
 | `github.com/x448/float16` | MIT | `github.com/x448/float16@v0.8.4` | Unknown |
 | `go.opentelemetry.io/auto/sdk` | Apache-2.0 | `go.opentelemetry.io/auto/sdk@v1.2.1` | Unknown |
-| `go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc@v0.67.0` | Unknown |
-| `go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp@v0.67.0` | Unknown |
-| `go.opentelemetry.io/otel` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/otel@v1.44.0` | Unknown |
-| `go.opentelemetry.io/otel/exporters/otlp/otlptrace` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.43.0` | Unknown |
-| `go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.43.0` | Unknown |
-| `go.opentelemetry.io/otel/metric` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/otel/metric@v1.44.0` | Unknown |
-| `go.opentelemetry.io/otel/sdk` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/otel/sdk@v1.44.0` | Unknown |
-| `go.opentelemetry.io/otel/trace` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/otel/trace@v1.44.0` | Unknown |
-| `go.opentelemetry.io/proto/otlp` | Apache-2.0 | `go.opentelemetry.io/proto/otlp@v1.10.0` | Unknown |
-| `go.temporal.io/api` | MIT | `go.temporal.io/api@v1.63.0` | Unknown |
-| `go.temporal.io/api/internal/protojson` | BSD-3-Clause | `go.temporal.io/api@v1.63.0` | Unknown |
-| `go.temporal.io/sdk` | MIT | `go.temporal.io/sdk@v1.46.0` | Unknown |
+| `go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc@v0.70.0` | Unknown |
+| `go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp@v0.71.0` | Unknown |
+| `go.opentelemetry.io/otel` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/otel@v1.46.0` | Unknown |
+| `go.opentelemetry.io/otel/exporters/otlp/otlptrace` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.46.0` | Unknown |
+| `go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.46.0` | Unknown |
+| `go.opentelemetry.io/otel/metric` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/otel/metric@v1.46.0` | Unknown |
+| `go.opentelemetry.io/otel/sdk` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/otel/sdk@v1.46.0` | Unknown |
+| `go.opentelemetry.io/otel/trace` | Apache-2.0 / BSD-3-Clause | `go.opentelemetry.io/otel/trace@v1.46.0` | Unknown |
+| `go.opentelemetry.io/proto/otlp` | Apache-2.0 | `go.opentelemetry.io/proto/otlp@v1.11.0` | Unknown |
+| `go.temporal.io/api` | MIT | `go.temporal.io/api@v1.63.5` | Unknown |
+| `go.temporal.io/api/internal/protojson` | BSD-3-Clause | `go.temporal.io/api@v1.63.5` | Unknown |
+| `go.temporal.io/sdk` | MIT | `go.temporal.io/sdk@v1.48.0` | Unknown |
 | `go.temporal.io/sdk/contrib/opentelemetry` | MIT | `go.temporal.io/sdk/contrib/opentelemetry@v0.8.1` | Unknown |
 | `go.temporal.io/sdk/contrib/tally` | MIT | `go.temporal.io/sdk/contrib/tally@v0.2.0` | Unknown |
 | `go.uber.org/atomic` | MIT | `go.uber.org/atomic@v1.11.0` | Unknown |
@@ -137,45 +137,45 @@ notices-check` verifies it is up to date.
 | `go.yaml.in/yaml/v2` | Apache-2.0 | `go.yaml.in/yaml/v2@v2.4.4` | Unknown |
 | `go.yaml.in/yaml/v3` | MIT | `go.yaml.in/yaml/v3@v3.0.5` | Unknown |
 | `go.yaml.in/yaml/v4` | Apache-2.0 | `go.yaml.in/yaml/v4@v4.0.0-rc.6` | Unknown |
-| `golang.org/x/crypto` | BSD-3-Clause | `golang.org/x/crypto@v0.56.0` | Unknown |
-| `golang.org/x/net` | BSD-3-Clause | `golang.org/x/net@v0.57.0` | Unknown |
-| `golang.org/x/oauth2` | BSD-3-Clause | `golang.org/x/oauth2@v0.36.0` | Unknown |
+| `golang.org/x/crypto` | BSD-3-Clause | `golang.org/x/crypto@v0.57.0` | Unknown |
+| `golang.org/x/net` | BSD-3-Clause | `golang.org/x/net@v0.58.0` | Unknown |
+| `golang.org/x/oauth2` | BSD-3-Clause | `golang.org/x/oauth2@v0.37.0` | Unknown |
 | `golang.org/x/sync` | BSD-3-Clause | `golang.org/x/sync@v0.23.0` | Unknown |
-| `golang.org/x/sys` | BSD-3-Clause | `golang.org/x/sys@v0.47.0` | Unknown |
-| `golang.org/x/term` | BSD-3-Clause | `golang.org/x/term@v0.45.0` | Unknown |
-| `golang.org/x/text` | BSD-3-Clause | `golang.org/x/text@v0.41.0` | Unknown |
+| `golang.org/x/sys` | BSD-3-Clause | `golang.org/x/sys@v0.48.0` | Unknown |
+| `golang.org/x/term` | BSD-3-Clause | `golang.org/x/term@v0.46.0` | Unknown |
+| `golang.org/x/text` | BSD-3-Clause | `golang.org/x/text@v0.42.0` | Unknown |
 | `golang.org/x/time/rate` | BSD-3-Clause | `golang.org/x/time@v0.15.0` | Unknown |
 | `gomodules.xyz/jsonpatch/v2` | Apache-2.0 | `gomodules.xyz/jsonpatch/v2@v2.5.0` | Unknown |
-| `google.golang.org/genproto/googleapis/api` | Apache-2.0 | `google.golang.org/genproto/googleapis/api@v0.0.0-20260807164820-c8921c73eeea` | Unknown |
-| `google.golang.org/genproto/googleapis/rpc` | Apache-2.0 | `google.golang.org/genproto/googleapis/rpc@v0.0.0-20260807164820-c8921c73eeea` | Unknown |
-| `google.golang.org/grpc` | Apache-2.0 | `google.golang.org/grpc@v1.83.0` | Unknown |
+| `google.golang.org/genproto/googleapis/api` | Apache-2.0 | `google.golang.org/genproto/googleapis/api@v0.0.0-20260819154853-08b0e4226688` | Unknown |
+| `google.golang.org/genproto/googleapis/rpc` | Apache-2.0 | `google.golang.org/genproto/googleapis/rpc@v0.0.0-20260819154853-08b0e4226688` | Unknown |
+| `google.golang.org/grpc` | Apache-2.0 | `google.golang.org/grpc@v1.83.2` | Unknown |
 | `google.golang.org/protobuf` | BSD-3-Clause | `google.golang.org/protobuf@v1.36.12` | Unknown |
 | `gopkg.in/evanphx/json-patch.v4` | BSD-3-Clause | `gopkg.in/evanphx/json-patch.v4@v4.13.0` | Unknown |
 | `gopkg.in/inf.v0` | BSD-3-Clause | `gopkg.in/inf.v0@v0.9.1` | Unknown |
 | `gopkg.in/yaml.v2` | Apache-2.0 | `gopkg.in/yaml.v2@v2.4.0` | Unknown |
 | `gopkg.in/yaml.v3` | MIT | `gopkg.in/yaml.v3@v3.0.1` | Unknown |
-| `k8s.io/api` | Apache-2.0 | `k8s.io/api@v0.36.3` | Unknown |
-| `k8s.io/apiextensions-apiserver/pkg/apis/apiextensions` | Apache-2.0 | `k8s.io/apiextensions-apiserver@v0.36.3` | Unknown |
-| `k8s.io/apimachinery/pkg` | Apache-2.0 | `k8s.io/apimachinery@v0.36.3` | Unknown |
-| `k8s.io/apimachinery/third_party/forked/golang` | BSD-3-Clause | `k8s.io/apimachinery@v0.36.3` | Unknown |
-| `k8s.io/apiserver/pkg` | Apache-2.0 | `k8s.io/apiserver@v0.36.3` | Unknown |
-| `k8s.io/client-go` | Apache-2.0 | `k8s.io/client-go@v0.36.3` | Unknown |
-| `k8s.io/component-base` | Apache-2.0 | `k8s.io/component-base@v0.36.3` | Unknown |
+| `k8s.io/api` | Apache-2.0 | `k8s.io/api@v0.37.0` | Unknown |
+| `k8s.io/apiextensions-apiserver/pkg/apis/apiextensions` | Apache-2.0 | `k8s.io/apiextensions-apiserver@v0.37.0` | Unknown |
+| `k8s.io/apimachinery/pkg` | Apache-2.0 | `k8s.io/apimachinery@v0.37.0` | Unknown |
+| `k8s.io/apimachinery/third_party/forked/golang` | BSD-3-Clause | `k8s.io/apimachinery@v0.37.0` | Unknown |
+| `k8s.io/apiserver/pkg` | Apache-2.0 | `k8s.io/apiserver@v0.37.0` | Unknown |
+| `k8s.io/client-go` | Apache-2.0 | `k8s.io/client-go@v0.37.0` | Unknown |
+| `k8s.io/component-base` | Apache-2.0 | `k8s.io/component-base@v0.37.0` | Unknown |
 | `k8s.io/klog/v2` | Apache-2.0 | `k8s.io/klog/v2@v2.140.0` | Unknown |
-| `k8s.io/kube-openapi/pkg` | Apache-2.0 | `k8s.io/kube-openapi@v0.0.0-20260317180543-43fb72c5454a` | Unknown |
-| `k8s.io/kube-openapi/pkg/internal/third_party/go-json-experiment/json` | BSD-3-Clause | `k8s.io/kube-openapi@v0.0.0-20260317180543-43fb72c5454a` | Unknown |
-| `k8s.io/kube-openapi/pkg/validation/spec` | Apache-2.0 | `k8s.io/kube-openapi@v0.0.0-20260317180543-43fb72c5454a` | Unknown |
-| `k8s.io/kube-proxy/config/v1alpha1` | Apache-2.0 | `k8s.io/kube-proxy@v0.35.3` | Unknown |
-| `k8s.io/kubelet/config/v1beta1` | Apache-2.0 | `k8s.io/kubelet@v0.35.3` | Unknown |
-| `k8s.io/utils` | Apache-2.0 | `k8s.io/utils@v0.0.0-20260210185600-b8788abfbbc2` | Unknown |
-| `k8s.io/utils/internal/third_party/forked/golang` | BSD-3-Clause | `k8s.io/utils@v0.0.0-20260210185600-b8788abfbbc2` | Unknown |
-| `k8s.io/utils/third_party/forked/golang/btree` | Apache-2.0 | `k8s.io/utils@v0.0.0-20260210185600-b8788abfbbc2` | Unknown |
+| `k8s.io/kube-openapi/pkg` | Apache-2.0 | `k8s.io/kube-openapi@v0.0.0-20260721132016-d427ff9ee9ad` | Unknown |
+| `k8s.io/kube-openapi/pkg/internal/third_party/go-json-experiment/json` | BSD-3-Clause | `k8s.io/kube-openapi@v0.0.0-20260721132016-d427ff9ee9ad` | Unknown |
+| `k8s.io/kube-openapi/pkg/validation/spec` | Apache-2.0 | `k8s.io/kube-openapi@v0.0.0-20260721132016-d427ff9ee9ad` | Unknown |
+| `k8s.io/kube-proxy/config/v1alpha1` | Apache-2.0 | `k8s.io/kube-proxy@v0.37.0` | Unknown |
+| `k8s.io/kubelet/config/v1beta1` | Apache-2.0 | `k8s.io/kubelet@v0.37.0` | Unknown |
+| `k8s.io/utils` | Apache-2.0 | `k8s.io/utils@v0.0.0-20260626114624-be93311217bd` | Unknown |
+| `k8s.io/utils/internal/third_party/forked/golang` | BSD-3-Clause | `k8s.io/utils@v0.0.0-20260626114624-be93311217bd` | Unknown |
+| `k8s.io/utils/third_party/forked/golang/btree` | Apache-2.0 | `k8s.io/utils@v0.0.0-20260626114624-be93311217bd` | Unknown |
 | `mellium.im/sasl` | BSD-2-Clause | `mellium.im/sasl@v0.3.2` | Unknown |
 | `sigs.k8s.io/cluster-api` | Apache-2.0 | `sigs.k8s.io/cluster-api@v1.13.4` | Unknown |
-| `sigs.k8s.io/controller-runtime` | Apache-2.0 | `sigs.k8s.io/controller-runtime@v0.24.1` | Unknown |
+| `sigs.k8s.io/controller-runtime` | Apache-2.0 | `sigs.k8s.io/controller-runtime@v0.25.0` | Unknown |
 | `sigs.k8s.io/json` | Apache-2.0 / BSD-3-Clause | `sigs.k8s.io/json@v0.0.0-20250730193827-2d320260d730` | Unknown |
 | `sigs.k8s.io/randfill` | Apache-2.0 | `sigs.k8s.io/randfill@v1.0.0` | Unknown |
-| `sigs.k8s.io/structured-merge-diff/v6` | Apache-2.0 | `sigs.k8s.io/structured-merge-diff/v6@v6.4.0` | Unknown |
+| `sigs.k8s.io/structured-merge-diff/v6` | Apache-2.0 | `sigs.k8s.io/structured-merge-diff/v6@v6.4.2` | Unknown |
 | `sigs.k8s.io/yaml` | Apache-2.0 / BSD-3-Clause / MIT | `sigs.k8s.io/yaml@v1.6.0` | Unknown |
 
 ## Go Module License Texts
@@ -345,7 +345,7 @@ THE SOFTWARE.
 
 ### github.com/caarlos0/env/v11
 
-_MIT — github.com/caarlos0/env/v11@v11.3.1_
+_MIT — github.com/caarlos0/env/v11@v11.4.1_
 
 #### LICENSE.md
 
@@ -814,7 +814,7 @@ SOFTWARE.
 
 ### github.com/felixge/httpsnoop
 
-_MIT — github.com/felixge/httpsnoop@v1.0.4_
+_MIT — github.com/felixge/httpsnoop@v1.1.0_
 
 #### LICENSE.txt
 
@@ -878,7 +878,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### github.com/fxamacker/cbor/v2
 
-_MIT — github.com/fxamacker/cbor/v2@v2.9.0_
+_MIT — github.com/fxamacker/cbor/v2@v2.9.1_
 
 #### LICENSE
 
@@ -939,7 +939,7 @@ SOFTWARE.
 
 ### github.com/go-jose/go-jose/v4
 
-_Apache-2.0 — github.com/go-jose/go-jose/v4@v4.1.4_
+_Apache-2.0 — github.com/go-jose/go-jose/v4@v4.1.5_
 
 #### LICENSE
 
@@ -1151,7 +1151,7 @@ _Apache-2.0 — github.com/go-jose/go-jose/v4@v4.1.4_
 
 ### github.com/go-jose/go-jose/v4/json
 
-_BSD-3-Clause — github.com/go-jose/go-jose/v4@v4.1.4_
+_BSD-3-Clause — github.com/go-jose/go-jose/v4@v4.1.5_
 
 #### LICENSE
 
@@ -1610,7 +1610,7 @@ _Apache-2.0 — github.com/go-logr/stdr@v1.2.2_
 
 ### github.com/go-openapi/jsonpointer
 
-_Apache-2.0 — github.com/go-openapi/jsonpointer@v0.22.5_
+_Apache-2.0 — github.com/go-openapi/jsonpointer@v1.0.0_
 
 #### LICENSE
 
@@ -1842,7 +1842,7 @@ It ships with copies of other software which license terms are recalled below.
 
 The original software was authored on 25-02-2013 by sigu-399 (https://github.com/sigu-399, sigu.399@gmail.com).
 
-github.com/sigh-399/jsonpointer
+github.com/sigu-399/jsonpointer
 ===========================
 
 // SPDX-FileCopyrightText: Copyright 2013 sigu-399 ( https://github.com/sigu-399 )
@@ -1866,7 +1866,7 @@ limitations under the License.
 
 ### github.com/go-openapi/jsonreference
 
-_Apache-2.0 — github.com/go-openapi/jsonreference@v0.21.2_
+_Apache-2.0 — github.com/go-openapi/jsonreference@v1.0.0_
 
 #### LICENSE
 
@@ -2076,9 +2076,54 @@ _Apache-2.0 — github.com/go-openapi/jsonreference@v0.21.2_
 
 ```
 
+#### NOTICE
+
+```text
+Copyright 2015-2025 go-swagger maintainers
+
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
+This software library, github.com/go-openapi/jsonreference, includes software developed
+by the go-swagger and go-openapi maintainers ("go-swagger maintainers").
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this software except in compliance with the License.
+
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0.
+
+This software is copied from, derived from, and inspired by other original software products.
+It ships with copies of other software which license terms are recalled below.
+
+The original software was authored on 25-02-2013 by sigu-399 (https://github.com/sigu-399, sigu.399@gmail.com).
+
+github.com/sigh-399/jsonreference
+===========================
+
+// SPDX-FileCopyrightText: Copyright 2013 sigu-399 ( https://github.com/sigu-399 )
+// SPDX-License-Identifier: Apache-2.0
+
+Copyright 2013 sigu-399 ( https://github.com/sigu-399 )
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+```
+
 ### github.com/go-openapi/swag
 
-_Apache-2.0 — github.com/go-openapi/swag@v0.25.1_
+_Apache-2.0 — github.com/go-openapi/swag@v0.28.0_
 
 #### LICENSE
 
@@ -2290,7 +2335,7 @@ _Apache-2.0 — github.com/go-openapi/swag@v0.25.1_
 
 ### github.com/go-openapi/swag/cmdutils
 
-_Apache-2.0 — github.com/go-openapi/swag/cmdutils@v0.25.1_
+_Apache-2.0 — github.com/go-openapi/swag/cmdutils@v0.28.0_
 
 #### LICENSE
 
@@ -2502,7 +2547,7 @@ _Apache-2.0 — github.com/go-openapi/swag/cmdutils@v0.25.1_
 
 ### github.com/go-openapi/swag/conv
 
-_Apache-2.0 — github.com/go-openapi/swag/conv@v0.25.1_
+_Apache-2.0 — github.com/go-openapi/swag/conv@v0.28.0_
 
 #### LICENSE
 
@@ -2714,219 +2759,7 @@ _Apache-2.0 — github.com/go-openapi/swag/conv@v0.25.1_
 
 ### github.com/go-openapi/swag/fileutils
 
-_Apache-2.0 — github.com/go-openapi/swag/fileutils@v0.25.1_
-
-#### LICENSE
-
-```text
-
-                                 Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
-
-   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
-
-   1. Definitions.
-
-      "License" shall mean the terms and conditions for use, reproduction,
-      and distribution as defined by Sections 1 through 9 of this document.
-
-      "Licensor" shall mean the copyright owner or entity authorized by
-      the copyright owner that is granting the License.
-
-      "Legal Entity" shall mean the union of the acting entity and all
-      other entities that control, are controlled by, or are under common
-      control with that entity. For the purposes of this definition,
-      "control" means (i) the power, direct or indirect, to cause the
-      direction or management of such entity, whether by contract or
-      otherwise, or (ii) ownership of fifty percent (50%) or more of the
-      outstanding shares, or (iii) beneficial ownership of such entity.
-
-      "You" (or "Your") shall mean an individual or Legal Entity
-      exercising permissions granted by this License.
-
-      "Source" form shall mean the preferred form for making modifications,
-      including but not limited to software source code, documentation
-      source, and configuration files.
-
-      "Object" form shall mean any form resulting from mechanical
-      transformation or translation of a Source form, including but
-      not limited to compiled object code, generated documentation,
-      and conversions to other media types.
-
-      "Work" shall mean the work of authorship, whether in Source or
-      Object form, made available under the License, as indicated by a
-      copyright notice that is included in or attached to the work
-      (an example is provided in the Appendix below).
-
-      "Derivative Works" shall mean any work, whether in Source or Object
-      form, that is based on (or derived from) the Work and for which the
-      editorial revisions, annotations, elaborations, or other modifications
-      represent, as a whole, an original work of authorship. For the purposes
-      of this License, Derivative Works shall not include works that remain
-      separable from, or merely link (or bind by name) to the interfaces of,
-      the Work and Derivative Works thereof.
-
-      "Contribution" shall mean any work of authorship, including
-      the original version of the Work and any modifications or additions
-      to that Work or Derivative Works thereof, that is intentionally
-      submitted to Licensor for inclusion in the Work by the copyright owner
-      or by an individual or Legal Entity authorized to submit on behalf of
-      the copyright owner. For the purposes of this definition, "submitted"
-      means any form of electronic, verbal, or written communication sent
-      to the Licensor or its representatives, including but not limited to
-      communication on electronic mailing lists, source code control systems,
-      and issue tracking systems that are managed by, or on behalf of, the
-      Licensor for the purpose of discussing and improving the Work, but
-      excluding communication that is conspicuously marked or otherwise
-      designated in writing by the copyright owner as "Not a Contribution."
-
-      "Contributor" shall mean Licensor and any individual or Legal Entity
-      on behalf of whom a Contribution has been received by Licensor and
-      subsequently incorporated within the Work.
-
-   2. Grant of Copyright License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      copyright license to reproduce, prepare Derivative Works of,
-      publicly display, publicly perform, sublicense, and distribute the
-      Work and such Derivative Works in Source or Object form.
-
-   3. Grant of Patent License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      (except as stated in this section) patent license to make, have made,
-      use, offer to sell, sell, import, and otherwise transfer the Work,
-      where such license applies only to those patent claims licensable
-      by such Contributor that are necessarily infringed by their
-      Contribution(s) alone or by combination of their Contribution(s)
-      with the Work to which such Contribution(s) was submitted. If You
-      institute patent litigation against any entity (including a
-      cross-claim or counterclaim in a lawsuit) alleging that the Work
-      or a Contribution incorporated within the Work constitutes direct
-      or contributory patent infringement, then any patent licenses
-      granted to You under this License for that Work shall terminate
-      as of the date such litigation is filed.
-
-   4. Redistribution. You may reproduce and distribute copies of the
-      Work or Derivative Works thereof in any medium, with or without
-      modifications, and in Source or Object form, provided that You
-      meet the following conditions:
-
-      (a) You must give any other recipients of the Work or
-          Derivative Works a copy of this License; and
-
-      (b) You must cause any modified files to carry prominent notices
-          stating that You changed the files; and
-
-      (c) You must retain, in the Source form of any Derivative Works
-          that You distribute, all copyright, patent, trademark, and
-          attribution notices from the Source form of the Work,
-          excluding those notices that do not pertain to any part of
-          the Derivative Works; and
-
-      (d) If the Work includes a "NOTICE" text file as part of its
-          distribution, then any Derivative Works that You distribute must
-          include a readable copy of the attribution notices contained
-          within such NOTICE file, excluding those notices that do not
-          pertain to any part of the Derivative Works, in at least one
-          of the following places: within a NOTICE text file distributed
-          as part of the Derivative Works; within the Source form or
-          documentation, if provided along with the Derivative Works; or,
-          within a display generated by the Derivative Works, if and
-          wherever such third-party notices normally appear. The contents
-          of the NOTICE file are for informational purposes only and
-          do not modify the License. You may add Your own attribution
-          notices within Derivative Works that You distribute, alongside
-          or as an addendum to the NOTICE text from the Work, provided
-          that such additional attribution notices cannot be construed
-          as modifying the License.
-
-      You may add Your own copyright statement to Your modifications and
-      may provide additional or different license terms and conditions
-      for use, reproduction, or distribution of Your modifications, or
-      for any such Derivative Works as a whole, provided Your use,
-      reproduction, and distribution of the Work otherwise complies with
-      the conditions stated in this License.
-
-   5. Submission of Contributions. Unless You explicitly state otherwise,
-      any Contribution intentionally submitted for inclusion in the Work
-      by You to the Licensor shall be under the terms and conditions of
-      this License, without any additional terms or conditions.
-      Notwithstanding the above, nothing herein shall supersede or modify
-      the terms of any separate license agreement you may have executed
-      with Licensor regarding such Contributions.
-
-   6. Trademarks. This License does not grant permission to use the trade
-      names, trademarks, service marks, or product names of the Licensor,
-      except as required for reasonable and customary use in describing the
-      origin of the Work and reproducing the content of the NOTICE file.
-
-   7. Disclaimer of Warranty. Unless required by applicable law or
-      agreed to in writing, Licensor provides the Work (and each
-      Contributor provides its Contributions) on an "AS IS" BASIS,
-      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-      implied, including, without limitation, any warranties or conditions
-      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
-      PARTICULAR PURPOSE. You are solely responsible for determining the
-      appropriateness of using or redistributing the Work and assume any
-      risks associated with Your exercise of permissions under this License.
-
-   8. Limitation of Liability. In no event and under no legal theory,
-      whether in tort (including negligence), contract, or otherwise,
-      unless required by applicable law (such as deliberate and grossly
-      negligent acts) or agreed to in writing, shall any Contributor be
-      liable to You for damages, including any direct, indirect, special,
-      incidental, or consequential damages of any character arising as a
-      result of this License or out of the use or inability to use the
-      Work (including but not limited to damages for loss of goodwill,
-      work stoppage, computer failure or malfunction, or any and all
-      other commercial damages or losses), even if such Contributor
-      has been advised of the possibility of such damages.
-
-   9. Accepting Warranty or Additional Liability. While redistributing
-      the Work or Derivative Works thereof, You may choose to offer,
-      and charge a fee for, acceptance of support, warranty, indemnity,
-      or other liability obligations and/or rights consistent with this
-      License. However, in accepting such obligations, You may act only
-      on Your own behalf and on Your sole responsibility, not on behalf
-      of any other Contributor, and only if You agree to indemnify,
-      defend, and hold each Contributor harmless for any liability
-      incurred by, or claims asserted against, such Contributor by reason
-      of your accepting any such warranty or additional liability.
-
-   END OF TERMS AND CONDITIONS
-
-   APPENDIX: How to apply the Apache License to your work.
-
-      To apply the Apache License to your work, attach the following
-      boilerplate notice, with the fields enclosed by brackets "[]"
-      replaced with your own identifying information. (Don't include
-      the brackets!)  The text should be enclosed in the appropriate
-      comment syntax for the file format. We also recommend that a
-      file or class name and description of purpose be included on the
-      same "printed page" as the copyright notice for easier
-      identification within third-party archives.
-
-   Copyright [yyyy] [name of copyright owner]
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-
-```
-
-### github.com/go-openapi/swag/jsonname
-
-_Apache-2.0 — github.com/go-openapi/swag/jsonname@v0.25.5_
+_Apache-2.0 — github.com/go-openapi/swag/fileutils@v0.28.0_
 
 #### LICENSE
 
@@ -3138,7 +2971,7 @@ _Apache-2.0 — github.com/go-openapi/swag/jsonname@v0.25.5_
 
 ### github.com/go-openapi/swag/jsonutils
 
-_Apache-2.0 — github.com/go-openapi/swag/jsonutils@v0.25.1_
+_Apache-2.0 — github.com/go-openapi/swag/jsonutils@v0.28.0_
 
 #### LICENSE
 
@@ -3350,7 +3183,7 @@ _Apache-2.0 — github.com/go-openapi/swag/jsonutils@v0.25.1_
 
 ### github.com/go-openapi/swag/loading
 
-_Apache-2.0 — github.com/go-openapi/swag/loading@v0.25.1_
+_Apache-2.0 — github.com/go-openapi/swag/loading@v0.28.0_
 
 #### LICENSE
 
@@ -3562,7 +3395,7 @@ _Apache-2.0 — github.com/go-openapi/swag/loading@v0.25.1_
 
 ### github.com/go-openapi/swag/mangling
 
-_Apache-2.0 — github.com/go-openapi/swag/mangling@v0.25.1_
+_Apache-2.0 — github.com/go-openapi/swag/mangling@v0.28.0_
 
 #### LICENSE
 
@@ -3774,7 +3607,219 @@ _Apache-2.0 — github.com/go-openapi/swag/mangling@v0.25.1_
 
 ### github.com/go-openapi/swag/netutils
 
-_Apache-2.0 — github.com/go-openapi/swag/netutils@v0.25.1_
+_Apache-2.0 — github.com/go-openapi/swag/netutils@v0.28.0_
+
+#### LICENSE
+
+```text
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+```
+
+### github.com/go-openapi/swag/pools
+
+_Apache-2.0 — github.com/go-openapi/swag/pools@v0.28.0_
 
 #### LICENSE
 
@@ -3986,7 +4031,7 @@ _Apache-2.0 — github.com/go-openapi/swag/netutils@v0.25.1_
 
 ### github.com/go-openapi/swag/stringutils
 
-_Apache-2.0 — github.com/go-openapi/swag/stringutils@v0.25.1_
+_Apache-2.0 — github.com/go-openapi/swag/stringutils@v0.28.0_
 
 #### LICENSE
 
@@ -4198,7 +4243,7 @@ _Apache-2.0 — github.com/go-openapi/swag/stringutils@v0.25.1_
 
 ### github.com/go-openapi/swag/typeutils
 
-_Apache-2.0 — github.com/go-openapi/swag/typeutils@v0.25.1_
+_Apache-2.0 — github.com/go-openapi/swag/typeutils@v0.28.0_
 
 #### LICENSE
 
@@ -4410,7 +4455,7 @@ _Apache-2.0 — github.com/go-openapi/swag/typeutils@v0.25.1_
 
 ### github.com/go-openapi/swag/yamlutils
 
-_Apache-2.0 — github.com/go-openapi/swag/yamlutils@v0.25.1_
+_Apache-2.0 — github.com/go-openapi/swag/yamlutils@v0.28.0_
 
 #### LICENSE
 
@@ -4808,7 +4853,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ```
 
-### github.com/golang/mock/gomock
+### github.com/golang/mock
 
 _Apache-2.0 — github.com/golang/mock@v1.7.0-rc.1_
 
@@ -5557,7 +5602,7 @@ Apache License
 
 ### github.com/gravitational/trace
 
-_Apache-2.0 — github.com/gravitational/trace@v1.5.1_
+_Apache-2.0 — github.com/gravitational/trace@v1.5.4_
 
 #### LICENSE
 
@@ -5977,7 +6022,7 @@ _Apache-2.0 — github.com/grpc-ecosystem/go-grpc-middleware/v2@v2.3.3_
 
 ### github.com/grpc-ecosystem/grpc-gateway/v2
 
-_BSD-3-Clause — github.com/grpc-ecosystem/grpc-gateway/v2@v2.28.0_
+_BSD-3-Clause — github.com/grpc-ecosystem/grpc-gateway/v2@v2.30.0_
 
 #### LICENSE
 
@@ -6992,7 +7037,7 @@ SOFTWARE.
 
 ### github.com/nexus-rpc/sdk-go/nexus
 
-_MIT — github.com/nexus-rpc/sdk-go@v0.6.0_
+_MIT — github.com/nexus-rpc/sdk-go@v0.7.0_
 
 #### LICENSE
 
@@ -7023,7 +7068,7 @@ SOFTWARE.
 
 ### github.com/oapi-codegen/nethttp-middleware
 
-_Apache-2.0 — github.com/oapi-codegen/nethttp-middleware@v1.0.2_
+_Apache-2.0 — github.com/oapi-codegen/nethttp-middleware@v1.2.0_
 
 #### LICENSE
 
@@ -7234,7 +7279,7 @@ _Apache-2.0 — github.com/oapi-codegen/nethttp-middleware@v1.0.2_
 
 ### github.com/oapi-codegen/runtime
 
-_Apache-2.0 — github.com/oapi-codegen/runtime@v1.6.0_
+_Apache-2.0 — github.com/oapi-codegen/runtime@v1.7.0_
 
 #### LICENSE
 
@@ -7584,7 +7629,7 @@ limitations under the License.
 
 ### github.com/onsi/gomega
 
-_MIT — github.com/onsi/gomega@v1.42.1_
+_MIT — github.com/onsi/gomega@v1.43.0_
 
 #### LICENSE
 
@@ -9853,7 +9898,7 @@ _Apache-2.0 — github.com/spiffe/go-spiffe/v2@v2.8.1_
 
 ### github.com/spiffe/spire-api-sdk/proto/spire/api
 
-_Apache-2.0 — github.com/spiffe/spire-api-sdk@v1.15.1_
+_Apache-2.0 — github.com/spiffe/spire-api-sdk@v1.15.3_
 
 #### LICENSE
 
@@ -10064,7 +10109,7 @@ _Apache-2.0 — github.com/spiffe/spire-api-sdk@v1.15.1_
 
 ### github.com/spiffe/spire-controller-manager
 
-_Apache-2.0 — github.com/spiffe/spire-controller-manager@v0.6.6_
+_Apache-2.0 — github.com/spiffe/spire-controller-manager@v0.7.0_
 
 #### LICENSE
 
@@ -10399,7 +10444,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ### github.com/swaggest/swgui
 
-_Apache-2.0 — github.com/swaggest/swgui@v1.8.2_
+_Apache-2.0 — github.com/swaggest/swgui@v1.8.9_
 
 #### LICENSE
 
@@ -10702,7 +10747,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### github.com/twmb/murmur3
 
-_BSD-3-Clause — github.com/twmb/murmur3@v1.1.5_
+_BSD-3-Clause — github.com/twmb/murmur3@v1.1.8_
 
 #### LICENSE
 
@@ -10761,7 +10806,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### github.com/uber-go/tally/v4
 
-_MIT — github.com/uber-go/tally/v4@v4.1.1_
+_MIT — github.com/uber-go/tally/v4@v4.1.17_
 
 #### LICENSE
 
@@ -11340,7 +11385,7 @@ _Apache-2.0 — go.opentelemetry.io/auto/sdk@v1.2.1_
 
 ### go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc
 
-_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc@v0.67.0_
+_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc@v0.70.0_
 
 #### LICENSE
 
@@ -11580,7 +11625,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp
 
-_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp@v0.67.0_
+_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp@v0.71.0_
 
 #### LICENSE
 
@@ -11820,7 +11865,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### go.opentelemetry.io/otel
 
-_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/otel@v1.44.0_
+_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/otel@v1.46.0_
 
 #### LICENSE
 
@@ -12060,7 +12105,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### go.opentelemetry.io/otel/exporters/otlp/otlptrace
 
-_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.43.0_
+_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.46.0_
 
 #### LICENSE
 
@@ -12300,7 +12345,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc
 
-_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.43.0_
+_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.46.0_
 
 #### LICENSE
 
@@ -12540,7 +12585,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### go.opentelemetry.io/otel/metric
 
-_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/otel/metric@v1.44.0_
+_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/otel/metric@v1.46.0_
 
 #### LICENSE
 
@@ -12780,7 +12825,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### go.opentelemetry.io/otel/sdk
 
-_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/otel/sdk@v1.44.0_
+_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/otel/sdk@v1.46.0_
 
 #### LICENSE
 
@@ -13020,7 +13065,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### go.opentelemetry.io/otel/trace
 
-_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/otel/trace@v1.44.0_
+_Apache-2.0 / BSD-3-Clause — go.opentelemetry.io/otel/trace@v1.46.0_
 
 #### LICENSE
 
@@ -13260,7 +13305,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### go.opentelemetry.io/proto/otlp
 
-_Apache-2.0 — go.opentelemetry.io/proto/otlp@v1.10.0_
+_Apache-2.0 — go.opentelemetry.io/proto/otlp@v1.11.0_
 
 #### LICENSE
 
@@ -13471,7 +13516,7 @@ _Apache-2.0 — go.opentelemetry.io/proto/otlp@v1.10.0_
 
 ### go.temporal.io/api
 
-_MIT — go.temporal.io/api@v1.63.0_
+_MIT — go.temporal.io/api@v1.63.5_
 
 #### LICENSE
 
@@ -13501,7 +13546,7 @@ THE SOFTWARE.
 
 ### go.temporal.io/api/internal/protojson
 
-_BSD-3-Clause — go.temporal.io/api@v1.63.0_
+_BSD-3-Clause — go.temporal.io/api@v1.63.5_
 
 #### LICENSE
 
@@ -13538,7 +13583,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### go.temporal.io/sdk
 
-_MIT — go.temporal.io/sdk@v1.46.0_
+_MIT — go.temporal.io/sdk@v1.48.0_
 
 #### LICENSE
 
@@ -14239,7 +14284,7 @@ http://www.apache.org/licenses/LICENSE-2.0
 
 ### golang.org/x/crypto
 
-_BSD-3-Clause — golang.org/x/crypto@v0.56.0_
+_BSD-3-Clause — golang.org/x/crypto@v0.57.0_
 
 #### LICENSE
 
@@ -14276,7 +14321,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### golang.org/x/net
 
-_BSD-3-Clause — golang.org/x/net@v0.57.0_
+_BSD-3-Clause — golang.org/x/net@v0.58.0_
 
 #### LICENSE
 
@@ -14313,7 +14358,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### golang.org/x/oauth2
 
-_BSD-3-Clause — golang.org/x/oauth2@v0.36.0_
+_BSD-3-Clause — golang.org/x/oauth2@v0.37.0_
 
 #### LICENSE
 
@@ -14387,7 +14432,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### golang.org/x/sys
 
-_BSD-3-Clause — golang.org/x/sys@v0.47.0_
+_BSD-3-Clause — golang.org/x/sys@v0.48.0_
 
 #### LICENSE
 
@@ -14424,7 +14469,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### golang.org/x/term
 
-_BSD-3-Clause — golang.org/x/term@v0.45.0_
+_BSD-3-Clause — golang.org/x/term@v0.46.0_
 
 #### LICENSE
 
@@ -14461,7 +14506,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### golang.org/x/text
 
-_BSD-3-Clause — golang.org/x/text@v0.41.0_
+_BSD-3-Clause — golang.org/x/text@v0.42.0_
 
 #### LICENSE
 
@@ -14747,7 +14792,7 @@ _Apache-2.0 — gomodules.xyz/jsonpatch/v2@v2.5.0_
 
 ### google.golang.org/genproto/googleapis/api
 
-_Apache-2.0 — google.golang.org/genproto/googleapis/api@v0.0.0-20260807164820-c8921c73eeea_
+_Apache-2.0 — google.golang.org/genproto/googleapis/api@v0.0.0-20260819154853-08b0e4226688_
 
 #### LICENSE
 
@@ -14959,7 +15004,7 @@ _Apache-2.0 — google.golang.org/genproto/googleapis/api@v0.0.0-20260807164820-
 
 ### google.golang.org/genproto/googleapis/rpc
 
-_Apache-2.0 — google.golang.org/genproto/googleapis/rpc@v0.0.0-20260807164820-c8921c73eeea_
+_Apache-2.0 — google.golang.org/genproto/googleapis/rpc@v0.0.0-20260819154853-08b0e4226688_
 
 #### LICENSE
 
@@ -15171,7 +15216,7 @@ _Apache-2.0 — google.golang.org/genproto/googleapis/rpc@v0.0.0-20260807164820-
 
 ### google.golang.org/grpc
 
-_Apache-2.0 — google.golang.org/grpc@v1.83.0_
+_Apache-2.0 — google.golang.org/grpc@v1.83.2_
 
 #### LICENSE
 
@@ -15821,7 +15866,7 @@ limitations under the License.
 
 ### k8s.io/api
 
-_Apache-2.0 — k8s.io/api@v0.36.3_
+_Apache-2.0 — k8s.io/api@v0.37.0_
 
 #### LICENSE
 
@@ -16033,7 +16078,7 @@ _Apache-2.0 — k8s.io/api@v0.36.3_
 
 ### k8s.io/apiextensions-apiserver/pkg/apis/apiextensions
 
-_Apache-2.0 — k8s.io/apiextensions-apiserver@v0.36.3_
+_Apache-2.0 — k8s.io/apiextensions-apiserver@v0.37.0_
 
 #### LICENSE
 
@@ -16245,7 +16290,7 @@ _Apache-2.0 — k8s.io/apiextensions-apiserver@v0.36.3_
 
 ### k8s.io/apimachinery/pkg
 
-_Apache-2.0 — k8s.io/apimachinery@v0.36.3_
+_Apache-2.0 — k8s.io/apimachinery@v0.37.0_
 
 #### LICENSE
 
@@ -16457,7 +16502,7 @@ _Apache-2.0 — k8s.io/apimachinery@v0.36.3_
 
 ### k8s.io/apimachinery/third_party/forked/golang
 
-_BSD-3-Clause — k8s.io/apimachinery@v0.36.3_
+_BSD-3-Clause — k8s.io/apimachinery@v0.37.0_
 
 #### LICENSE
 
@@ -16494,7 +16539,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### k8s.io/apiserver/pkg
 
-_Apache-2.0 — k8s.io/apiserver@v0.36.3_
+_Apache-2.0 — k8s.io/apiserver@v0.37.0_
 
 #### LICENSE
 
@@ -16706,7 +16751,7 @@ _Apache-2.0 — k8s.io/apiserver@v0.36.3_
 
 ### k8s.io/client-go
 
-_Apache-2.0 — k8s.io/client-go@v0.36.3_
+_Apache-2.0 — k8s.io/client-go@v0.37.0_
 
 #### LICENSE
 
@@ -16918,7 +16963,7 @@ _Apache-2.0 — k8s.io/client-go@v0.36.3_
 
 ### k8s.io/component-base
 
-_Apache-2.0 — k8s.io/component-base@v0.36.3_
+_Apache-2.0 — k8s.io/component-base@v0.37.0_
 
 #### LICENSE
 
@@ -17331,7 +17376,7 @@ third-party archives.
 
 ### k8s.io/kube-openapi/pkg
 
-_Apache-2.0 — k8s.io/kube-openapi@v0.0.0-20260317180543-43fb72c5454a_
+_Apache-2.0 — k8s.io/kube-openapi@v0.0.0-20260721132016-d427ff9ee9ad_
 
 #### LICENSE
 
@@ -17543,7 +17588,7 @@ _Apache-2.0 — k8s.io/kube-openapi@v0.0.0-20260317180543-43fb72c5454a_
 
 ### k8s.io/kube-openapi/pkg/internal/third_party/go-json-experiment/json
 
-_BSD-3-Clause — k8s.io/kube-openapi@v0.0.0-20260317180543-43fb72c5454a_
+_BSD-3-Clause — k8s.io/kube-openapi@v0.0.0-20260721132016-d427ff9ee9ad_
 
 #### LICENSE
 
@@ -17580,7 +17625,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### k8s.io/kube-openapi/pkg/validation/spec
 
-_Apache-2.0 — k8s.io/kube-openapi@v0.0.0-20260317180543-43fb72c5454a_
+_Apache-2.0 — k8s.io/kube-openapi@v0.0.0-20260721132016-d427ff9ee9ad_
 
 #### LICENSE
 
@@ -17792,7 +17837,7 @@ _Apache-2.0 — k8s.io/kube-openapi@v0.0.0-20260317180543-43fb72c5454a_
 
 ### k8s.io/kube-proxy/config/v1alpha1
 
-_Apache-2.0 — k8s.io/kube-proxy@v0.35.3_
+_Apache-2.0 — k8s.io/kube-proxy@v0.37.0_
 
 #### LICENSE
 
@@ -18004,7 +18049,7 @@ _Apache-2.0 — k8s.io/kube-proxy@v0.35.3_
 
 ### k8s.io/kubelet/config/v1beta1
 
-_Apache-2.0 — k8s.io/kubelet@v0.35.3_
+_Apache-2.0 — k8s.io/kubelet@v0.37.0_
 
 #### LICENSE
 
@@ -18216,7 +18261,7 @@ _Apache-2.0 — k8s.io/kubelet@v0.35.3_
 
 ### k8s.io/utils
 
-_Apache-2.0 — k8s.io/utils@v0.0.0-20260210185600-b8788abfbbc2_
+_Apache-2.0 — k8s.io/utils@v0.0.0-20260626114624-be93311217bd_
 
 #### LICENSE
 
@@ -18428,7 +18473,7 @@ _Apache-2.0 — k8s.io/utils@v0.0.0-20260210185600-b8788abfbbc2_
 
 ### k8s.io/utils/internal/third_party/forked/golang
 
-_BSD-3-Clause — k8s.io/utils@v0.0.0-20260210185600-b8788abfbbc2_
+_BSD-3-Clause — k8s.io/utils@v0.0.0-20260626114624-be93311217bd_
 
 #### LICENSE
 
@@ -18465,7 +18510,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### k8s.io/utils/third_party/forked/golang/btree
 
-_Apache-2.0 — k8s.io/utils@v0.0.0-20260210185600-b8788abfbbc2_
+_Apache-2.0 — k8s.io/utils@v0.0.0-20260626114624-be93311217bd_
 
 #### LICENSE
 
@@ -18920,7 +18965,7 @@ _Apache-2.0 — sigs.k8s.io/cluster-api@v1.13.4_
 
 ### sigs.k8s.io/controller-runtime
 
-_Apache-2.0 — sigs.k8s.io/controller-runtime@v0.24.1_
+_Apache-2.0 — sigs.k8s.io/controller-runtime@v0.25.0_
 
 #### LICENSE
 
@@ -19621,7 +19666,7 @@ Submitted on behalf of a third-party: @disconnect3d (Disconnect3d)
 
 ### sigs.k8s.io/structured-merge-diff/v6
 
-_Apache-2.0 — sigs.k8s.io/structured-merge-diff/v6@v6.4.0_
+_Apache-2.0 — sigs.k8s.io/structured-merge-diff/v6@v6.4.2_
 
 #### LICENSE
 

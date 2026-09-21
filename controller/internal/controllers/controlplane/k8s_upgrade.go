@@ -15,10 +15,10 @@ import (
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 
-	"github.com/NVIDIA/nke/controller/internal/constants"
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/temporal/workflows"
-	"github.com/NVIDIA/nke/controller/internal/utils"
+	"github.com/dsx-ai-factory/nke/controller/internal/constants"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/temporal/workflows"
+	"github.com/dsx-ai-factory/nke/controller/internal/utils"
 )
 
 const (
@@ -475,7 +475,8 @@ func (r *reconciler) updateNodePoolKubeVersion(
 				return fmt.Errorf("failed to resolve OSProfile: %w", err)
 			}
 			logger.Info("KubernetesVersion embedded in OSProfile - Resolved new OSProfile", "newOSProfile", newOSProfile)
-			np.OSProfile = newOSProfile
+			nicoNodePoolProvider.OSProfile = newOSProfile
+			np.SetNico(nicoNodePoolProvider)
 			np.KubernetesVersion = cluster.KubernetesVersion
 		}
 
@@ -494,7 +495,7 @@ func (r *reconciler) updateNodePoolKubeVersion(
 	}
 
 	logger.Info("Updated NodePool KubernetesVersion and/or OSProfile",
-		"nodePoolOSProfile", np.OSProfile,
+		"nodePoolOSProfile", nodePoolOSProfileForLog(np),
 		"nodePoolKubernetesVersion", np.KubernetesVersion,
 	)
 

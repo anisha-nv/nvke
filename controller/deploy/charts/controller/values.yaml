@@ -23,7 +23,7 @@ deploymentAnnotations: {}
 # the package public in its own settings. So this removes the NGC dependency; it
 # does not by itself make the chart installable by the public.
 image:
-  repository: ghcr.io/nvidia/nke/controller
+  repository: ghcr.io/dsx-ai-factory/nke/nke-controller
   # -- This sets the pull policy for images.
   pullPolicy: IfNotPresent
   # -- Overrides the image tag whose default is the chart appVersion.
@@ -56,11 +56,11 @@ imagePullSecrets: []
 # This is to override the chart name.
 #
 # Pinned to cloud-workflow-engine rather than left empty: the chart is named
-# `controller` so it publishes to <registry>/nke/charts/controller, but the
-# name helper feeds app.kubernetes.io/name, every resource name derived from
-# the fullname template, and the serviceMonitor.matchLabels selector below.
-# Letting it follow .Chart.Name would rename every object this chart owns and
-# break that selector on upgrade of an existing release.
+# `nke-controller` so it publishes to <registry>/nke/charts/nke-controller, but
+# the name helper feeds app.kubernetes.io/name, every resource name derived
+# from the fullname template, and the serviceMonitor.matchLabels selector
+# below. Letting it follow .Chart.Name would rename every object this chart
+# owns and break that selector on upgrade of an existing release.
 nameOverride: "cloud-workflow-engine"
 fullnameOverride: ""
 # -- Deploy into this namespace instead of the release namespace (umbrella use).
@@ -71,9 +71,32 @@ controllers:
     # -- Run controllers that watch NICo infrastructure resources.
     enabled: true
 
+nodeAgent:
+  tlsJwt:
+    # -- Add JWT node authentication to the existing secure node-agent transport
+    # for every node agent managed by this controller. Requires spiffe.enabled
+    # until another TLS-capable base transport is available.
+    enabled: false
+    # -- Identity issuer expected in node-agent JWTs.
+    issuer: ""
+    # -- HTTPS endpoint serving the issuer's JSON Web Key Set.
+    jwksURI: ""
+    # -- Asymmetric JWT signing algorithms accepted from the issuer.
+    algorithms:
+      - RS256
+    # -- Exact SPIFFE trust domain accepted in node-agent JWT subjects.
+    subjectTrustDomain: ""
+
 nkeSystemNamespace:
-  # -- Create the shared nke-system namespace.
+  # -- Create the shared nke-system namespace. The object always carries
+  # helm.sh/resource-policy: keep so a Helm uninstall does not delete it, and
+  # argocd.argoproj.io/sync-options: Prune=false,Delete=false so an Argo prune or
+  # Application delete does not either. Both are set by the template for default delete protection.
   create: true
+  # -- Extra annotations merged onto nke-system. This is useful for
+  # adding additional annotations to the namespace to protect it from being deleted. Listing annotations that
+  # template already defaults here duplicates the key in the rendered Namespace.
+  annotations: {}
 
 # This section builds out the service account.
 # https://kubernetes.io/docs/concepts/security/service-accounts/
@@ -292,6 +315,9 @@ tenantAccess:
 nkeOIDCAuth:
   # -- Enable OIDC authentication from NKE management identities to tenant cluster kube-apiservers.
   enabled: false
+  # -- Name of the ClusterRole/Role/Binding objects the tenant-access controller
+  # applies into every tenant cluster (nke-rbac.yaml).
+  tenantRbacName: "nke:cwe"
   # -- OIDC issuer URL trusted by tenant kube-apiservers.
   issuerURL: ""
   # -- Optional discovery URL override used when issuerURL is not directly reachable by tenant kube-apiservers.
@@ -387,13 +413,6 @@ secrets:
   dbSecretName: ""
   # -- secretKey with db connectionString. If not specified, defaults to "database-connection-string"
   dbSecretKey: ""
-  forgeSecret:
-    # -- Read FWE_API_KEY from a Kubernetes Secret.
-    enabled: true
-  # -- secret with forge-creds. If not specified, will default to secret with "<fulName>-forge-creds"
-  forgeSecretName: ""
-  # -- secretKey with forge-key. If not specified, will defaults to "forge-api-key"
-  forgeSecretKey: ""
   # -- Name of the Kubernetes Secret (created out-of-band by Vault Secrets Operator)
   # providing DGXC tenant credentials. Expected keys: user, password.
   # When empty, DGXC_TENANT_USER and DGXC_TENANT_PASSWORD are not injected.
@@ -467,7 +486,7 @@ spiffe:
   # tenant clusters trust the exchange's issuer, otherwise the controller's calls
   # to them will start failing authentication.
   jwtExchangeEndpoint: ""
-  # -- Subject the nke:cwe RBAC bindings name in tenant clusters. Defaults to this
+  # -- Subject the nkeOIDCAuth.tenantRbacName RBAC bindings name in tenant clusters. Defaults to this
   # controller's own SPIFFE ID, spiffe://<trustDomain>/nke-service/cloud-workflow-engine,
   # which is what a tenant sees when no exchange is in play. Set it whenever
   # jwtExchangeEndpoint is set: the exchange re-issues the token under its own trust
@@ -490,7 +509,7 @@ spiffe:
   capdManagerSubject: ""
   # -- SPIRE trust domain. When set, the chart renders ConfigMap nke-rbac.
   # Required when nkeOIDCAuth.enabled is true: builds the
-  # nke:cwe SPIFFE subject ID in that ConfigMap. Must equal the
+  # nkeOIDCAuth.tenantRbacName SPIFFE subject ID in that ConfigMap. Must equal the
   # SPIRE server's trust domain (the spire chart's global.spire.trustDomain) so the
   # RBAC principals match issued identities.
   trustDomain: ""

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
 func TestNodePoolConfigChangeInput(t *testing.T) {
@@ -19,14 +19,14 @@ func TestNodePoolConfigChangeInput(t *testing.T) {
 	base := db.NodePool{
 		ID:               uuid.New(),
 		CurrentNodeSetID: &nodeSetID,
-		OSProfile:        "nke-260602-24.04-x86-fde",
 		DesiredCount:     3,
 		MaxSurge:         1,
 	}
+	base.SetNico(db.NicoNodePoolProvider{OSProfile: "nke-260602-24.04-x86-fde"})
 
 	t.Run("audited field changed emits a diff", func(t *testing.T) {
 		updated := base
-		updated.OSProfile = "nke-260625-24.04-x86-fde"
+		updated.SetNico(db.NicoNodePoolProvider{OSProfile: "nke-260625-24.04-x86-fde"})
 
 		input, changed := nodePoolConfigChangeInput(base, updated)
 		require.True(t, changed)
@@ -62,7 +62,7 @@ func TestNodePoolConfigChangeInput(t *testing.T) {
 		noNodeSet := base
 		noNodeSet.CurrentNodeSetID = nil
 		updated := noNodeSet
-		updated.OSProfile = "nke-260625-24.04-x86-fde"
+		updated.SetNico(db.NicoNodePoolProvider{OSProfile: "nke-260625-24.04-x86-fde"})
 
 		_, changed := nodePoolConfigChangeInput(noNodeSet, updated)
 		assert.False(t, changed)

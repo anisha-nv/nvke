@@ -3,7 +3,7 @@
 Reference node OS image (spec + Packer recipe) and the `nke-os-image-check`
 connectivity binary.
 
-**Module path:** `github.com/NVIDIA/nke/os-image`
+**Module path:** `github.com/dsx-ai-factory/nke/os-image`
 
 The directory is `os-image/` on purpose. `image.yml` / `image-nvcr.yml` already
 publish **container** images; this module is the Ubuntu qcow2 a node boots.
@@ -34,7 +34,7 @@ git push origin os-image/v0.1.0
 
 Pushing the tag runs `.github/workflows/os-image-artifact.yml`: Packer bakes the
 qcow2, `make boot-smoke` must pass, then the disk is published to
-`ghcr.io/nvidia/nke/os-image` and the GitHub Release is created. A failed bake
+`ghcr.io/dsx-ai-factory/nke/os-image` and the GitHub Release is created. A failed bake
 or smoke test does not publish.
 
 `make` stamps `nke-os-image-check` from:
@@ -61,14 +61,20 @@ repository's `bin/`, and `make version-check` runs it with `--version`.
 
 - Do not bake SPIRE server address, trust domain, trust bundle, or join token.
 - Do not default `nke-agent` to `--disable-mtls`.
-- Pin SPIRE (version + sha256) in `packer/scripts/fetch-artifacts.sh`; do not
-  float `latest` for SPIRE.
+- Pin SPIRE and the TPM attestor plugin (version + sha256) in
+  `packages/spire-agent/` — `SPIRE_VERSION` / `TPM_PLUGIN_VERSION` in its
+  `Makefile`, digests in its committed `lock/`. Do not float `latest`, and
+  regenerate the lock with `make lock` rather than hand-editing it.
+  `TPM_PLUGIN_VERSION` also pins the server-side attestor in `controller/` and
+  `cli/`; move both halves together.
 - Do not hard-require `/dev/kvm`. `packer/Makefile` and `boot-smoke.sh` probe
   for it and fall back to `tcg`, because the CI runners are containers without
-  it (https://github.com/NVIDIA/nke/issues/219).
-- `nke-agent` is built from this checkout's `agent/` source at bake time
-  (`make -C agent build-amd64` in `fetch-artifacts.sh`); no prebuilt artifact
-  is pulled. Its version is the checkout's `git describe --match 'agent/v*'`.
+  it (https://github.com/dsx-ai-factory/nke/issues/219).
+- `nke-agent` is built as a Debian package from this checkout's `agent/` source
+  at bake time (`make -C agent deb-<arch>` in `fetch-artifacts.sh`) and installed
+  by dpkg with `NKE_AGENT_SKIP_START=1`. No prebuilt artifact is pulled. Its
+  version is the checkout's `git describe --match 'agent/v*'`. Keep the image's
+  SPIRE ordering in `files/nke-agent-spire.conf`, separate from package-owned units.
 - Checker is a SPIFFE **client**. Do not embed a SPIRE server in the binary.
 - New files need the Apache-2.0 SPDX header (`make license`). Cloud-init
   user-data cannot: `#cloud-config` must be line 1, so examples live in

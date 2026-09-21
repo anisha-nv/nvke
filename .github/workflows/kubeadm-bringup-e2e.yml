@@ -8,7 +8,9 @@
 # then installing upstream Calico so every node reaches Ready. The lane needs no
 # NVIDIA-internal network.
 # Advisory, deliberately NOT in merge-gate.yml: it needs NVIDIA runners and root.
-# Only amd64 GPU runners expose /dev/kvm; CPU labels fall back to TCG. See #219.
+# Only the amd64 GPU runners expose /dev/kvm; CPU labels fall back to TCG. See
+# #219. The org's arm64 pool has none either, so that leg uses the self-hosted
+# fleet.
 # Self-hosted runners get no pull_request events, so copy-pr-bot mirror branches
 # are the trigger.
 
@@ -41,13 +43,27 @@ concurrency:
 
 jobs:
   bringup:
-    name: kubeadm bringup (2 VMs)
-    # Already allowlisted in .github/actionlint.yaml; any other label needs an
-    # edit there, and actionlint is a required gate member.
-    # A GPU label only because it is the one kind exposing /dev/kvm, as
-    # os-image-artifact.yml does. Trades 16 cores for 12, and TCG for KVM.
-    runs-on: linux-amd64-gpu-l4-latest-1
-    if: github.repository == 'NVIDIA/nke'
+    name: kubeadm bringup (2 VMs, ${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Labels are allowlisted in .github/actionlint.yaml, a required
+          # gate. A GPU label only because it is the one amd64 kind with
+          # /dev/kvm: trades 16 cores for 12, and TCG for KVM.
+          - arch: amd64
+            runner: linux-amd64-gpu-l4-latest-1
+          # Scale set on the self-hosted fleet; the name is the size,
+          # 8 vCPU and 16 GiB. linux-arm64-cpu16 has no /dev/kvm.
+          #
+          # Back off the arc-arm64-kvm-8c16g class #838 moved this to: every
+          # run there fails at `virsh define` with "Unable to find 'efi'
+          # firmware that is compatible with the current configuration", and
+          # nico-vms-e2e boots the same guests on this fleet.
+          - arch: arm64
+            runner: nke-arm64-8c16g
+    runs-on: ${{ matrix.runner }}
+    if: github.repository == 'dsx-ai-factory/nke'
     # Still sized for the emulated path, so a fall back to TCG cannot time out.
     timeout-minutes: 240
     permissions:
@@ -82,7 +98,7 @@ jobs:
 
       # Not a gate. nico-vms picks its domain type from a bare os.Stat("/dev/kvm")
       # and logs nothing, so this is the only place a run says which it got.
-      # FIXME: https://github.com/NVIDIA/nke/issues/219 -- move to bare metal.
+      # FIXME: https://github.com/dsx-ai-factory/nke/issues/219 -- move to bare metal.
       - name: Report the accelerator
         run: |
           set -euo pipefail
@@ -134,18 +150,21 @@ jobs:
       # pull request instead of a published one.
       - name: Build the nke-agent package the VMs install
         id: agent_deb
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          make -C agent deb-amd64
+          # The guests run this runner's architecture.
+          make -C agent "deb-${ARCH}"
           # The Makefile versions the file from the commit, so glob for it
           # rather than restating the naming rule here. find, not ls: actionlint
           # runs shellcheck and SC2012 fails the required gate.
           deb=$(find "${GITHUB_WORKSPACE}/agent/bin" -maxdepth 1 \
-                  -name 'nke-agent_*_amd64.deb' -printf '%T@ %p\n' \
+                  -name "nke-agent_*_${ARCH}.deb" -printf '%T@ %p\n' \
                 | sort -rn | head -1 | cut -d' ' -f2-)
           # Empty means the build produced nothing; without this the failure
           # surfaces much later as a confusing "file not found" in the guest.
-          [ -n "${deb}" ] || { echo "::error::make deb-amd64 produced no .deb"; exit 1; }
+          [ -n "${deb}" ] || { echo "::error::make deb-${ARCH} produced no .deb"; exit 1; }
           echo "path=${deb}" >> "$GITHUB_OUTPUT"
           echo "built ${deb}"
 
@@ -186,7 +205,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: kubeadm-bringup-${{ github.run_id }}-${{ github.run_attempt }}
+          # The arch too: GitHub keeps two same-named artifacts, so without it
+          # a download cannot tell the legs apart.
+          name: kubeadm-bringup-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
           # The smoke test generates a throwaway SSH keypair for VMs that no
           # longer exist by upload time, but a private key still has no business
           # in a downloadable artifact.

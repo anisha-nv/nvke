@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/testutil"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/testutil"
 )
 
 func TestClusterAPIProviderResolution(t *testing.T) {
@@ -30,7 +30,7 @@ func TestClusterAPIProviderResolution(t *testing.T) {
 		{db.APIProviderNico, db.ProviderTypeCAPI, "", true},
 		{"unknown", db.ProviderTypeCAPI, "", true},
 	} {
-		c := db.Cluster{APIProvider: tc.mode, ProviderType: tc.execution, CapiInfraCluster: json.RawMessage(`{"kind":"LaunchLayerCluster"}`)}
+		c := db.Cluster{APIProvider: tc.mode, ProviderType: tc.execution}
 		got, err := c.ResolveAPIProvider()
 		if tc.invalid {
 			require.ErrorIs(t, err, db.ErrInvalidAPIProviderBinding)
@@ -48,7 +48,6 @@ func TestClusterAPIProviderPersistenceAndParentJoins(t *testing.T) {
 			database := testutil.SetupDB(ctx, t, (*db.Cluster)(nil), (*db.NodePool)(nil), (*db.NodeSet)(nil))
 			q := db.NewDB(database)
 			cluster := newValidCluster()
-			cluster.SiteID = uuid.Nil
 			cluster.APIProvider = mode
 			cluster.SetCAPIProvider(db.CAPIClusterProvider{InfraCluster: json.RawMessage(`{"kind":"LaunchLayerCluster"}`)})
 			created, err := q.CreateCluster(ctx, &cluster)

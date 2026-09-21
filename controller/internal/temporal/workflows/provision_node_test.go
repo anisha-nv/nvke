@@ -14,10 +14,10 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
-	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/constants"
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/temporal/activities"
+	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/constants"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/temporal/activities"
 )
 
 // labelNodeTestWorkflow is a thin wrapper so the unexported labelNode helper can
@@ -31,6 +31,10 @@ func labelNodeTestWorkflow(ctx workflow.Context, nodeID uuid.UUID, addConfigProf
 func cleanBeforeControlPlaneRejoinTestWorkflow(ctx workflow.Context, nodeID uuid.UUID) error {
 	cleanBeforeControlPlaneRejoin(ctx, nodeID)
 	return nil
+}
+
+func provisionCAPINodeTestWorkflow(ctx workflow.Context, nodeID uuid.UUID) error {
+	return provisionCAPINode(ctx, nodeID)
 }
 
 // setupLabelNodeEnv builds a focused test env that registers the real DB
@@ -100,10 +104,9 @@ func TestLabelNode(t *testing.T) {
 				siteID := uuid.MustParse("50000000-0000-0000-0000-000000000003")
 				vpcID := uuid.MustParse("50000000-0000-0000-0000-000000000004")
 				node := db.Node{
-					ID:             nodeID,
-					ClusterID:      clusterID,
-					Name:           "worker-0",
-					ForgeMachineID: "legacy-machine",
+					ID:        nodeID,
+					ClusterID: clusterID,
+					Name:      "worker-0",
 					Nico: &db.NicoNodeProvider{
 						ForgeMachineID: "payload-machine",
 					},
@@ -200,6 +203,35 @@ func TestCleanBeforeControlPlaneRejoinUsesTypedEtcdRemoval(t *testing.T) {
 	})).Return(activities.KubeadmResetResult{}, nil).Once()
 
 	env.ExecuteWorkflow(cleanBeforeControlPlaneRejoinTestWorkflow, nodeID)
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	env.AssertExpectations(t)
+}
+
+func TestProvisionCAPINodeClaimsNodeBeforeCreatingInfraMachine(t *testing.T) {
+	nodeID := uuid.MustParse("50000000-0000-0000-0000-000000000021")
+
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+	env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: 5 * time.Second})
+	env.RegisterWorkflow(provisionCAPINodeTestWorkflow)
+
+	var a *activities.Activities
+	env.OnActivity(a.UpdateNodeConditions, mock.Anything, mock.MatchedBy(func(update activities.NodeConditionsUpdate) bool {
+		return update.NodeID == nodeID &&
+			update.Conditions.Pending != nil &&
+			update.Conditions.Pending.Status == db.ConditionStatusTrue &&
+			update.Conditions.ProvisioningClaimed != nil &&
+			update.Conditions.ProvisioningClaimed.Status == db.ConditionStatusTrue &&
+			update.Conditions.Provisioning != nil &&
+			update.Conditions.Provisioning.Status == db.ConditionStatusFalse
+	})).Return(nil).Once()
+	env.OnActivity(a.CreateCAPIInfraMachineForNode, mock.Anything, activities.CreateCAPIInfraMachineForNodeInput{
+		NodeID: nodeID,
+	}).Return(nil).Once()
+
+	env.ExecuteWorkflow(provisionCAPINodeTestWorkflow, nodeID)
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.NoError(t, env.GetWorkflowError())

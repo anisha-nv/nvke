@@ -32,8 +32,13 @@ parse_bundle_args() {
   [[ -n "$DIST" ]] || die "--dist is required"
   [[ -n "$LOCK_DIR" ]] || die "--lock-dir is required"
   [[ -n "$CRANE" && -x "$CRANE" ]] || die "--crane must point at an executable crane"
+  case "$ARCH" in
+    amd64|arm64) ;;
+    *) die "--arch ${ARCH}: expected amd64 or arm64" ;;
+  esac
 
-  LOCK="${LOCK_DIR}/${VERSION}.lock"
+  # Per arch: the digests below are resolved for one platform.
+  LOCK="${LOCK_DIR}/${ARCH}/${VERSION}.lock"
   STAGE="${DIST}/${VERSION}"
   WORK="${STAGE}/.work"
   ARTIFACT_LINES=()
@@ -47,7 +52,7 @@ fetch() {
   local url="$1" out="$2"
   curl --fail --silent --show-error --location \
     --connect-timeout 10 --max-time 300 \
-    --retry 3 --retry-delay 5 --retry-connrefused \
+    --retry 3 --retry-all-errors --retry-delay 5 --retry-connrefused \
     --config - -o "$out" "$url" <<<"${CURL_CONFIG:-}" ||
     die "fetch ${url} failed"
 }
@@ -89,10 +94,18 @@ tar_paths_safe() {
 # are byte-identical, plus a sha256sum sidecar naming the installed file.
 stage_images() {
   local -a refs pinned=()
-  local ref digest want repo placeholder manifest leftover
+  local ref digest want repo placeholder manifest leftover ref_src
   IMAGE_LINES=()
-  mapfile -t refs < <(awk '$1 == "image" { print $2 }' "$LOCK" 2>/dev/null || true)
-  [[ ${#refs[@]} -gt 0 ]] || die "${LOCK} lists no images; seed it with 'image <ref>' lines"
+  # amd64's lock decides which images ship; other arches pin their own digests
+  # for the same refs. Reading refs from amd64 keeps the sets in step.
+  ref_src="$LOCK"
+  if [[ "$WRITE_LOCK" == true && "$ARCH" != amd64 ]]; then
+    ref_src="${LOCK_DIR}/amd64/${VERSION}.lock"
+    [[ -f "$ref_src" ]] ||
+      die "no amd64 lock at ${ref_src}; lock amd64 first, it is the source of truth for the image list"
+  fi
+  mapfile -t refs < <(awk '$1 == "image" { print $2 }' "$ref_src" 2>/dev/null || true)
+  [[ ${#refs[@]} -gt 0 ]] || die "${ref_src} lists no images; seed it with 'image <ref>' lines"
 
   for ref in "${refs[@]}"; do
     digest="$("$CRANE" digest --platform "linux/${ARCH}" "$ref")" ||
@@ -145,7 +158,7 @@ stage_images() {
 finish_bundle() {
   rm -rf "$WORK"
   if [[ "$WRITE_LOCK" == true ]]; then
-    mkdir -p "$LOCK_DIR"
+    mkdir -p "$(dirname "$LOCK")"
     {
       echo "# nke-${CNI} lock for ${VERSION} (${ARCH}). Regenerate with \`make lock\`; review the diff before committing."
       echo "${CNI#cni-} ${VERSION}"

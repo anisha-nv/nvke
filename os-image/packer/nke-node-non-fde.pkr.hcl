@@ -2,13 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Non-FDE variant: the same installer+autoinstall+LVM flow as
-# nke-node-fde.pkr.hcl, minus LUKS/Clevis/TPM entirely. No encryption is
-# configured or implied by this variant — it exists to isolate FDE-specific
-# issues from installer-flow issues by giving an otherwise-identical build to
-# compare against, and as a base for anyone who wants the installer-based
-# LVM partitioning (e.g. for its own first-boot storage growth) without
-# opting into encryption. Shares cidata/autoinstall-lvm.pkrtpl with the FDE
-# variant, with luks_enabled = false.
+# nke-node-fde.pkr.hcl, minus LUKS/Clevis/TPM entirely. It keeps layout and
+# first-boot storage-growth parity with the encrypted image.
 
 packer {
   required_version = ">= 1.10.0"
@@ -22,7 +17,7 @@ packer {
 
 variable "iso_url" {
   type        = string
-  default     = "https://releases.ubuntu.com/26.04/ubuntu-26.04-live-server-amd64.iso"
+  default     = "https://releases.ubuntu.com/26.04/ubuntu-26.04.1-live-server-amd64.iso"
   description = "Ubuntu 26.04 Server installer ISO (autoinstall needs the installer, not the cloud image)."
 }
 
@@ -38,6 +33,17 @@ variable "disk_size" {
   description = "Build-time disk size, matching the FDE variant for comparability (see its comment about sizing-policy). The real deploy disk is grown to full size on first boot."
 }
 
+variable "root_fs_label" {
+  type        = string
+  default     = "cloudimg-rootfs"
+  description = "Filesystem label applied to the root volume for cloud-image discovery."
+
+  validation {
+    condition     = length(var.root_fs_label) > 0 && length(var.root_fs_label) <= 16
+    error_message = "The root_fs_label value must contain 1 to 16 characters for ext4."
+  }
+}
+
 # See the same variable in nke-node-fde.pkr.hcl.
 variable "accelerator" {
   type        = string
@@ -49,6 +55,12 @@ variable "cpu_model" {
   type        = string
   default     = "host"
   description = "QEMU CPU model. Use 'host' with KVM, 'max' with TCG emulation."
+}
+
+variable "cpus" {
+  type        = number
+  default     = 4
+  description = "Guest vCPUs. packer/Makefile raises it under TCG emulation."
 }
 
 variable "ssh_timeout" {
@@ -121,11 +133,7 @@ source "qemu" "nke-non-fde" {
   # See the comment on this in nke-node-fde.pkr.hcl.
   iso_checksum = "none"
 
-  # See the comment on this block in nke-node-fde.pkr.hcl: machine_type is
-  # the QEMU chipset, not a CPU setting. q35 avoids the legacy "pc" (i440fx)
-  # + OVMF/UEFI pairing that produced intermittent guest-kernel crashes
-  # while developing these variants. "virt" is its arm64 equivalent -- see
-  # local.machine_type's comment.
+  # Use q35 for amd64 UEFI and virt for arm64; cpu_model selects the CPU.
   qemu_binary    = local.qemu_binary
   machine_type   = local.machine_type
   cpu_model      = var.cpu_model
@@ -136,6 +144,10 @@ source "qemu" "nke-non-fde" {
   # See the same setting in nke-node-fde.pkr.hcl: required for provision.sh's
   # fstrim to actually shrink the output qcow2.
   disk_discard = "unmap"
+  # Build VMs are throwaway: skip the guest's flushes (dpkg fsyncs every file)
+  # instead of paying for each one on the runner disk. Packer halts the guest
+  # cleanly, so the exported qcow2 is complete.
+  disk_cache = "unsafe"
 
   efi_firmware_code = local.efi_firmware_code
   efi_firmware_vars = local.efi_firmware_vars
@@ -147,6 +159,7 @@ source "qemu" "nke-non-fde" {
       luks_enabled          = false
       luks_passphrase       = ""
       nvidia_kernel_package = local.nvidia_kernel_package
+      serial_console        = local.arch == "arm64" ? "ttyAMA0" : "ttyS0"
     })
     "/meta-data" = "instance-id: nke-packer-non-fde\nlocal-hostname: nke-packer-non-fde\n"
   }
@@ -190,29 +203,24 @@ source "qemu" "nke-non-fde" {
   ssh_username           = "ubuntu"
   ssh_private_key_file   = "${local.ssh_dir}/id_ed25519"
   ssh_timeout            = var.ssh_timeout
-  ssh_handshake_attempts = 1000
+  # The live installer runs its own sshd, so every attempt at ubuntu@ before
+  # the reboot is an authentication failure and each one counts here. Under
+  # tcg the install outlasts 1000 of them (~8 s apiece); ssh_timeout is the
+  # wall clock, this must not be.
+  ssh_handshake_attempts = 10000
 
   shutdown_command = "sudo shutdown -P now"
   vm_name          = "nke-node-non-fde-ubuntu-${local.ubuntu_version}-${local.arch}.qcow2"
   output_directory = "${path.root}/output-non-fde"
   headless         = true
   memory           = 8192
-  cpus             = 4
+  cpus             = var.cpus
   net_device       = "virtio-net"
 }
 
 build {
   name    = "nke-node-non-fde"
   sources = ["source.qemu.nke-non-fde"]
-
-  # Same artifact fetch + install as the base image.
-  provisioner "shell-local" {
-    environment_vars = [
-      "ARTIFACTS_DIR=${local.artifacts}",
-      "ARCH=${local.arch}",
-    ]
-    script = "${path.root}/scripts/fetch-artifacts.sh"
-  }
 
   provisioner "shell" {
     inline = ["mkdir -p /tmp/nke-image/lvm"]
@@ -228,15 +236,13 @@ build {
     destination = "/tmp/nke-image/lvm/"
   }
 
-  # configure-lvm-growth.sh runs before provision.sh for the same reason as
-  # the FDE variant: provision.sh's final cleanup (cloud-init clean,
-  # machine-id truncate, removing the Packer SSH key) must be the last step.
   provisioner "shell" {
     script = "${path.root}/scripts/configure-lvm-growth.sh"
   }
 
   provisioner "shell" {
-    script = "${path.root}/scripts/provision.sh"
+    environment_vars = ["ROOT_FS_LABEL=${var.root_fs_label}"]
+    script           = "${path.root}/scripts/provision.sh"
   }
 
   # See scripts/compress-qcow2.sh's header: the qemu builder's own

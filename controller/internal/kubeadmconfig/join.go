@@ -13,8 +13,8 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/NVIDIA/nke/controller/internal/constants"
-	kubeadmv1beta3 "github.com/NVIDIA/nke/controller/internal/kubeadmconfig/thirdparty/kubeadmtypes/v1beta3"
+	"github.com/dsx-ai-factory/nke/controller/internal/constants"
+	kubeadmv1beta3 "github.com/dsx-ai-factory/nke/controller/internal/kubeadmconfig/thirdparty/kubeadmtypes/v1beta3"
 )
 
 var (
@@ -50,6 +50,10 @@ type JoinConfig struct {
 	// SystemReservedMemory is the memory reserved for system processes by the
 	// kubelet configuration patch. It defaults to 16Gi when empty.
 	SystemReservedMemory string
+	// KubernetesVersion is the joining cluster's Kubernetes version. It decides
+	// whether the kubelet needs the KEP-4639 image volume feature gate set
+	// explicitly; an empty value leaves the gate unset.
+	KubernetesVersion string
 	// KubeReservedMemory is the memory reserved for Kubernetes processes by the
 	// kubelet configuration patch. It defaults to 2Gi when empty.
 	KubeReservedMemory string
@@ -145,7 +149,7 @@ func (config *JoinConfig) Render() (*BootstrapArtifacts, error) {
 	configYAML, err := renderYAMLDocuments(
 		joinConfiguration(config),
 		kubeProxyConfiguration(false),
-		joinKubeletConfiguration(),
+		joinKubeletConfiguration(config.KubernetesVersion),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("rendering kubeadm join yaml config: %w", err)

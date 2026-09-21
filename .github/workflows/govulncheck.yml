@@ -67,8 +67,10 @@ on:
   push:
     branches: [main]
   schedule:
-    # Monday 06:30 UTC. New advisories land without the code changing.
-    - cron: '30 6 * * 1'
+    # Daily 06:30 UTC. New advisories land without the code changing, and the
+    # only other trigger is the next push to main, which pins the red on
+    # whoever merged next.
+    - cron: '30 6 * * *'
   workflow_call:
   workflow_dispatch:
 
@@ -97,7 +99,9 @@ jobs:
   discover-modules:
     name: Discover workspace modules
     runs-on: ubuntu-latest
-    if: github.repository == 'NVIDIA/nke'
+    # Same as license.yml's discover-modules, which does the same work.
+    timeout-minutes: 5
+    if: github.repository == 'dsx-ai-factory/nke'
     outputs:
       modules: ${{ steps.find.outputs.modules }}
     steps:
@@ -237,7 +241,7 @@ jobs:
         # paths under GITHUB_WORKSPACE, so against RUNNER_TEMP it silently
         # returns '' and skips the upload while the job still reports green.
         if: always() && steps.scan.outputs.sarif != ''
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           sarif_file: ${{ steps.scan.outputs.sarif }}
           checkout_path: ${{ github.workspace }}/${{ matrix.module.dir }}

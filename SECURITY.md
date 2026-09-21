@@ -75,7 +75,9 @@ advisory is published.
 
 ## Supported versions
 
-nke has not yet published a release. Until it does, `main` is the only branch
+nke has no stable release. Every product line is still on pre-releases
+(`*-rc.N`), except the `controller/api` Go module, which publishes `v0.0.x` so
+consumers can pin. Until a stable release exists, `main` is the only branch
 that receives security fixes.
 
 | Version | Supported |
@@ -83,7 +85,7 @@ that receives security fixes.
 | `main` | ✅ Receives security fixes |
 | Pre-release commits and forks | ❌ Not supported |
 
-Once releases begin, this table will name the release lines that receive
+Once stable releases begin, this table will name the release lines that receive
 backports, and the policy will be to support the latest minor release only
 until the project reaches 1.0.
 
@@ -98,15 +100,14 @@ issues resolved under our coordinated vulnerability disclosure policy.
 
 ## Artifact integrity
 
-**nke has published no releases, so there is no signed artifact to verify
-today. Treat any binary, image, or package claiming to come from this project
-as unverified.**
+**nke has published pre-releases only, and none of their artifacts is signed
+yet. Each release attaches a SHA-256 `checksums.txt`; verify against it, and
+treat any artifact that does not match as unverified.**
 
-When releases begin, every release artifact will be published with a SHA-256
-checksum file, and container images and binaries will be signed with
-[cosign](https://docs.sigstore.dev/) keyless signing. Verification instructions
-will be published in [RELEASE.md](RELEASE.md) alongside the first signed
-release. Third-party dependency licenses for the `agent` module are recorded in
+Every release artifact is published with a SHA-256 checksum file. Container
+images and binaries will be signed with [cosign](https://docs.sigstore.dev/)
+keyless signing, and verification instructions will be published in
+[RELEASE.md](RELEASE.md) alongside the first signed release. Third-party dependency licenses for the `agent` module are recorded in
 [agent/THIRD_PARTY_NOTICES.md](agent/THIRD_PARTY_NOTICES.md), regenerated and
 verified in CI on every push.
 
@@ -134,8 +135,8 @@ miss a real issue.
 If you deploy or operate nke:
 
 - **Secrets.** Never commit credentials, API keys, tokens, or kubeconfigs.
-  Supply them through the environment or a secrets manager. `FWE_API_KEY` and
-  the database connection string are read from the environment for this reason.
+  Supply them through the environment or a secrets manager. The database
+  connection string is read from the environment for this reason.
 - **Node identity.** The agent authenticates with SPIFFE/SPIRE mTLS by default.
   `--disable-mtls` exists for local development only — never enable it on a
   network anyone else can reach.

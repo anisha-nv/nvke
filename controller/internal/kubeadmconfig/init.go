@@ -13,8 +13,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	bootstraptokenv1 "github.com/NVIDIA/nke/controller/internal/kubeadmconfig/thirdparty/bootstraptoken/v1"
-	kubeadmv1beta3 "github.com/NVIDIA/nke/controller/internal/kubeadmconfig/thirdparty/kubeadmtypes/v1beta3"
+	bootstraptokenv1 "github.com/dsx-ai-factory/nke/controller/internal/kubeadmconfig/thirdparty/bootstraptoken/v1"
+	kubeadmv1beta3 "github.com/dsx-ai-factory/nke/controller/internal/kubeadmconfig/thirdparty/kubeadmtypes/v1beta3"
 )
 
 const (
@@ -106,7 +106,7 @@ func (config *InitConfig) Render() (*BootstrapArtifacts, error) {
 		initConfig,
 		clusterConfiguration(&cfg),
 		kubeProxyConfiguration(cfg.KubeadmContainerMode),
-		initKubeletConfiguration(cfg.KubeadmContainerMode),
+		initKubeletConfiguration(cfg.KubeadmContainerMode, cfg.KubernetesVersion),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("rendering kubeadm init yaml config: %w", err)
@@ -207,6 +207,7 @@ func clusterConfiguration(config *InitConfig) kubeadmv1beta3.ClusterConfiguratio
 	apiServer := kubeadmv1beta3.APIServer{
 		ControlPlaneComponent: kubeadmv1beta3.ControlPlaneComponent{
 			ExtraArgs: map[string]string{
+				"enable-admission-plugins":                defaultEnabledAdmissionPlugins,
 				"audit-policy-file":                       defaultAuditPolicyFile,
 				"audit-log-path":                          defaultAuditLogPath,
 				"audit-log-maxage":                        defaultAuditLogMaxAge,
@@ -237,6 +238,15 @@ func clusterConfiguration(config *InitConfig) kubeadmv1beta3.ClusterConfiguratio
 			},
 		},
 		TimeoutForControlPlane: &metav1.Duration{Duration: 4 * time.Minute},
+	}
+
+	// KEP-4639 image volumes are stripped during admission when the gate is off,
+	// so a manifest mounting a plugin through an `image:` volume fails with a
+	// missing-file error far from the cause. Only set below the GA floor: the
+	// flag is removed a couple of releases after GA and kube-apiserver refuses
+	// to start when passed a gate it no longer knows.
+	if needsImageVolumeFeatureGate(config.KubernetesVersion) {
+		apiServer.ExtraArgs[featureGatesFlag] = imageVolumeFeatureGate + "=true"
 	}
 
 	if config.EnableEncryption {

@@ -21,11 +21,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	nicov1 "github.com/NVIDIA/cluster-api-provider-nico/api/v1alpha1"
+	nicov1 "github.com/dsx-ai-factory/cluster-api-provider-nico/api/v1alpha1"
 
-	"github.com/NVIDIA/nke/controller/internal/constants"
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/testutil"
+	"github.com/dsx-ai-factory/nke/controller/internal/constants"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/testutil"
 )
 
 // The shared namespace holds every cluster's CAPI objects plus the tenant-access
@@ -38,9 +38,6 @@ func TestDeleteCAPIClusterResources_LeavesSharedNamespaceIntact(t *testing.T) {
 	cluster := db.Cluster{
 		ID:           uuid.New(),
 		Name:         "alpha",
-		OrgID:        "org-1",
-		SiteID:       siteID,
-		VpcID:        vpcID,
 		ProviderType: db.ProviderTypeNico,
 		Nico:         &db.NicoClusterProvider{OrgID: "org-1", SiteID: siteID, VpcID: vpcID},
 	}
@@ -80,9 +77,6 @@ func TestDeleteCAPIClusterResources_WaitsForRemainingMachines(t *testing.T) {
 	cluster := db.Cluster{
 		ID:           uuid.New(),
 		Name:         "alpha",
-		OrgID:        "org-1",
-		SiteID:       siteID,
-		VpcID:        vpcID,
 		ProviderType: db.ProviderTypeNico,
 		Nico:         &db.NicoClusterProvider{OrgID: "org-1", SiteID: siteID, VpcID: vpcID},
 	}

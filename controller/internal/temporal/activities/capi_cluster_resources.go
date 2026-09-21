@@ -15,8 +15,8 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/NVIDIA/nke/controller/internal/capi"
-	"github.com/NVIDIA/nke/controller/internal/constants"
+	"github.com/dsx-ai-factory/nke/controller/internal/capi"
+	"github.com/dsx-ai-factory/nke/controller/internal/constants"
 )
 
 type ApplyCAPIClusterResourcesInput struct {
@@ -35,10 +35,6 @@ func (a *Activities) ApplyCAPIClusterResources(ctx context.Context, input ApplyC
 	if capi.IsEmptyManifest(manifest) {
 		return nil
 	}
-	if err := a.rejectUnmigratedCluster(ctx, cluster.Name); err != nil {
-		return err
-	}
-
 	return capi.ApplyClusterScaffold(ctx, a.k8sClient, cluster, false)
 }
 

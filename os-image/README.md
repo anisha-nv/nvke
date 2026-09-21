@@ -11,7 +11,7 @@ generic default. The contract is [SPEC.md](SPEC.md).
 | `packer/` | Packer + QEMU recipe that produces a qcow2 |
 | `files/` | systemd units, SPIRE template, first-boot script |
 | `files/luks/` | LUKS/TPM2 first-boot binding assets for the FDE variant |
-| `files/lvm/` | First-boot storage-growth assets for the non-FDE (no encryption) variant |
+| `files/lvm/` | First-boot storage-growth assets for the non-FDE variant |
 | `docs/full-disk-encryption.md` | FDE variant: build, verify, failure modes |
 | `demo-fde.sh` | Runs the host-FDE acceptance scenarios against a built image |
 | `cmd/nke-os-image-check` | Connectivity checker (Go) |
@@ -24,8 +24,9 @@ Prereqs, on a Linux host:
 |---|---|---|
 | [Packer](https://developer.hashicorp.com/packer) | >= 1.10.0 | https://developer.hashicorp.com/packer/install |
 | [Go](https://go.dev/) | per `go.work` | https://go.dev/dl/ |
+| Python | >= 3.10, standard library only | via your package manager |
 | `curl` | any | via your package manager |
-| `qemu-system-x86_64`, `cloud-localds`, `swtpm`, OVMF | any | via your package manager |
+| `qemu-system-x86_64`, `qemu-system-aarch64`, `qemu-img`, `cloud-localds`, `swtpm`, OVMF | any | via your package manager |
 | `xorriso`, `p7zip-full` (`7z`) | any | via your package manager |
 
 Both variants boot the Ubuntu Server installer (not a prebuilt cloud image),
@@ -39,15 +40,25 @@ ISO patching (see its header comment for why).
 correct but roughly an order of magnitude slower. Force either mode with
 `make os-image-fde ACCELERATOR=tcg`. `boot-smoke.sh` does the same probe.
 
-`make os-image-fde`/`make os-image-non-fde` check for `go` on `PATH` before
-they boot the build VM and fail fast with the install link above if it's
-missing.
+`make os-image-fde`/`make os-image-non-fde` check for `go` on
+`PATH` before they boot the build VM and fail fast if it is missing. The agent package uses nfpm, pinned in `make/tool-versions.mk`.
 
-`nke-agent` is built from this checkout's `agent/` source (cross-compiled to
-`linux/amd64` when the host differs), so the baked agent is whatever your
-checkout says — no prebuilt artifact is pulled. To bake a released agent,
-check out its `agent/vX.Y.Z` tag first. SPIRE agent is pinned (version +
-sha256) from GitHub Releases.
+`nke-agent` is built as a Debian package from this checkout's `agent/` source
+using `make -C agent deb-<arch>` and installed with dpkg during provisioning.
+Build on Linux for the target architecture with cgo enabled, as required by
+the agent package's libc linkage check. The package owns the agent, updater,
+and both systemd units. Startup is deferred during the bake with
+`NKE_AGENT_SKIP_START=1`; a systemd drop-in preserves the image's SPIRE ordering
+and socket wait across package upgrades.
+The baked agent is whatever your checkout says — no prebuilt artifact is
+pulled. To bake a released agent, check out its `agent/vX.Y.Z` tag first.
+The SPIRE agent and TPM tools come from
+the `spire-agent` .deb built at bake time out of
+[`packages/spire-agent/`](packages/spire-agent/), pinned by version and
+SHA-256 in its lock; the build installs that package into the image rather than
+dropping the upstream binaries in by hand, so a node ends up with the same
+artifact whichever path installed it. The build also installs the Calico
+manifests package that the agent uses during offline bootstrap.
 
 Both variants install Ubuntu's NVIDIA-tuned kernel (`kernel.package` in
 `cidata/autoinstall-lvm.pkrtpl`), so the generic kernel never lands on disk in
@@ -57,18 +68,30 @@ the first place — no post-install kernel swap or reboot.
 
 ```bash
 make os-image-non-fde ARCH=arm64
+make os-image-fde ARCH=arm64
 ```
 
-This is a first pass, not full arm64 parity with amd64: only the non-FDE
-variant builds for arm64 today (no `os-image-fde ARCH=arm64` yet), and on an
-x86_64 host it always cross-builds under QEMU's `tcg` software emulation —
-there is no way to KVM-accelerate an arm64 guest on x86 hardware regardless
-of `/dev/kvm`. `ARCH` picks the right ISO URL, QEMU binary
-(`qemu-system-aarch64`), machine type (`virt`), and UEFI firmware (AAVMF
-instead of OVMF) automatically; nothing else needs to change per-arch.
+Both variants build for arm64. Use an arm64 Linux build host for the arm64
+agent package. QEMU can emulate a guest of another architecture with `tcg`,
+but that does not supply the cgo cross-toolchain needed to build its agent
+package. `ARCH` picks the right ISO URL,
+QEMU binary (`qemu-system-aarch64`), machine type (`virt`), and UEFI firmware
+(AAVMF instead of OVMF) automatically; nothing else needs to change per-arch.
+`demo-fde.sh` and `boot-smoke.sh` take the same `ARCH`.
 
 The build-time cloud-init seed is only for Packer's SSH. The provisioner runs
 `cloud-init clean` and drops the build key, so each qcow2 is a golden image.
+
+Each Packer build applies the publication QCOW2 conversion once through its
+existing `compress-qcow2.sh` post-processor. Before replacing Packer's output,
+that path verifies the converted temporary file is a self-contained,
+unencrypted QCOW2 with a positive virtual size and no backing file. The
+source-owned Make targets check that the checkout is clean before Packer starts
+and again before collection. Collection requires exactly one finalized QCOW2,
+preserves its basename, and verifies that the copied publication bytes are
+identical. By default, the Makefile exports `PACKER_CACHE_DIR` under the ignored
+`packer/iso-cache/` tree so Packer's build/download cache does not dirty the
+checkout; callers may override that directory without changing the recipe.
 
 ## Full-disk-encryption (FDE) variant
 
@@ -84,7 +107,7 @@ make os-image-fde
 ```
 
 Output: `packer/output-fde/nke-node-fde-ubuntu-<version>-<arch>.qcow2` (e.g.
-`nke-node-fde-ubuntu-26.04-amd64.qcow2`). `LUKS_PASSPHRASE` (default
+`nke-node-fde-ubuntu-26.04.1-amd64.qcow2`). `LUKS_PASSPHRASE` (default
 `changeit` — **set this to a real value for any build that will run on real
 hardware**; see [docs/full-disk-encryption.md](docs/full-disk-encryption.md))
 sets the build-time-only passphrase, which the shipped image never retains
@@ -92,12 +115,17 @@ once a node's first boot completes a verified TPM bind.
 
 ## Non-FDE variant (no encryption)
 
-The same installer + autoinstall + LVM flow as the FDE variant, with
-encryption turned off entirely — no LUKS, no Clevis, no TPM binding. Useful
-for telling FDE-specific issues apart from issues in the installer flow
-itself (partitioning, identity/SSH setup, first-boot storage growth), or as
-a starting point if you want the installer-based LVM layout without opting
-into encryption.
+This image uses the same LVM-backed ext4 layout as the FDE variant. It has no
+LUKS, Clevis, or TPM binding. `lvm-growth-firstboot.service` expands the
+partition, PV, LV, and filesystem after the image boots on a larger disk.
+
+Both variants apply `ROOT_FS_LABEL` to the root filesystem. Its default is
+`cloudimg-rootfs`. An image importer can use this label instead of a device
+path. Set a different label when you build the image:
+
+```bash
+make os-image-non-fde ROOT_FS_LABEL=nke-rootfs
+```
 
 ```bash
 cd packer
@@ -105,7 +133,7 @@ make os-image-non-fde
 ```
 
 Output: `packer/output-non-fde/nke-node-non-fde-ubuntu-<version>-<arch>.qcow2`
-(e.g. `nke-node-non-fde-ubuntu-26.04-amd64.qcow2`). Boot it with
+(e.g. `nke-node-non-fde-ubuntu-26.04.1-amd64.qcow2`). Boot it with
 `boot-smoke.sh` (it needs `OVMF_CODE` set, since this variant boots UEFI —
 see the comment at the top of that script; `QCOW` defaults to the single
 qcow2 under `output-non-fde/`, so it usually doesn't need to be passed):
@@ -113,6 +141,9 @@ qcow2 under `output-non-fde/`, so it usually doesn't need to be passed):
 ```bash
 OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd ./scripts/boot-smoke.sh
 ```
+
+The smoke test copies the qcow2 to a larger virtual disk. It then boots that
+disk and verifies that the first-boot service expands the root filesystem.
 
 ## Interactive VM
 
@@ -136,28 +167,35 @@ repo builds is UEFI-only; `TPM=1` attaches a TPM for the FDE image).
 Examples:
 
 ```bash
-make run-vm QCOW=packer/output-non-fde/nke-node-non-fde-ubuntu-26.04-amd64.qcow2
-make run-vm QCOW=packer/output-fde/nke-node-fde-ubuntu-26.04-amd64.qcow2 TPM=1
-make run-vm QCOW=packer/output-non-fde/nke-node-non-fde-ubuntu-26.04-arm64.qcow2 ARCH=arm64
+make run-vm QCOW=packer/output-non-fde/nke-node-non-fde-ubuntu-26.04.1-amd64.qcow2
+make run-vm QCOW=packer/output-fde/nke-node-fde-ubuntu-26.04.1-amd64.qcow2 TPM=1
+make run-vm QCOW=packer/output-non-fde/nke-node-non-fde-ubuntu-26.04.1-arm64.qcow2 ARCH=arm64
 ```
 
 ## Release
 
 An `os-image/vX.Y.Z` tag (or `os-image/vX.Y.Z-rc.N`) runs
-`.github/workflows/os-image-artifact.yml`, which builds and validates the
-FDE and non-FDE amd64 images plus the non-FDE arm64 image (see "Build the OS
-image" above for arm64's current limitations) and, only if that succeeds,
-pushes the qcow2s to GHCR as OCI artifacts under arch-suffixed tags — not
-one multi-platform manifest shared across arches, see the workflow's header
-comment for why — and cuts a GitHub Release for the amd64 build attaching
-`nke-os-image-check` and `checksums.txt` (covering the amd64 qcow2s and the
-checker binary; the arm64 qcow2 isn't attached to the release yet, only
-GHCR).
+`.github/workflows/os-image-artifact.yml`, which builds and validates the FDE
+and non-FDE images for both architectures and, only if that succeeds, pushes
+the qcow2s to GHCR as OCI artifacts under arch-suffixed tags — not one
+multi-platform manifest shared across arches, see the workflow's header
+comment for why — then cuts a GitHub Release attaching `nke-os-image-check`
+and a `checksums.txt` covering all four qcow2s and the checker binary.
+
+The workflow selects the source-owned Make collection target for each matrix
+variant. Make copies the final QCOW2 under its existing basename and verifies
+that the publication copy is byte-identical. Existing `oras pull` output
+remains one qcow2.
+
+The pulled file keeps the name Packer gave it, so it carries the Ubuntu point
+release and the architecture and two arches can share a directory:
 
 ```bash
-oras pull ghcr.io/nvidia/nke/os-image-fde:vX.Y.Z-amd64 --platform linux/amd64
-oras pull ghcr.io/nvidia/nke/os-image-non-fde:vX.Y.Z-amd64 --platform linux/amd64
-oras pull ghcr.io/nvidia/nke/os-image-non-fde:vX.Y.Z-arm64 --platform linux/arm64
+oras pull ghcr.io/dsx-ai-factory/nke/os-image-fde:vX.Y.Z-amd64 --platform linux/amd64
+oras pull ghcr.io/dsx-ai-factory/nke/os-image-fde:vX.Y.Z-arm64 --platform linux/arm64
+oras pull ghcr.io/dsx-ai-factory/nke/os-image-non-fde:vX.Y.Z-amd64 --platform linux/amd64
+oras pull ghcr.io/dsx-ai-factory/nke/os-image-non-fde:vX.Y.Z-arm64 --platform linux/arm64
+# -> nke-node-{fde,non-fde}-ubuntu-26.04.1-{amd64,arm64}.qcow2
 ```
 
 **FDE security note**: the published image's `LUKS_PASSPHRASE` is the
@@ -177,10 +215,10 @@ none, forcing every bake onto `tcg` software emulation (confirmed directly: a
 full FDE bake took 1h39m under `tcg` vs a few minutes locally under real
 KVM). The job's "Enable KVM access" step fails immediately if that
 assumption turns out wrong, rather than silently falling back to the
-~10x-slower emulated path. The arm64 leg runs on that same amd64 runner —
-there is no arm64-labeled runner in this org's pool yet — always
-cross-building under `tcg`, since KVM can't accelerate a guest arch that
-doesn't match the host.
+~10x-slower emulated path. The arm64 leg runs natively on
+`nke-arm64-16c64g`, also with `/dev/kvm`; the workflow fails immediately if
+that device is absent or unusable. The Makefile still retains its portable
+same-architecture KVM probe and TCG fallback for local builds.
 
 If the FDE/non-FDE build or boot-smoke steps fail in CI, download the
 `fde-install-console-logs` artifact from the run — it's the guest's own
@@ -214,7 +252,7 @@ write_files:
       -----END CERTIFICATE-----
 ```
 
-`nke-spire-configure.service` waits for `cloud-final`, renders
+`nke-spire-configure.service` reads the files after cloud-init writes them, renders
 `/etc/spire-agent/agent.conf`, and only then does `spire-agent` start.
 `nke-agent` starts after the workload API socket exists.
 

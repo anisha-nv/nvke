@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/NVIDIA/nke/cli/internal/clients"
-	"github.com/NVIDIA/nke/cli/internal/config"
+	"github.com/dsx-ai-factory/nke/cli/internal/clients"
+	"github.com/dsx-ai-factory/nke/cli/internal/config"
 )
 
 var (
@@ -40,6 +40,7 @@ func newRootCmd(ver, commit, treeState, date string) *cobra.Command {
 	root.AddCommand(newGenerateCmd())
 	root.AddCommand(newGetCmd())
 	root.AddCommand(newCreateCmd())
+	root.AddCommand(newPatchCmd())
 	root.AddCommand(newDeleteCmd())
 
 	return root
@@ -73,6 +74,7 @@ func loadSite() (config.SiteConfig, error) {
 	return resolveSiteConfig(cfg)
 }
 
+// resolveSiteConfig returns the active site's SiteConfig.
 func resolveSiteConfig(cfg *config.Config) (config.SiteConfig, error) {
 	if site == "" {
 		return cfg.CurrentSiteConfig()

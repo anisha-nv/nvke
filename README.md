@@ -13,8 +13,8 @@ bare metal and want to hand out production Kubernetes clusters on it, and
 engineers integrating against that control plane.
 
 > **Status: early.** This repository is being prepared for open source. Layout,
-> interfaces, and build inputs are still changing, and there are no releases yet.
-> Expect breaking changes.
+> interfaces, and build inputs are still changing, and every product line is
+> still on pre-releases. Expect breaking changes.
 
 ## Overview
 
@@ -101,7 +101,7 @@ Flox is offered, not required. Every target runs from whatever is on your `PATH`
 ## Getting started
 
 ```bash
-git clone https://github.com/NVIDIA/nke.git
+git clone https://github.com/dsx-ai-factory/nke.git
 cd nke
 ```
 
@@ -163,7 +163,6 @@ publish OS images; it publishes the recipes for building them.
 | [docs/first-cluster.md](docs/first-cluster.md) | Three paths to a running cluster, driven by `nkectl` |
 | [docs/architecture.md](docs/architecture.md) | System overview — modules, data flows, deployment model |
 | [docs/getting-started.md](docs/getting-started.md) | Local development setup for the controller and the agent |
-| [docs/branch-protection-settings.md](docs/branch-protection-settings.md) | What `main` requires of a pull request, and which checks block a merge |
 
 Module-specific documentation lives alongside the code, in `controller/docs/`,
 `agent/docs/` and the `AGENTS.md` files.
@@ -177,7 +176,7 @@ be agreed before you write code.
 Development quickstart:
 
 ```bash
-git clone https://github.com/NVIDIA/nke.git && cd nke
+git clone https://github.com/dsx-ai-factory/nke.git && cd nke
 (cd agent && make build test)
 (cd controller && make build test)
 ```
@@ -198,9 +197,9 @@ a public issue for a security report.**
 See [SUPPORT.md](SUPPORT.md) for support channels and expectations.
 
 Questions and discussion:
-[GitHub Discussions](https://github.com/NVIDIA/nke/discussions/categories/q-a).
+[GitHub Discussions](https://github.com/dsx-ai-factory/nke/discussions/categories/q-a).
 Bugs, feature requests and documentation gaps:
-[GitHub Issues](https://github.com/NVIDIA/nke/issues).
+[GitHub Issues](https://github.com/dsx-ai-factory/nke/issues).
 
 ## License
 

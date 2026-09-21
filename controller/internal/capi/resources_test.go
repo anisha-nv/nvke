@@ -19,11 +19,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	nicov1 "github.com/NVIDIA/cluster-api-provider-nico/api/v1alpha1"
+	nicov1 "github.com/dsx-ai-factory/cluster-api-provider-nico/api/v1alpha1"
 
-	"github.com/NVIDIA/nke/controller/internal/capi"
-	"github.com/NVIDIA/nke/controller/internal/constants"
-	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/capi"
+	"github.com/dsx-ai-factory/nke/controller/internal/constants"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
 const (
@@ -83,10 +83,9 @@ func TestResources_ClusterScaffoldManifest(t *testing.T) {
 	t.Run("capi provider uses provider payload", func(t *testing.T) {
 		want := json.RawMessage(`{"kind":"ForgeCluster"}`)
 		cluster := db.Cluster{
-			ID:               uuid.New(),
-			ProviderType:     db.ProviderTypeCAPI,
-			Capi:             &db.CAPIClusterProvider{InfraCluster: want},
-			CapiInfraCluster: json.RawMessage(`{"kind":"LegacyStale"}`),
+			ID:           uuid.New(),
+			ProviderType: db.ProviderTypeCAPI,
+			Capi:         &db.CAPIClusterProvider{InfraCluster: want},
 		}
 
 		got, err := capi.ClusterScaffoldManifest(cluster)
@@ -97,10 +96,12 @@ func TestResources_ClusterScaffoldManifest(t *testing.T) {
 	t.Run("nico provider builds NicoCluster manifest from provider payload", func(t *testing.T) {
 		siteID := uuid.New()
 		cluster := db.Cluster{
-			ID:               uuid.New(),
-			ProviderType:     db.ProviderTypeNico,
-			Nico:             &db.NicoClusterProvider{OrgID: "org-1", SiteID: siteID, VpcID: uuid.New()},
-			CapiInfraCluster: json.RawMessage(`{"kind":"LegacyStale"}`),
+			ID:           uuid.New(),
+			ProviderType: db.ProviderTypeNico,
+			Nico:         &db.NicoClusterProvider{OrgID: "org-1", SiteID: siteID, VpcID: uuid.New()},
+			Capi: &db.CAPIClusterProvider{
+				InfraCluster: json.RawMessage(`{"kind":"LegacyStale"}`),
+			},
 		}
 
 		got, err := capi.ClusterScaffoldManifest(cluster)
@@ -227,9 +228,6 @@ func testCluster() db.Cluster {
 	cluster := db.Cluster{
 		ID:           uuid.New(),
 		Name:         testClusterName,
-		OrgID:        "org-1",
-		SiteID:       siteID,
-		VpcID:        vpcID,
 		ProviderType: db.ProviderTypeNico,
 		Nico:         &db.NicoClusterProvider{OrgID: "org-1", SiteID: siteID, VpcID: vpcID},
 	}

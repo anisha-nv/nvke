@@ -15,19 +15,11 @@ import (
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 
-	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/constants"
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/temporal/workflows"
+	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/constants"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/temporal/workflows"
 )
-
-func TestUnit_ServiceRetryAfter(t *testing.T) {
-	require.Equal(t, 3*time.Minute, NewService(config.Config{
-		NodeSchedulingRetryInterval: 3 * time.Minute,
-	}, slog.Default(), nil, nil).RetryAfter())
-
-	require.Equal(t, 2*time.Minute, NewService(config.Config{}, slog.Default(), nil, nil).RetryAfter())
-}
 
 func TestUnit_ServiceScheduleCAPIInfraNodesStartsProvisionWorkflows(t *testing.T) {
 	ctx := context.Background()
@@ -50,9 +42,8 @@ func TestUnit_ServiceScheduleCAPIInfraNodesStartsProvisionWorkflows(t *testing.T
 	})).Return(mockWorkflowRun{id: "second"}, nil).Once()
 
 	service := NewService(config.Config{
-		TemporalTaskQueue:           "test-task-queue",
-		NodeRebootMaxTimeout:        7 * time.Minute,
-		NodeSchedulingRetryInterval: time.Minute,
+		TemporalTaskQueue:    "test-task-queue",
+		NodeRebootMaxTimeout: 7 * time.Minute,
 	}, slog.Default(), nil, temporalClient)
 
 	result, err := service.ScheduleCAPIInfraNodes(ctx, slog.Default(), []db.Node{

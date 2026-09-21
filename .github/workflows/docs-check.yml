@@ -19,7 +19,7 @@
 # Deliberately NOT path-filtered, for the reason recorded in actionlint.yml: a
 # filtered check does not report on a pull request that misses the filter, and
 # a required check that never reports leaves that pull request waiting forever.
-# See docs/branch-protection-settings.md.
+# See .github/workflows/README.md.
 
 name: Docs Check
 
@@ -45,7 +45,7 @@ jobs:
   docs-check:
     name: docs-check
     runs-on: ubuntu-latest
-    if: github.repository == 'NVIDIA/nke'
+    if: github.repository == 'dsx-ai-factory/nke'
     timeout-minutes: 10
     permissions:
       contents: read

@@ -41,14 +41,21 @@ jobs:
     permissions:
       contents: read
 
-  # Skipped for tags that a dedicated workflow releases: agent/ (agent-deb-publish.yml)
-  # and os-image/ (os-image-artifact.yml). Those jobs build the real artifacts, create
-  # the release, and publish it only after verification. This job would otherwise
-  # cut a notes-only release first, and CHANGELOG.md has no section a component
-  # tag can match.
+  # Skipped for tags that a dedicated workflow releases: agent/ (agent-deb-publish.yml),
+  # os-image/ (os-image-artifact.yml), and cluster-api-provider-provisioned/
+  # (image-provisioned-nvcr.yml's promote-ghcr job -- an image push, with no
+  # release-worthy asset of its own yet). Those jobs build the real artifacts,
+  # create the release, and publish it only after verification. This job would
+  # otherwise cut a notes-only release first, and CHANGELOG.md has no section a
+  # component tag can match.
   release:
     name: Create GitHub release
-    if: ${{ !startsWith(github.ref_name, 'agent/') && !startsWith(github.ref_name, 'os-image/') }}
+    outputs:
+      # The three cli publishers below consume these, so a cli/v* tag produces
+      # one build rather than four.
+      component_dir: ${{ steps.component.outputs.dir }}
+      dist_artifact: cli-dist-${{ github.run_id }}-${{ github.run_attempt }}
+    if: ${{ !startsWith(github.ref_name, 'agent/') && !startsWith(github.ref_name, 'os-image/') && !startsWith(github.ref_name, 'cluster-api-provider-provisioned/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [license-checks]
@@ -62,7 +69,7 @@ jobs:
           persist-credentials: false
 
       # A tag is <module-directory>/vX.Y.Z, because that is what Go requires of a
-      # submodule: github.com/NVIDIA/nke/cli is tagged cli/vX.Y.Z. So the
+      # submodule: github.com/dsx-ai-factory/nke/cli is tagged cli/vX.Y.Z. So the
       # directory is read back off the tag and nothing below needs to name a
       # component. Move a module and its tag prefix moves with it, because Go
       # makes them the same string; go.work then says whether the directory is
@@ -156,6 +163,17 @@ jobs:
             echo "has_files=false" >> "${GITHUB_OUTPUT}"
             echo "count=0" >> "${GITHUB_OUTPUT}"
           fi
+
+      # Uploaded so the three cli publishers consume these exact bytes rather
+      # than each running build-cross again. checksums.txt beside them then
+      # describes what every channel ships, not one of four builds.
+      - name: Upload the built binaries for the publishers
+        if: steps.component.outputs.dir == 'cli'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-dist-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist
+          retention-days: 1
 
       # build-cross stamps the version from `git describe`, this job takes it
       # from the tag, and nothing tied the two together. The runner is
@@ -357,6 +375,44 @@ jobs:
             }
             core.info(`Published ${context.ref.replace('refs/tags/', '')} with ${got.length} assets.`);
 
+  # The three cli channels. They used to trigger on the cli/v* tag themselves,
+  # which meant four independent build-cross runs claiming to be one release,
+  # and three publish paths that never waited for license-checks. Calling them
+  # here fixes both: one build, and everything behind the gate.
+  cli-ghcr:
+    needs: [release]
+    if: ${{ needs.release.outputs.component_dir == 'cli' }}
+    uses: ./.github/workflows/cli-artifact.yml
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    with:
+      dist_artifact: ${{ needs.release.outputs.dist_artifact }}
+
+  cli-nvcr:
+    needs: [release]
+    if: ${{ needs.release.outputs.component_dir == 'cli' }}
+    uses: ./.github/workflows/cli-artifact-nvcr.yml
+    permissions:
+      contents: read
+      security-events: write
+    secrets:
+      NGC_REGISTRY_TOKEN_NKE: ${{ secrets.NGC_REGISTRY_TOKEN_NKE }}
+    with:
+      dist_artifact: ${{ needs.release.outputs.dist_artifact }}
+
+  cli-s3:
+    needs: [release]
+    if: ${{ needs.release.outputs.component_dir == 'cli' }}
+    uses: ./.github/workflows/cli-s3-publish.yml
+    permissions:
+      contents: read
+      id-token: write
+      security-events: write
+    with:
+      dist_artifact: ${{ needs.release.outputs.dist_artifact }}
+
   # Still a placeholder, but no longer the only thing a prefixed tag reaches:
   # the release job above now handles every tag, so this is for publishing that
   # is not a GitHub release asset -- registries, apt, and so on.
@@ -388,8 +444,24 @@ jobs:
 
             os-image/v*)
               echo "OS-image tag ${GITHUB_REF_NAME}:"
-              echo "  - qcow2  → OS Image Artifact (Packer + boot-smoke, then ghcr.io/nvidia/nke/os-image)"
+              echo "  - qcow2  → OS Image Artifact (Packer + boot-smoke, then ghcr.io/dsx-ai-factory/nke/os-image)"
               echo "  - check  → nke-os-image-check attached to the GitHub Release"
+              ;;
+
+            cluster-api-provider-provisioned/v*)
+              echo "Provisioned-provider tag ${GITHUB_REF_NAME}:"
+              echo "  - image → Image Provisioned NVCR (promote-ghcr → ghcr.io/dsx-ai-factory/nke/cluster-api-provider-provisioned)"
+              ;;
+
+            cli/v*)
+              echo "CLI tag ${GITHUB_REF_NAME}:"
+              echo "  - binaries → CLI Artifact GHCR / CLI Artifact NVCR / CLI S3 Publish"
+              ;;
+
+            controller/v*)
+              echo "Controller tag ${GITHUB_REF_NAME}:"
+              echo "  - image → Image NVCR (nvcr.io source, promoted to ghcr.io/dsx-ai-factory/nke/nke-controller and DSX NVCR)"
+              echo "  - chart → Chart Publish / Chart Publish NVCR"
               ;;
 
             *)

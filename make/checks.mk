@@ -68,6 +68,7 @@ lint-chart: ## Lint and render the Helm chart, then validate it. (run by the mer
 		-schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
 		"$$out"
 	@./controller/hack/chart-auth-assertions.sh
+	@./controller/hack/chart-node-agent-auth-assertions.sh
 	@./controller/hack/chart-provider-assertions.sh
 
 chart-rbac-check: ## Assert that tenant RBAC grants every permission the controller uses.
@@ -84,7 +85,7 @@ chart-package-check: ## Assert that chart packaging replaces placeholder version
 	@$(call require_tool,helm,$(HELM_VERSION))
 	@CHART="$(CHART)" ./controller/hack/chart-package-assertions.sh
 
-# The chart package is named controller while everything it renders stays
+# The chart package is named nke-controller while everything it renders stays
 # cloud-workflow-engine, held there by nameOverride. helm lint and kubeconform
 # both pass if that pin is dropped, so this is the only check that would catch it.
 chart-identity-check: ## Assert the chart still renders the deployed identities it must preserve.
@@ -153,9 +154,14 @@ lint: ## Lint every module. (run by the merge gate)
 
 # One merge-gate job needs live services, and is listed below alongside the
 # advisory lanes that are not part of the gate at all.
+.PHONY: go-version-check
+go-version-check: ## Verify every hand-kept Go version matches go.work.
+	@./hack/go-version-check.sh
+
 gate: ## Run the merge-gate checks that work on a laptop.
 	@$(MAKE) --no-print-directory tools-check
 	@$(MAKE) --no-print-directory version-check
+	@$(MAKE) --no-print-directory go-version-check
 	@CGO_ENABLED=1 $(MAKE) --no-print-directory GO_TEST_FLAGS=-race test
 	@$(MAKE) --no-print-directory test-compile
 	@$(MAKE) --no-print-directory lint
@@ -175,4 +181,4 @@ gate: ## Run the merge-gate checks that work on a laptop.
 	@echo "Workspace re-derivation needs access to the internal provider; work-check reports if it skips."
 	@echo "CAPD backend e2e is advisory, not part of the merge gate: make test-e2e-backend-ci"
 	@echo "nkectl bootstrap e2e is advisory too, not part of the merge gate:"
-	@echo "  make -C cli test-e2e-bootstrap   (nerdctl, Docker, kind, and root)"
+	@echo "  make -C cli test-e2e-bootstrap   (nerdctl, buildkitd, kind, and root)"

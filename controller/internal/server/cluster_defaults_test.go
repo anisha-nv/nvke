@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/NVIDIA/nke/controller/api"
-	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/api"
+	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
 func ptrBool(v bool) *bool { return &v }
@@ -237,11 +237,13 @@ func TestAPIClusterFromDB_CNIVersionDefaultsOldRows(t *testing.T) {
 	got, mappingErr := APIClusterFromDB(&db.Cluster{
 		ID:                uuid.New(),
 		Name:              "test",
-		OrgID:             "org-1",
-		SiteID:            uuid.New(),
-		VpcID:             uuid.New(),
 		CniPlugin:         db.CNICalico,
 		KubernetesVersion: "1.30.0",
+		Nico: &db.NicoClusterProvider{
+			OrgID:  "org-1",
+			SiteID: uuid.New(),
+			VpcID:  uuid.New(),
+		},
 	})
 	require.NoError(t, mappingErr)
 
@@ -328,5 +330,5 @@ func TestDbNodePoolFromAPI_TeleportDefault(t *testing.T) {
 }
 
 func dbClusterWithSiteID(siteID uuid.UUID) db.Cluster {
-	return db.Cluster{SiteID: siteID}
+	return db.Cluster{Nico: &db.NicoClusterProvider{SiteID: siteID}}
 }

@@ -10,19 +10,20 @@ Three paths. Start with A.
 |---|---|---|
 | [**A — the API alone**](#path-a--the-api-alone) | Go, Docker, kind | CWE running and its API to explore, in minutes. No tenant clusters. |
 | [**B — a tenant cluster with mock NICo**](#path-b--a-tenant-cluster-with-mock-nico) | Docker, kind, ~16 GB free, a CAPNICo checkout | The real create-a-cluster loop against real CAPNICo, no hardware |
-| [**C — a real site**](#path-c--a-real-site) | Imaged nodes, a jump box, a NICo site | A site controller minting CAPNICo-backed tenant clusters |
+| [**C — a real site**](#path-c--a-real-site) | Imaged nodes, nerdctl, a NICo site | A site controller minting CAPNICo-backed tenant clusters |
 
 ## Before you start
 
 ```bash
-git clone https://github.com/NVIDIA/nke.git
+git clone https://github.com/dsx-ai-factory/nke.git
 cd nke
 ```
 
 | Tool | Needed for | Notes |
 |---|---|---|
-| [Go](https://go.dev/dl/) 1.26.6+ | all | `go.work` pins it. An older Go fetches the right toolchain unless `GOTOOLCHAIN=local` |
-| [Docker](https://docs.docker.com/get-docker/) 24+ | all | |
+| [Go](https://go.dev/dl/) 1.26.8+ | all | `go.work` pins it. An older Go fetches the right toolchain unless `GOTOOLCHAIN=local` |
+| [Docker](https://docs.docker.com/get-docker/) 24+ | A and B | Not supported for path C bootstrapping |
+| [nerdctl](https://github.com/containerd/nerdctl) with containerd | C | The bootstrap drives kind and pulls images through it; no Docker daemon |
 | GNU Make 4.0+ | all | macOS ships 3.81; `brew install make` gives `gmake` |
 | [temporal](https://docs.temporal.io/cli) | A | `brew install temporal`, or `curl -sSf https://temporal.download/cli.sh \| sh` |
 | [kind](https://kind.sigs.k8s.io/), `kubectl` | A and B | |
@@ -44,7 +45,7 @@ make -C controller colima-up      # 6 CPU, 12 GiB
 ```
 
 Path A needs nothing internal and no NGC account. Path B needs a checkout of
-`NVIDIA/cluster-api-provider-nico`.
+`dsx-ai-factory/cluster-api-provider-nico`.
 
 ## Path A — the API alone
 
@@ -56,7 +57,7 @@ NGC authentication. No tenant clusters, no hardware.
 kind create cluster
 
 # Postgres, Temporal, then CWE.
-FORGE_ENVIRONMENT=test make -C controller run-local
+make -C controller run-local
 ```
 
 - Swagger — <http://localhost:8080/api/docs/>. Keep the trailing slash.
@@ -121,7 +122,7 @@ bin/nkectl config view
 ```
 
 `--kubeconfig` is the management cluster. `get providers` reads it directly, and
-CWE API commands (`get`/`create`/`delete` clusters) use it to mint a
+CWE API commands (`get`/`create`/`patch`/`delete` clusters) use it to mint a
 bearer token for `nke-clients/nke-client` when authentication is on. Tilt
 applies that identity in `controller/deploy/k8s/nke-auth-dev.yaml`. You do
 not export a token for `nkectl`.
@@ -135,7 +136,9 @@ ConfigMap and mints through the TokenRequest API.
 bin/nkectl get providers      # wait for nico: CONFIGURED
 bin/nkectl create cluster -f cli/examples/nico-mock-cluster.yaml
 bin/nkectl get clusters
-bin/nkectl get clusters --cluster <name>
+bin/nkectl get clusters <name>
+bin/nkectl patch cluster my-cluster --patch 'controlPlaneKubernetesVersion: "1.31.0"'
+bin/nkectl patch cluster my-cluster --patch-file patch.yaml
 bin/nkectl delete cluster <name>
 ```
 
@@ -160,16 +163,13 @@ ConfigMap and sends requests unauthenticated.
 
 ### Getting a tenant kubeconfig
 
-There is no `nkectl get kubeconfig` yet. Read the Secret:
-
 ```bash
-kubectl -n nke-system get secret <cluster>-admin-kubeconfig \
-  -o jsonpath='{.data.value}' | base64 -d > tenant.kubeconfig
+nkectl get kubeconfig <cluster> --output-file tenant.kubeconfig
 ```
 
-`-admin-kubeconfig` holds the verbatim `admin.conf`. The `-kubeconfig` Secret
-beside it is the one CWE consumes, and it becomes a SPIRE exec-auth kubeconfig
-when OIDC is on.
+This reads the `<cluster>-admin-kubeconfig` Secret in `nke-system`, which
+holds the verbatim `admin.conf`. The `-kubeconfig` Secret beside it is the one
+CWE consumes, and it becomes a SPIRE exec-auth kubeconfig when OIDC is on.
 
 ## Path C — a real site
 
@@ -203,18 +203,42 @@ Skip this and the bootstrap runs its full 30 minutes before failing on
 certificate also reaches each node through cloud-init. Without it SPIRE mints a
 new CA on every run that no node trusts.
 
+**A SPIFFE trust domain, when bootstrapping with SPIRE/SPIFFE enabled.** Set
+`spire.trustDomain` in the site spec. It must match the `trust_domain` already
+configured on every host's SPIRE agent and the trust domain that the permanent
+site SPIRE server will use. Do not rely on the bootstrap cluster name to select
+this value: changing it after bootstrap changes every SPIFFE ID and prevents
+the existing agents and workload entries from moving to the permanent server.
+
+**A SPIRE VIP pointed at the bootstrap node.** During the bootstrap the SPIRE
+server runs on the machine you run `nkectl bootstrap site` from, published on
+**30081**. Each node's `spire-agent` reaches it at the address you baked into its
+configuration when you provisioned it, so **that VIP must point at the node you
+run the bootstrap on.** Use a floating IP rather than the node's own address, so
+it still resolves after bootstrapping completes.
+
 **Network.** CWE must reach each node on **15005** and the new API server on
 **6443**, and **30081** on nodes with a TPM thumbprint.
 
-**A jump box** to run `nkectl` on, under `tmux` — not a laptop that sleeps.
+**Run the bootstrap on one of the provisioned bare metal machines**, under
+`tmux` — not a laptop that sleeps. `nkectl` runs directly on that node; there is
+no jump box.
 
-**A registry login** on that box: `nerdctl login nvcr.io`. The images are
+**nerdctl with containerd**, on that machine. `nkectl` drives kind and pulls
+every bootstrap image through nerdctl, and exports
+`KIND_EXPERIMENTAL_PROVIDER=nerdctl` on every kind call itself. **Docker is not
+supported for bootstrapping** — the machine needs no Docker daemon. **Do not run
+nerdctl rootless.** The bootstrap sets up the kind node's networking — an
+iptables rule and a bridge address — which needs a rootful nerdctl; run it as
+root.
+
+**A registry login** on that machine: `nerdctl login nvcr.io`. The images are
 pulled with nerdctl.
 
 **On the NICo side:** a site, a VPC, a subnet or VPC prefix, instance types, and
 an **allocation** against each instance type. An instance type with no allocation
 looks healthy and provisions nothing. See
-[CAPNICo's getting started guide](https://github.com/NVIDIA/cluster-api-provider-nico/blob/main/docs/getting-started.md).
+[CAPNICo's getting started guide](https://github.com/dsx-ai-factory/cluster-api-provider-nico/blob/main/docs/getting-started.md).
 
 ### 1. Build nkectl
 
@@ -234,6 +258,7 @@ cp-03,10.10.50.4,<sha256 of the node's TPM EK>
 ```bash
 nkectl generate sitespec my-site --nodes hosts.csv \
   --set cluster.cniName=calico \
+  --set spire.trustDomain=site.example.com \
   --set spire.caCertFile=./spire-ca.crt \
   --set spire.caKeyFile=./spire-ca.key > sitespec.yaml
 
@@ -251,14 +276,12 @@ leaves nothing schedulable and the node never reaches `Ready`.
 
 ### 3. Point at your images
 
-All three are required and the bootstrap fails without them. Outside a checkout
-you also need `NKECTL_CWE_CHART_PATH` and `NKECTL_CAPI_PROVISIONED_PATH`, and
-those two are not checked up front — a mistake surfaces after the seed cluster
-exists.
+Both are required and the bootstrap fails without them. Outside a checkout you
+also need `NKECTL_CWE_CHART_PATH` and `NKECTL_CAPI_PROVISIONED_PATH`, and those
+two are not checked up front — a mistake surfaces after the seed cluster exists.
 
 ```bash
 export NKECTL_CWE_IMAGE=<cwe-controller image>
-export NKECTL_CWE_PROFILES_IMAGE=<profiles image>
 export NKECTL_CAPI_PROVISIONED_IMAGE=<provisioned provider image>
 ```
 
@@ -273,7 +296,15 @@ The key can come from the environment, from `--registry-api-key`, or from
 
 Where Docker Hub is slow or blocked, point the seed cluster at a mirror:
 `NKECTL_BOOTSTRAP_DOCKERHUB_MIRROR` and `NKECTL_CWE_POSTGRES_CHART`. The Postgres
-chart pull is the step that times out.
+chart pull is the step that times out. The Temporal and SPIRE charts have the
+same knob — `NKECTL_CWE_TEMPORAL_CHART`, `NKECTL_CWE_SPIRE_CHART` and
+`NKECTL_CWE_SPIRE_CRDS_CHART`, each an OCI reference or a local path — so every
+Helm chart the bootstrap installs can come from a mirror or from disk.
+`clusterctl init` still fetches Cluster API and cert-manager from `github.com`.
+For the full set of third-party images
+the bootstrap pulls — Postgres, Temporal, and the SPIRE stack — and to mirror
+them into a local or private registry,
+see [`hack/mirror-bootstrap-images.sh`](../hack/mirror-bootstrap-images.sh).
 
 It creates a throwaway kind cluster, installs Postgres, Temporal, SPIRE, CAPI and
 CWE into it, builds the site cluster on your hosts through `nke-agent`, and
@@ -313,8 +344,8 @@ Use the chart in
 [`controller/deploy/charts/controller`](../controller/deploy/charts/controller).
 It installs **CWE alone**, against a database and a Temporal you provide, and
 defaults to a ClusterIP service with ingress off, so nothing reaches the API
-until you change that. Give it CWE's NICo settings too — `FORGE_URL` and the
-Forge credential Secret — which the bootstrap does not carry over.
+until you change that. Install and configure the infrastructure provider
+separately; the bootstrap does not carry its credentials over.
 
 ```bash
 nkectl config set-site --name my-site --url https://<cwe-url> \
@@ -334,7 +365,7 @@ Tenant clusters need it. Install the provider onto the site cluster with a
 `nico-credentials` Secret in `capnico-system` holding the endpoint, org and
 **one** authentication mode. Prefer client credentials: a password-grant token
 stops provisioning when it expires.
-[CAPNICo's guide](https://github.com/NVIDIA/cluster-api-provider-nico/blob/main/docs/getting-started.md)
+[CAPNICo's guide](https://github.com/dsx-ai-factory/cluster-api-provider-nico/blob/main/docs/getting-started.md)
 is the reference.
 
 ```bash
@@ -366,5 +397,5 @@ repository.
 - [architecture.md](architecture.md) — how CWE, the agent and CAPI fit together
 - [../cli/docs/sitespec.md](../cli/docs/sitespec.md) — every site spec field
 - [../cli/docs/user-flow.md](../cli/docs/user-flow.md) — the command reference
-- [CAPNICo getting started](https://github.com/NVIDIA/cluster-api-provider-nico/blob/main/docs/getting-started.md)
+- [CAPNICo getting started](https://github.com/dsx-ai-factory/cluster-api-provider-nico/blob/main/docs/getting-started.md)
   — the infrastructure provider every real site runs

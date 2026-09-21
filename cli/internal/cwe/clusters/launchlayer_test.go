@@ -9,8 +9,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/NVIDIA/nke/cli/internal/util"
-	"github.com/NVIDIA/nke/controller/api"
+	"github.com/dsx-ai-factory/nke/cli/internal/util"
+	"github.com/dsx-ai-factory/nke/controller/api"
 )
 
 func TestLaunchLayerExamplePostsEveryTypedFieldAndReadsItBack(t *testing.T) {

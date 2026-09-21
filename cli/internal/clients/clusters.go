@@ -4,17 +4,19 @@
 package clients
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
-	api "github.com/NVIDIA/nke/controller/api"
+	api "github.com/dsx-ai-factory/nke/controller/api"
 )
 
-// ListClusters returns all clusters on the site controller.
-func (c *CWEClient) ListClusters(ctx context.Context) ([]api.Cluster, error) {
-	resp, err := c.raw.ListClustersWithResponse(ctx, nil)
+// ListClusters returns the clusters matching params. A nil params lists every
+// cluster on the site controller.
+func (c *CWEClient) ListClusters(ctx context.Context, params *api.ListClustersParams) ([]api.Cluster, error) {
+	resp, err := c.raw.ListClustersWithResponse(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("listing clusters: %w", err)
 	}
@@ -58,6 +60,23 @@ func (c *CWEClient) GetCluster(ctx context.Context, id openapi_types.UUID) (*api
 	return resp.JSON200, nil
 }
 
+// PatchCluster PATCHes the cluster identified by id with body, a JSON
+// document matching UpdateClusterRequest, and returns the cluster as it now
+// stands.
+func (c *CWEClient) PatchCluster(ctx context.Context, id openapi_types.UUID, body []byte) (*api.Cluster, error) {
+	resp, err := c.raw.UpdateClusterWithBodyWithResponse(ctx, id, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("patching cluster: %w", err)
+	}
+	if resp.StatusCode() != 200 {
+		return nil, fmt.Errorf("patching cluster: %w", apiError(resp.Status(), resp.Body))
+	}
+	if resp.JSON200 == nil {
+		return nil, fmt.Errorf("patching cluster: empty response body")
+	}
+	return resp.JSON200, nil
+}
+
 // DeleteCluster deletes a cluster by UUID. Deletion is async.
 func (c *CWEClient) DeleteCluster(ctx context.Context, id openapi_types.UUID) error {
 	resp, err := c.raw.DeleteClusterWithResponse(ctx, id)
@@ -77,17 +96,10 @@ func (c *CWEClient) DeleteCluster(ctx context.Context, id openapi_types.UUID) er
 // index on cluster name (migration 20250407125309_name_uniqueness.go, index
 // clusters_name_unique), so the API rejects duplicate names at creation time.
 func (c *CWEClient) FindClusterByName(ctx context.Context, name string) (*api.Cluster, error) {
-	resp, err := c.raw.ListClustersWithResponse(ctx, &api.ListClustersParams{Name: &name})
+	clusters, err := c.ListClusters(ctx, &api.ListClustersParams{Name: &name})
 	if err != nil {
 		return nil, fmt.Errorf("finding cluster: %w", err)
 	}
-	if resp.StatusCode() != 200 {
-		return nil, fmt.Errorf("finding cluster: %w", apiError(resp.Status(), resp.Body))
-	}
-	if resp.JSON200 == nil {
-		return nil, fmt.Errorf("finding cluster: empty response body")
-	}
-	clusters := resp.JSON200.Clusters
 	switch len(clusters) {
 	case 0:
 		return nil, fmt.Errorf("cluster %q not found", name)

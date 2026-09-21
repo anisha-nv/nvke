@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/client"
 
-	"github.com/NVIDIA/nke/controller/api"
-	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/api"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
 type nodeSetService struct {
@@ -90,18 +90,19 @@ func apiNodeSetFromDB(dbNodeSet *db.NodeSet) (api.NodeSet, error) {
 			}
 		}
 	}
-	_, err := objectFromRawManifest(dbNodeSet.CapiInfraMachineTemplate)
-	if err != nil {
-		if dbNodeSet.ClusterAPIProvider == db.APIProviderLaunchLayer {
-			return api.NodeSet{}, errStoredLaunchLayerIntent
+	if dbNodeSet.Capi != nil {
+		if _, err := objectFromRawManifest(dbNodeSet.Capi.InfraMachineTemplate); err != nil {
+			if dbNodeSet.ClusterAPIProvider == db.APIProviderLaunchLayer {
+				return api.NodeSet{}, errStoredLaunchLayerIntent
+			}
+			return api.NodeSet{}, fmt.Errorf(
+				"objectFromRawManifest failed for infra.machineTemplate on node set %s (nodePoolID=%s, preview=%q): %w",
+				dbNodeSet.ID,
+				dbNodeSet.NodePoolID,
+				truncateManifestForLog(dbNodeSet.Capi.InfraMachineTemplate, 200),
+				err,
+			)
 		}
-		return api.NodeSet{}, fmt.Errorf(
-			"objectFromRawManifest failed for capiInfraMachineTemplate on node set %s (nodePoolID=%s, preview=%q): %w",
-			dbNodeSet.ID,
-			dbNodeSet.NodePoolID,
-			truncateManifestForLog(dbNodeSet.CapiInfraMachineTemplate, 200),
-			err,
-		)
 	}
 	var kubeReservedMemory *string
 	if dbNodeSet.KubeReservedMemory != "" {

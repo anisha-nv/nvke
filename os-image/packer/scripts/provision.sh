@@ -7,47 +7,56 @@
 set -euo pipefail
 
 SRC=/tmp/nke-image
+ROOT_FS_LABEL="${ROOT_FS_LABEL:?ROOT_FS_LABEL is required}"
 
 sudo install -d -m 0755 /usr/lib/nke /etc/nke /var/lib/nke /usr/local/bin
-sudo install -m 0755 "${SRC}/spire-agent" /usr/local/bin/spire-agent
-sudo install -d -m 0755 /usr/local/lib/spire-agent
-sudo install -m 0755 "${SRC}/tpm_attestor_agent" /usr/local/lib/spire-agent/tpm_attestor_agent
-sudo install -m 0755 "${SRC}/spire-configure.sh" /usr/lib/nke/spire-configure.sh
 sudo install -m 0755 "${SRC}/wait-spiffe-socket.sh" /usr/lib/nke/wait-spiffe-socket.sh
-sudo install -m 0644 "${SRC}/spire-agent.conf.tmpl" /usr/lib/nke/spire-agent.conf.tmpl
-sudo install -m 0644 "${SRC}/spire-agent.service" /etc/systemd/system/spire-agent.service
-sudo install -m 0644 "${SRC}/nke-spire-configure.service" /etc/systemd/system/nke-spire-configure.service
 
-sudo install -m 0755 "${SRC}/nke-agent" /usr/local/bin/nke-agent
-sudo install -m 0644 "${SRC}/nke-agent.service" /etc/systemd/system/nke-agent.service
-
-if [[ ! -f /etc/default/nke-agent ]]; then
-  echo 'AGENT_ARGS=""' | sudo tee /etc/default/nke-agent >/dev/null
-fi
-
-if ! id -u spire >/dev/null 2>&1; then
-  sudo useradd -r -s /bin/false -d /var/lib/spire-agent spire
-fi
-# The TPM node attestor opens /dev/tpmrm0, which udev owns tss:tss. Without this
-# spire-agent crash-loops on "permission denied" and nke-agent never starts,
-# because it waits on a workload socket that never opens.
-if getent group tss >/dev/null 2>&1; then
-  sudo usermod -aG tss spire
-fi
-sudo install -d -m 0750 -o spire -g spire /var/lib/spire-agent
-
-sudo systemctl daemon-reload
-sudo systemctl enable nke-spire-configure.service
-sudo systemctl enable spire-agent.service
-sudo systemctl enable nke-agent.service
+# Keep image-specific identity ordering in a drop-in so agent upgrades retain it.
+sudo install -d -m 0755 /etc/systemd/system/nke-agent.service.d
+sudo install -m 0644 "${SRC}/nke-agent-spire.conf" /etc/systemd/system/nke-agent.service.d/10-spire.conf
+# The package enables the agent and creates the default environment file, but
+# the golden image has no instance identity yet: start only on first boot.
+sudo env NKE_AGENT_SKIP_START=1 dpkg -i "${SRC}/nke-agent.deb"
 
 # Stage the CNI debs as a local flat apt repo, so cluster create's `apt-get
 # install nke-cni-...` resolves offline with apt's dependency handling intact.
-# trusted=yes: the content is already on this root fs. amd64 artifacts only.
+# trusted=yes: the content is already on this root fs.
 if [[ -d "${SRC}/debs" ]]; then
   sudo install -d -m 0755 /usr/lib/nke/debs
   sudo install -m 0644 "${SRC}"/debs/*.deb "${SRC}/debs/Packages" /usr/lib/nke/debs/
   echo 'deb [trusted=yes] file:/usr/lib/nke/debs ./' | sudo tee /etc/apt/sources.list.d/nke-local.list >/dev/null
+fi
+
+# Install the Calico manifest package for this image architecture.
+calico_manifest_deb="$(find "${SRC}/debs" -maxdepth 1 -type f -name 'nke-cni-calico-manifests-*.deb' -print -quit 2>/dev/null || true)"
+if [[ -n "${calico_manifest_deb}" ]]; then
+  sudo dpkg -i "${calico_manifest_deb}"
+fi
+
+# Install the spire-agent package. Unlike the CNI and kubeadm-distro debs --
+# which nke-agent installs by name at cluster create, choosing a variant and a
+# version then -- SPIRE is how a node gets an identity at all, so it is baked
+# in rather than staged for later. Its postinst creates the spire user, adds it
+# to tss and enables both units, so nothing here repeats that.
+spire_agent_deb="$(find "${SRC}/debs" -maxdepth 1 -type f -name 'spire-agent_*.deb' -print -quit 2>/dev/null || true)"
+if [[ -z "${spire_agent_deb}" ]]; then
+  echo "no spire-agent deb in ${SRC}/debs; the image would have no SPIRE agent and could not join a cluster" >&2
+  exit 1
+fi
+sudo dpkg -i "${spire_agent_deb}"
+
+# Give cloud-image importers a stable root-filesystem identifier. Do not rely
+# on a device path because it can change between the build VM and a target.
+root_device="$(findmnt -n -o SOURCE /)"
+if [[ ! -b "${root_device}" ]]; then
+  echo "Root filesystem source is not a block device: ${root_device}" >&2
+  exit 1
+fi
+sudo e2label "${root_device}" "${ROOT_FS_LABEL}"
+if [[ "$(sudo e2label "${root_device}")" != "${ROOT_FS_LABEL}" ]]; then
+  echo "Failed to label the root filesystem ${ROOT_FS_LABEL}" >&2
+  exit 1
 fi
 
 # Golden image: next boot must look like a new instance, without the Packer
@@ -59,6 +68,116 @@ fi
 sudo rm -f /var/lib/dbus/machine-id
 sudo rm -f /home/ubuntu/.ssh/authorized_keys
 
+# cidata/autoinstall-lvm.pkrtpl sets kernel.package to the NVIDIA-tuned
+# flavor specifically so, per its own comment, "there's no generic kernel to
+# reboot into or purge afterward" -- but curtin installs it alongside the
+# live ISO's default linux-generic rather than replacing it, leaving a
+# second, never-booted kernel (image + modules + headers, ~450MB) on the
+# golden image. Guard on the running kernel so this can never remove what's
+# actually booted, in case that assumption ever stops holding.
+running_kernel="$(uname -r)"
+if [[ "${running_kernel}" == *generic* ]]; then
+  echo "refusing to purge the generic kernel: the running kernel (${running_kernel}) looks like a generic flavor" >&2
+  exit 1
+fi
+
+for pkg in linux-generic linux-headers-generic linux-image-generic; do
+  if dpkg-query -W -f='${Status}' "${pkg}" 2>/dev/null | grep -q "^install ok installed$"; then
+    sudo apt-get -y purge "${pkg}"
+  fi
+done
+
+# Purging the meta-packages above does not cascade to their versioned
+# dependents: `apt-get autoremove` (below) deliberately never fully removes
+# a kernel family -- /etc/apt/apt.conf.d/01autoremove's
+# VersionedKernelPackages groups every "linux-.*" package and keeps at least
+# one full kernel per flavor installed as a safety net against an
+# unbootable system, regardless of its auto-install mark. Confirmed on a
+# real build: autoremove left linux-image-*-generic, linux-modules-*-generic,
+# linux-headers-*-generic/*-generic's arch-independent linux-headers-<ver>,
+# linux-tools-*-generic and its zfs modules all installed. Purge that whole
+# family by exact name instead, the same way an explicit `apt-get purge
+# <version>` from the command line bypasses the same protection.
+# dpkg-query -W lists a package regardless of its current state, so an
+# already-purged package still known to dpkg (e.g. the old
+# linux-image-unsigned-7.0.0-14-generic rc-state leftover the "Cleaning up"
+# autoremove below sweeps up) can match this glob and win `head -1` over the
+# actually-installed kernel -- filter to installed packages explicitly.
+# Querying with no pattern (filtering in awk instead) also avoids dpkg-query
+# exiting 1 -- which set -euo pipefail would treat as fatal here -- on a
+# system where dpkg has no record at all matching the glob.
+# Consume all input: exiting awk early can give dpkg-query SIGPIPE under pipefail.
+generic_image_pkg="$(dpkg-query -W -f='${Package}\t${Status}\n' 2>/dev/null |
+  awk -F'\t' '!found && $1 ~ /^linux-image-.*-generic$/ && $2 == "install ok installed" { print $1; found=1 }')"
+if [[ -n "${generic_image_pkg}" ]]; then
+  ver="${generic_image_pkg#linux-image-}"      # e.g. 7.0.0-31-generic
+  ver_noflavor="${ver%-generic}"                # e.g. 7.0.0-31
+  generic_kernel_candidates=(
+    "linux-image-${ver}"
+    "linux-modules-${ver}"
+    "linux-modules-extra-${ver}"
+    "linux-headers-${ver}"
+    "linux-headers-${ver_noflavor}"
+    "linux-tools-${ver}"
+    "linux-tools-${ver_noflavor}"
+    "linux-main-modules-zfs-${ver}"
+  )
+  generic_kernel_pkgs=()
+  for pkg in "${generic_kernel_candidates[@]}"; do
+    if dpkg-query -W -f='${Status}' "${pkg}" 2>/dev/null | grep -q "^install ok installed$"; then
+      generic_kernel_pkgs+=("${pkg}")
+    fi
+  done
+  if [[ "${#generic_kernel_pkgs[@]}" -gt 0 ]]; then
+    sudo apt-get -y purge "${generic_kernel_pkgs[@]}"
+  fi
+fi
+
+# Ubuntu splits linux-firmware into one binary package per hardware vendor,
+# but the linux-firmware meta-package hard-Depends on all of them, and
+# linux-image-nvidia (the kernel this image actually boots) hard-Depends on
+# that meta -- `apt-get purge` on an unwanted vendor split would therefore
+# either be refused or cascade into removing the booted kernel's own
+# package. There is no clean `apt purge` here, so delete the files each
+# unwanted package owns directly and leave dpkg's database (and every
+# Depends chain through it) untouched.
+#
+# This image only ever runs on bare-metal NVIDIA GPU nodes with Mellanox
+# ConnectX NICs -- ConnectX firmware lives on-card (flashed via MFT), not in
+# this package, and linux-firmware-mellanox-spectrum is for Mellanox
+# Spectrum *switch* ASICs, not NICs. None of the phone/laptop wifi+BT,
+# integrated graphics, or switch-ASIC vendors below apply. Kept:
+# linux-firmware-misc (carries the intel-ucode CPU microcode, vendor-
+# independent), linux-firmware-nvidia-graphics, and linux-firmware-intel-misc
+# (unclear which Intel NIC/adapter firmware it bundles; small enough to
+# leave alone rather than guess).
+unwanted_firmware_pkgs=(
+  linux-firmware-qualcomm-misc
+  linux-firmware-qualcomm-wireless
+  linux-firmware-qualcomm-graphics
+  linux-firmware-intel-wireless
+  linux-firmware-intel-graphics
+  linux-firmware-mellanox-spectrum
+  linux-firmware-marvell-prestera
+  linux-firmware-marvell-wireless
+  linux-firmware-amd-graphics
+  linux-firmware-amd-misc
+  linux-firmware-mediatek
+  linux-firmware-broadcom-wireless
+  linux-firmware-realtek
+  linux-firmware-qlogic
+  linux-firmware-netronome
+)
+for pkg in "${unwanted_firmware_pkgs[@]}"; do
+  if dpkg-query -W -f='${Status}' "${pkg}" 2>/dev/null | grep -q "^install ok installed$"; then
+    dpkg -L "${pkg}" | while IFS= read -r f; do
+      if [[ -f "${f}" ]]; then
+        sudo rm -f "${f}"
+      fi
+    done
+  fi
+done
+
 # Smaller qcow2: apt's package cache and now-unreferenced blocks (deleted
 # files, old package versions) don't shrink the disk image on their own --
 # fstrim tells the guest kernel to discard them, which the disk_discard =
@@ -67,7 +186,7 @@ sudo rm -f /home/ubuntu/.ssh/authorized_keys
 # ("Converting hard drive...") actually has free space to reclaim. Must run
 # last: any write after this leaves blocks un-trimmed again.
 echo "Cleaning up package cache and trimming filesystem..."
-sudo apt-get -y autoremove
+sudo apt-get -y --purge autoremove
 sudo apt-get clean
 
 # apt's downloaded package indexes and installed man/doc/translation files

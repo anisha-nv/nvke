@@ -5,13 +5,14 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"go.temporal.io/sdk/client"
 
-	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
 // reconciler reconciles control planes.
@@ -49,33 +50,92 @@ func (r *reconciler) reconcile(ctx context.Context, cluster db.Cluster) error {
 		return fmt.Errorf("reading control plane: %w", err)
 	}
 
+	// The order below is deliberate: everything that does not change etcd
+	// membership runs first and is never held up by a delete, and the two steps
+	// that do change it -- join and teardown -- are ordered grow before shrink.
+
+	// Status only; no membership change.
+	if err := r.reconcileControlPlaneRolloutRequiredCondition(ctx, controlPlane); err != nil {
+		return fmt.Errorf("reconciling control plane rollout-required conditions: %w", err)
+	}
+
+	// Host creation only. A pending or in-flight delete must not stall it: the
+	// replacement host is exactly what lets the control plane shrink safely.
 	if err := r.reconcileControlPlaneScaleUp(ctx, cluster, controlPlane); err != nil {
 		return fmt.Errorf("reconciling control plane scale-up: %w", err)
 	}
 
-	// Join ready control-plane hosts one at a time (serial join). Host
-	// provisioning may run in parallel; only the kubeadm join is serialized.
-	if err := r.reconcileControlPlaneJoins(ctx, cluster, controlPlane); err != nil {
-		return fmt.Errorf("reconciling control plane joins: %w", err)
-	}
-
-	// Reconcile node remediation (replace marked nodes)
-	if requeue, err := r.remediateMachines(ctx, cluster, controlPlane); err != nil {
+	// Records delete intent only; the teardown itself is started at the bottom.
+	if _, err := r.remediateMachines(ctx, cluster, controlPlane); err != nil {
 		return err
-	} else if requeue {
-		return nil
 	}
 
-	// Reconcile Kubernetes version upgrades (if cluster K8s version changed)
+	// ConfigMap changes only.
 	if err := r.reconcileK8sUpgrade(ctx, cluster, controlPlane); err != nil {
 		return fmt.Errorf("reconciling k8s upgrade: %w", err)
 	}
 
-	// Tear down control plane nodes needing rollout (e.g. OS profile rolling upgrades).
+	// FIXME: https://github.com/dsx-ai-factory/nke/issues/784 - reconcileNodesNeedingRollout
+	// still tears a node down directly instead of recording intent and letting the
+	// promotion below start it, so rollout teardowns bypass the serialized path.
 	if err := r.reconcileNodesNeedingRollout(ctx, cluster, controlPlane); err != nil {
 		return fmt.Errorf("reconciling control plane nodes needing rollout: %w", err)
 	}
 
+	// Grow before shrink: join a ready host if one is waiting, and leave any
+	// queued delete alone until that join is done.
+	joinInFlight, err := r.reconcileControlPlaneJoins(ctx, cluster, controlPlane)
+	if err != nil {
+		return fmt.Errorf("reconciling control plane joins: %w", err)
+	}
+	if joinInFlight {
+		return nil
+	}
+
+	// Promote the oldest accepted delete into a teardown, one at a time.
+	if _, err := r.reconcileRequestedDeletes(ctx, cluster, controlPlane); err != nil {
+		return fmt.Errorf("reconciling requested control plane deletes: %w", err)
+	}
+
+	return nil
+}
+
+// reconcileControlPlaneRolloutRequiredCondition refreshes each
+// control-plane-controller node's ControlPlaneRolloutRequired condition to reflect
+// current drift from the cluster's desired configuration. It maintains the
+// condition on every managed node (True when drifted, False when converged)
+// independent of the recycling gate, so the "drifted but recycling disabled" case
+// is still surfaced.
+//
+// The drift is computed against the in-memory node first, so the steady state
+// (no change) takes no row locks and issues no writes. Only when the condition
+// would actually flip is the node locked and recomputed before the write, so a
+// concurrent condition writer is not clobbered (same pattern as the
+// node-agent-readiness controller).
+func (r *reconciler) reconcileControlPlaneRolloutRequiredCondition(ctx context.Context, cp *controlPlane) error {
+	for i := range cp.nodes {
+		if !cp.nodes[i].IsManagedByControlPlaneController() {
+			continue
+		}
+		// Cheap check against the in-memory copy; skip untouched nodes lock-free.
+		probe := cp.nodes[i]
+		if !cp.refreshControlPlaneRolloutRequiredCondition(&probe) {
+			continue
+		}
+		lockedNode, err := r.db.GetNodeForUpdate(ctx, cp.nodes[i].ID)
+		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				continue
+			}
+			return fmt.Errorf("locking node %s: %w", cp.nodes[i].ID, err)
+		}
+		if !cp.refreshControlPlaneRolloutRequiredCondition(&lockedNode) {
+			continue
+		}
+		if _, err := r.db.UpdateNode(ctx, &lockedNode); err != nil {
+			return fmt.Errorf("persisting control plane rollout-required condition for node %s: %w", lockedNode.ID, err)
+		}
+	}
 	return nil
 }
 

@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/NVIDIA/nke/controller/api"
-	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/api"
+	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
 func TestValidateCreateNodePoolRequest_CAPICloudInitInputs(t *testing.T) {
@@ -136,9 +136,6 @@ func TestDBNodePoolFromAPI_CopiesCAPICloudInitInputs(t *testing.T) {
 	}
 	dbNodePool, err := dbNodePoolFromAPI(req, "1.32.0")
 	require.NoError(t, err)
-	require.Equal(t, []db.CloudInitFile{{Path: "/etc/custom.conf", Content: "hello"}}, dbNodePool.CapiBootstrapFiles)
-	require.Equal(t, []string{"echo before kubeadm"}, dbNodePool.CapiPreKubeadmCommands)
-
 	capiProvider, err := dbNodePool.CAPIProvider()
 	require.NoError(t, err)
 	require.Equal(t, []db.CloudInitFile{{Path: "/etc/custom.conf", Content: "hello"}}, capiProvider.BootstrapFiles)
@@ -155,8 +152,10 @@ func capiCluster() db.Cluster {
 func forgeCluster() db.Cluster {
 	return db.Cluster{
 		ProviderType: db.ProviderTypeNico,
-		OrgID:        "test-org",
-		SiteID:       uuid.New(),
+		Nico: &db.NicoClusterProvider{
+			OrgID:  "test-org",
+			SiteID: uuid.New(),
+		},
 	}
 }
 
@@ -247,22 +246,23 @@ func TestApplyUpdateNodePoolRequest_NestedNicoPatch(t *testing.T) {
 	subnetB := uuid.New()
 	newForgePool := func() *db.NodePool {
 		pool := &db.NodePool{
-			ID:                    uuid.New(),
-			ClusterID:             uuid.New(),
-			Name:                  "worker",
-			NodeNamePrefix:        "w",
+			ID:                uuid.New(),
+			ClusterID:         uuid.New(),
+			Name:              "worker",
+			NodeNamePrefix:    "w",
+			KubernetesVersion: "1.31.0",
+			NodeLabels:        []string{},
+			Conditions:        db.NodePoolConditions{},
+		}
+		pool.SetNico(db.NicoNodePoolProvider{
 			SubnetIDs:             []uuid.UUID{subnetA},
 			VpcPrefixIDs:          []uuid.UUID{},
 			InstanceTypeID:        uuid.New(),
 			SSHKeyGroupIDs:        []uuid.UUID{},
 			OSProfile:             "os",
 			ConfigProfile:         "cfg",
-			KubernetesVersion:     "1.31.0",
-			NodeLabels:            []string{},
 			DiskSelectionStrategy: db.DiskSelectionStrategySmallest,
-			Conditions:            db.NodePoolConditions{},
-		}
-		pool.SyncProviderFields(db.ProviderTypeNico)
+		})
 		return pool
 	}
 
@@ -277,9 +277,7 @@ func TestApplyUpdateNodePoolRequest_NestedNicoPatch(t *testing.T) {
 		require.NoError(t, applyUpdateNodePoolRequest(forgeCluster(), pool, req))
 
 		require.NotNil(t, pool.Nico)
-		assert.Equal(t, []uuid.UUID{subnetB}, pool.SubnetIDs)
 		assert.Equal(t, []uuid.UUID{subnetB}, pool.Nico.SubnetIDs)
-		assert.Equal(t, "os-v2", pool.OSProfile)
 		assert.Equal(t, "os-v2", pool.Nico.OSProfile)
 
 		got, mappingErr := apiNodePoolFromDB(pool)
@@ -298,7 +296,6 @@ func TestApplyUpdateNodePoolRequest_NestedNicoPatch(t *testing.T) {
 
 		require.NotNil(t, pool.Nico)
 		assert.Empty(t, pool.Nico.SubnetIDs)
-		assert.Empty(t, pool.SubnetIDs)
 	})
 
 	t.Run("an omitted field leaves the stored one alone", func(t *testing.T) {
@@ -317,29 +314,23 @@ func TestApplyUpdateNodePoolRequest_NestedNicoPatch(t *testing.T) {
 
 func TestApiNodePoolFromDB_EmitsNestedWhenPayloadPresent(t *testing.T) {
 	pool := &db.NodePool{
-		ID:                    uuid.New(),
-		ClusterID:             uuid.New(),
-		Name:                  "worker",
-		NodeNamePrefix:        "w",
-		InstanceTypeID:        uuid.New(),
-		SSHKeyGroupIDs:        []uuid.UUID{},
-		OSProfile:             "os",
-		ConfigProfile:         "cfg",
-		KubernetesVersion:     "1.31.0",
-		NodeLabels:            []string{},
-		SubnetIDs:             []uuid.UUID{uuid.New()},
-		VpcPrefixIDs:          []uuid.UUID{},
-		DiskSelectionStrategy: db.DiskSelectionStrategySmallest,
-		Conditions:            db.NodePoolConditions{},
+		ID:                uuid.New(),
+		ClusterID:         uuid.New(),
+		Name:              "worker",
+		NodeNamePrefix:    "w",
+		KubernetesVersion: "1.31.0",
+		NodeLabels:        []string{},
+		Conditions:        db.NodePoolConditions{},
+		Nico: &db.NicoNodePoolProvider{
+			InstanceTypeID:        uuid.New(),
+			SSHKeyGroupIDs:        []uuid.UUID{},
+			OSProfile:             "os",
+			ConfigProfile:         "cfg",
+			SubnetIDs:             []uuid.UUID{uuid.New()},
+			VpcPrefixIDs:          []uuid.UUID{},
+			DiskSelectionStrategy: db.DiskSelectionStrategySmallest,
+		},
 	}
-	pool.SetNico(db.NicoNodePoolProvider{
-		SubnetIDs:             pool.SubnetIDs,
-		InstanceTypeID:        pool.InstanceTypeID,
-		OSProfile:             pool.OSProfile,
-		ConfigProfile:         pool.ConfigProfile,
-		DiskSelectionStrategy: pool.DiskSelectionStrategy,
-		SSHKeyGroupIDs:        pool.SSHKeyGroupIDs,
-	})
 
 	got, mappingErr := apiNodePoolFromDB(pool)
 	require.NoError(t, mappingErr)
@@ -354,22 +345,23 @@ func TestNodePoolGetThenPatchNestedMutableOnly(t *testing.T) {
 	// The rejection of an unstripped echo is covered by
 	// TestOpenAPIValidator_UpdateNodePool, since the update schema is what rejects it.
 	pool := &db.NodePool{
-		ID:                    uuid.New(),
-		ClusterID:             uuid.New(),
-		Name:                  "worker",
-		NodeNamePrefix:        "w",
+		ID:                uuid.New(),
+		ClusterID:         uuid.New(),
+		Name:              "worker",
+		NodeNamePrefix:    "w",
+		KubernetesVersion: "1.31.0",
+		NodeLabels:        []string{},
+		Conditions:        db.NodePoolConditions{},
+	}
+	pool.SetNico(db.NicoNodePoolProvider{
 		SubnetIDs:             []uuid.UUID{uuid.New()},
 		VpcPrefixIDs:          []uuid.UUID{},
 		InstanceTypeID:        uuid.New(),
 		SSHKeyGroupIDs:        []uuid.UUID{uuid.New()},
 		OSProfile:             "os",
 		ConfigProfile:         "cfg",
-		KubernetesVersion:     "1.31.0",
-		NodeLabels:            []string{},
 		DiskSelectionStrategy: db.DiskSelectionStrategySmallest,
-		Conditions:            db.NodePoolConditions{},
-	}
-	pool.SyncProviderFields(db.ProviderTypeNico)
+	})
 	got, mappingErr := apiNodePoolFromDB(pool)
 	require.NoError(t, mappingErr)
 	require.NotNil(t, got.Nico)
@@ -385,7 +377,7 @@ func TestNodePoolGetThenPatchNestedMutableOnly(t *testing.T) {
 			},
 		}
 		require.NoError(t, applyUpdateNodePoolRequest(forgeCluster(), pool, req))
-		assert.Equal(t, []uuid.UUID{newSubnet}, pool.SubnetIDs)
-		assert.Equal(t, "os-v2", pool.OSProfile)
+		assert.Equal(t, []uuid.UUID{newSubnet}, pool.Nico.SubnetIDs)
+		assert.Equal(t, "os-v2", pool.Nico.OSProfile)
 	})
 }

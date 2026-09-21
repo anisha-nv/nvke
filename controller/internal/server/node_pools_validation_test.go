@@ -11,10 +11,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/NVIDIA/nke/controller/api"
-	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/naming"
+	"github.com/dsx-ai-factory/nke/controller/api"
+	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/naming"
 )
 
 // A CAPI cluster rejects a nico payload whatever it carries: the provider shape
@@ -168,7 +168,7 @@ func TestValidateUpdateNodePoolRequest_CAPIRejectsForgeSpecificFieldsIndividuall
 	service := NewNodePoolService(slog.Default(), nil, config.TeleportConfig{}, nil, false)
 
 	t.Run("nico provider shape", func(t *testing.T) {
-		err := service.validateUpdateNodePoolRequest(db.Cluster{SiteID: uuid.Nil, ProviderType: db.ProviderTypeCAPI}, &api.UpdateNodePoolRequest{
+		err := service.validateUpdateNodePoolRequest(db.Cluster{ProviderType: db.ProviderTypeCAPI, Nico: &db.NicoClusterProvider{SiteID: uuid.Nil}}, &api.UpdateNodePoolRequest{
 			Nico: &api.NicoNodePoolProviderUpdate{SubnetIDs: []uuid.UUID{}},
 		})
 
@@ -176,7 +176,7 @@ func TestValidateUpdateNodePoolRequest_CAPIRejectsForgeSpecificFieldsIndividuall
 	})
 
 	t.Run("empty infra.machineTemplate", func(t *testing.T) {
-		err := service.validateUpdateNodePoolRequest(db.Cluster{SiteID: uuid.Nil, ProviderType: db.ProviderTypeCAPI}, &api.UpdateNodePoolRequest{
+		err := service.validateUpdateNodePoolRequest(db.Cluster{ProviderType: db.ProviderTypeCAPI, Nico: &db.NicoClusterProvider{SiteID: uuid.Nil}}, &api.UpdateNodePoolRequest{
 			Infra: &api.InfraNodePoolProviderUpdate{MachineTemplate: map[string]interface{}{}},
 		})
 
@@ -185,7 +185,7 @@ func TestValidateUpdateNodePoolRequest_CAPIRejectsForgeSpecificFieldsIndividuall
 
 	t.Run("nico diskSelectionStrategy", func(t *testing.T) {
 		largest := api.DiskSelectionStrategyLargest
-		err := service.validateUpdateNodePoolRequest(db.Cluster{SiteID: uuid.Nil, ProviderType: db.ProviderTypeCAPI}, &api.UpdateNodePoolRequest{
+		err := service.validateUpdateNodePoolRequest(db.Cluster{ProviderType: db.ProviderTypeCAPI, Nico: &db.NicoClusterProvider{SiteID: uuid.Nil}}, &api.UpdateNodePoolRequest{
 			Nico: &api.NicoNodePoolProviderUpdate{DiskSelectionStrategy: &largest},
 		})
 
@@ -197,7 +197,7 @@ func TestValidateUpdateNodePoolRequest_ForgeRejectsCAPISpecificFieldsIndividuall
 	service := NewNodePoolService(slog.Default(), nil, config.TeleportConfig{}, nil, false)
 
 	t.Run("infra.bootstrapFiles", func(t *testing.T) {
-		err := service.validateUpdateNodePoolRequest(db.Cluster{SiteID: uuid.New(), ProviderType: db.ProviderTypeNico}, &api.UpdateNodePoolRequest{
+		err := service.validateUpdateNodePoolRequest(db.Cluster{ProviderType: db.ProviderTypeNico, Nico: &db.NicoClusterProvider{SiteID: uuid.New()}}, &api.UpdateNodePoolRequest{
 			Infra: &api.InfraNodePoolProviderUpdate{
 				BootstrapFiles: []api.CloudInitFile{{Path: "/etc/custom.conf", Content: "hello"}},
 			},
@@ -208,7 +208,7 @@ func TestValidateUpdateNodePoolRequest_ForgeRejectsCAPISpecificFieldsIndividuall
 
 	t.Run("infra.spireAttestationMethod", func(t *testing.T) {
 		joinToken := api.SpireAttestationMethodJoinToken
-		err := service.validateUpdateNodePoolRequest(db.Cluster{SiteID: uuid.New(), ProviderType: db.ProviderTypeNico}, &api.UpdateNodePoolRequest{
+		err := service.validateUpdateNodePoolRequest(db.Cluster{ProviderType: db.ProviderTypeNico, Nico: &db.NicoClusterProvider{SiteID: uuid.New()}}, &api.UpdateNodePoolRequest{
 			Infra: &api.InfraNodePoolProviderUpdate{
 				SpireAttestationMethod: &joinToken,
 			},
@@ -219,10 +219,18 @@ func TestValidateUpdateNodePoolRequest_ForgeRejectsCAPISpecificFieldsIndividuall
 }
 
 func TestValidateUpdatedNodePool_CAPIRequiresEmptyDiskSelectionStrategy(t *testing.T) {
-	err := validateUpdatedNodePool(capiCluster(), &db.NodePool{
-		CapiInfraMachineTemplate: []byte(`{"apiVersion":"infrastructure.cluster.x-k8s.io/v1beta1","kind":"ExampleMachineTemplate"}`),
-		DiskSelectionStrategy:    db.DiskSelectionStrategy(api.DiskSelectionStrategyCreateLargest),
+	pool := &db.NodePool{}
+	pool.SetCapi(db.CAPINodePoolProvider{
+		InfraMachineTemplate: []byte(`{"apiVersion":"infrastructure.cluster.x-k8s.io/v1beta1","kind":"ExampleMachineTemplate"}`),
 	})
+	// A pool carrying both payloads is unreachable through the API — the update
+	// request for a CAPI pool rejects a nico block outright — so the mixed state
+	// this check guards against has to be assembled by hand.
+	pool.Nico = &db.NicoNodePoolProvider{
+		DiskSelectionStrategy: db.DiskSelectionStrategy(api.DiskSelectionStrategyCreateLargest),
+	}
+
+	err := validateUpdatedNodePool(capiCluster(), pool)
 
 	require.EqualError(t, err, "nico.diskSelectionStrategy is not supported")
 }

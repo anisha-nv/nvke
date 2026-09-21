@@ -11,7 +11,7 @@ development. One server and one API support two lifecycle backends:
 Both backends can run at the same time. They share the catalog, API, and common
 instance records while keeping backend-specific runtime behavior separate.
 
-This service was called `forge-vms` until [#279](https://github.com/NVIDIA/nke/pull/279). The rename is a hard cut with
+This service was called `forge-vms` until [#279](https://github.com/dsx-ai-factory/nke/pull/279). The rename is a hard cut with
 no compatibility shims, so a host that ran the old build needs a one-time migration.
 
 ## Selecting a backend
@@ -111,7 +111,7 @@ and TPM behavior.
 ### Migrating from `forge-vms`
 
 This service was called `forge-vms` until
-[#279](https://github.com/NVIDIA/nke/pull/279). The rename is a hard cut with no
+[#279](https://github.com/dsx-ai-factory/nke/pull/279). The rename is a hard cut with no
 compatibility shims, so a host that ran the old build needs a one-time migration.
 
 First destroy any VMs the old build left behind. They are named `forge-vm-*`,
@@ -902,14 +902,9 @@ Subnet CIDRs and VPC prefixes are auto-hydrated from `NICO_VMS_BRIDGE_CIDR` at s
 
 ### Manual
 
-Point nke-controller at the nico-sim server:
-
-```bash
-FORGE_ENVIRONMENT=test FORGE_URL=http://localhost:18080
-```
-
-Register each site that nke-controller should use. Clusters pointing at the VM site use
-nico-vms; clusters pointing at the container site use nico-containers.
+Configure CAPNICo's credentials Secret to use the nico-sim endpoint. Clusters
+pointing at the VM site use nico-vms; clusters pointing at the container site
+use nico-containers.
 
 ### With Tilt (recommended)
 

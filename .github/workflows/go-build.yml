@@ -61,7 +61,7 @@ jobs:
   build:
     name: Build binaries
     runs-on: ubuntu-latest
-    if: github.repository == 'NVIDIA/nke'
+    if: github.repository == 'dsx-ai-factory/nke'
     timeout-minutes: 15
     permissions:
       contents: read
@@ -93,11 +93,25 @@ jobs:
       #
       # The checkout above is shallow and has no tags, so `git describe --tags`
       # finds nothing and the version falls back to the commit. That passes.
+      # go.work owns the Go version; the Dockerfiles and the Flox manifest
+      # cannot derive it, so this is what notices when a hand-kept copy drifts.
+      # Reads files only, so it is safe for a fork pull request.
+      - name: Check the Go version copies agree with go.work
+        run: make go-version-check
+
       - name: Build
         run: make version-check
 
+      # -race like controller-test.yml:133-135. The provisioned provider is a
+      # controller-runtime reconciler, so it is concurrent by construction.
       - name: Test OS-image checker
+        env:
+          CGO_ENABLED: "1"
+          GO_TEST_FLAGS: -race
         run: make -C os-image test
 
       - name: Test provisioned infrastructure provider
+        env:
+          CGO_ENABLED: "1"
+          GO_TEST_FLAGS: -race
         run: make -C cluster-api-provider-provisioned test

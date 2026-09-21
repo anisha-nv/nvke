@@ -7,9 +7,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/NVIDIA/nke/controller/api"
-	"github.com/NVIDIA/nke/controller/internal/capi/validation"
-	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/api"
+	"github.com/dsx-ai-factory/nke/controller/internal/capi/validation"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
 // API mode is explicit. Raw manifests never select typed admission by kind.

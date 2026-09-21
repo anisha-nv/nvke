@@ -1,11 +1,16 @@
 # Shared nke-system namespace and tenant RBAC ConfigMap.
 #
-# The nke-system namespace is created unconditionally (Prune=false): the CWE
-# controller that reconciles tenant access publishes per-cluster Secrets
-# (<cluster>-kubeconfig, <cluster>-cluster-trust-bundle) into it for every reconciled
-# cluster, so it must exist whenever that controller runs, independent of
-# tenantAccess.enabled and nkeOIDCAuth.enabled. Keeping it unconditional also means
-# a site that has published Secrets and is then disabled keeps them addressable.
+# The nke-system Namespace is rendered when nkeSystemNamespace.create is true
+# (the default), irrespective of whether tenantAccess.enabled or nkeOIDCAuth.enabled is true.
+# controller publishes per-cluster Secrets (<cluster>-kubeconfig,
+# <cluster>-cluster-trust-bundle) into it, so the Namespace must stay even if
+# those flags are later turned off. Two annotations are set unconditionally
+# rather than left to values, because they are invariants and not preferences:
+# helm.sh/resource-policy: keep skips Helm uninstall, and
+# argocd.argoproj.io/sync-options: Prune=false,Delete=false survives an Argo
+# prune or Application delete. Neither stops a kubectl delete of the Namespace;
+# only an admission policy does. Further annotations come from
+# nkeSystemNamespace.annotations.
 #
 # The nke-rbac ConfigMap (key manifest.yaml) is rendered whenever
 # spiffe.trustDomain is set, not when the live nkeOIDCAuth flag is on.
@@ -19,7 +24,11 @@ kind: Namespace
 metadata:
   name: nke-system
   annotations:
-    argocd.argoproj.io/sync-options: Prune=false
+    helm.sh/resource-policy: keep
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    {{- with .Values.nkeSystemNamespace.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 {{- end }}
 {{- if .Values.nkeOIDCAuth.enabled }}
 {{- /*
@@ -68,6 +77,7 @@ metadata:
 {{- $capiManagerSubject := .Values.spiffe.capiManagerSubject | default (printf "spiffe://%s/nke-service/capi-manager" $td) }}
 {{- $capiKubeadmControlPlaneManagerSubject := .Values.spiffe.capiKubeadmControlPlaneManagerSubject | default (printf "spiffe://%s/nke-service/capi-kubeadm-control-plane-manager" $td) }}
 {{- $capdManagerSubject := .Values.spiffe.capdManagerSubject | default (printf "spiffe://%s/nke-service/capd-manager" $td) }}
+{{- $tenantRbacName := .Values.nkeOIDCAuth.tenantRbacName }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -81,7 +91,7 @@ data:
     apiVersion: rbac.authorization.k8s.io/v1
     kind: ClusterRole
     metadata:
-      name: nke:cwe
+      name: {{ $tenantRbacName }}
     rules:
       - apiGroups: [""]
         resources: ["nodes"]
@@ -112,7 +122,7 @@ data:
     apiVersion: rbac.authorization.k8s.io/v1
     kind: Role
     metadata:
-      name: nke:cwe
+      name: {{ $tenantRbacName }}
       namespace: kube-system
     rules:
       - apiGroups: [""]
@@ -139,7 +149,7 @@ data:
     apiVersion: rbac.authorization.k8s.io/v1
     kind: Role
     metadata:
-      name: nke:cwe
+      name: {{ $tenantRbacName }}
       namespace: kube-node-lease
     rules:
       - apiGroups: ["coordination.k8s.io"]
@@ -149,20 +159,20 @@ data:
     apiVersion: rbac.authorization.k8s.io/v1
     kind: ClusterRoleBinding
     metadata:
-      name: nke:cwe
+      name: {{ $tenantRbacName }}
     subjects:
       - kind: User
         name: {{ $cweSubject | quote }}
         apiGroup: rbac.authorization.k8s.io
     roleRef:
       kind: ClusterRole
-      name: nke:cwe
+      name: {{ $tenantRbacName }}
       apiGroup: rbac.authorization.k8s.io
     ---
     apiVersion: rbac.authorization.k8s.io/v1
     kind: RoleBinding
     metadata:
-      name: nke:cwe
+      name: {{ $tenantRbacName }}
       namespace: kube-system
     subjects:
       - kind: User
@@ -170,13 +180,13 @@ data:
         apiGroup: rbac.authorization.k8s.io
     roleRef:
       kind: Role
-      name: nke:cwe
+      name: {{ $tenantRbacName }}
       apiGroup: rbac.authorization.k8s.io
     ---
     apiVersion: rbac.authorization.k8s.io/v1
     kind: RoleBinding
     metadata:
-      name: nke:cwe
+      name: {{ $tenantRbacName }}
       namespace: kube-node-lease
     subjects:
       - kind: User
@@ -184,7 +194,7 @@ data:
         apiGroup: rbac.authorization.k8s.io
     roleRef:
       kind: Role
-      name: nke:cwe
+      name: {{ $tenantRbacName }}
       apiGroup: rbac.authorization.k8s.io
     ---
     apiVersion: rbac.authorization.k8s.io/v1

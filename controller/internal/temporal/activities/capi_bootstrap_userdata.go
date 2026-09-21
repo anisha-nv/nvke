@@ -12,8 +12,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/NVIDIA/nke/controller/internal/constants"
-	"github.com/NVIDIA/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/constants"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
 //go:embed capi_spire_agent.conf.tmpl
@@ -112,10 +112,12 @@ func (a *Activities) renderCAPIBootstrapUserData(
 			},
 		)
 	}
+	runCommands := append([]string(nil), capiNodeSetProvider.PreKubeadmCommands...)
+	runCommands = append(runCommands, a.nodeAgentTLSJWTBootstrapCommands()...)
 
 	userData := capiCloudInitConfig{
 		WriteFiles: files,
-		RunCmd:     append([]string(nil), capiNodeSetProvider.PreKubeadmCommands...),
+		RunCmd:     runCommands,
 	}
 
 	yamlBytes, err := yaml.Marshal(userData)

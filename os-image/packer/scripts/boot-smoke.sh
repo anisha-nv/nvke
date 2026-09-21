@@ -8,7 +8,7 @@
 # server -- just proves the image boots on its own.
 #
 # QCOW defaults to the single *.qcow2 under output-non-fde/ (its filename
-# encodes the Ubuntu version/arch, e.g. nke-node-non-fde-ubuntu-26.04-amd64.qcow2
+# encodes the Ubuntu version/arch, e.g. nke-node-non-fde-ubuntu-26.04.1-amd64.qcow2
 # -- see vm_name in nke-node-non-fde.pkr.hcl). This variant is UEFI-installed,
 # so OVMF_CODE (and optionally OVMF_VARS_TEMPLATE) is required:
 #   OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd ./boot-smoke.sh
@@ -37,6 +37,8 @@ OVMF_VARS_TEMPLATE="${OVMF_VARS_TEMPLATE:-/usr/share/OVMF/OVMF_VARS_4M.fd}"
 # amd64 or arm64. Must match the qcow2 being smoke-tested -- see the same
 # ARCH-vs-host-arch reasoning in packer/Makefile's ACCELERATOR probe.
 ARCH="${ARCH:-amd64}"
+ROOT_FS_LABEL="${ROOT_FS_LABEL:-cloudimg-rootfs}"
+TARGET_DISK_SIZE="${TARGET_DISK_SIZE:-20G}"
 
 case "${ARCH}" in
   amd64)
@@ -67,8 +69,13 @@ if [[ "$(uname -m)" == "${ARCH_UNAME}" && -c /dev/kvm && -w /dev/kvm ]]; then
   BOOT_TIMEOUT="${BOOT_TIMEOUT:-180}"
 else
   echo "boot-smoke: no usable same-arch /dev/kvm, booting under software emulation (slower)" >&2
-  ACCEL_ARGS=(-accel tcg -cpu max)
-  BOOT_TIMEOUT="${BOOT_TIMEOUT:-1200}"
+  # Same knob as packer/Makefile: on an arm64 host "max" turns on pointer auth
+  # with QARMA5, which tcg emulates far too slowly; impdef keeps it cheap.
+  CPU_MODEL=max
+  [[ "${ARCH}" == "arm64" ]] && CPU_MODEL="max,pauth-impdef=on"
+  ACCEL_ARGS=(-accel tcg -cpu "${CPU_MODEL}")
+  # About 2 min under KVM; tcg runs at roughly 10x that.
+  BOOT_TIMEOUT="${BOOT_TIMEOUT:-2400}"
 fi
 
 if [[ ! -f "${QCOW}" ]]; then
@@ -94,8 +101,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Copy-on-write overlay so the smoke test never mutates the built artifact.
-qemu-img create -f qcow2 -F qcow2 -b "${QCOW}" "${DISK}" >/dev/null
+# Load the artifact into an independent target and make that target larger
+# than the build disk. This exercises the same size change as a deployment to
+# a larger physical disk and never mutates the source artifact.
+qemu-img convert -f qcow2 -O qcow2 "${QCOW}" "${DISK}"
+qemu-img resize "${DISK}" "${TARGET_DISK_SIZE}" >/dev/null
+target_disk_bytes="$(qemu-img info --output=json "${DISK}" | awk '/"virtual-size"/ {gsub(/[^0-9]/, "", $0); print; exit}')"
+if [[ -z "${target_disk_bytes}" ]]; then
+  echo "boot-smoke: could not determine target disk size" >&2
+  exit 1
+fi
 
 cat >"${WORKDIR}/user-data" <<EOF
 #cloud-config
@@ -112,8 +127,8 @@ if [[ -n "${OVMF_CODE}" ]]; then
   EFIVARS="${WORKDIR}/OVMF_VARS.fd"
   cp "${OVMF_VARS_TEMPLATE}" "${EFIVARS}"
   EFI_ARGS=(
-    -drive if=pflash,format=raw,readonly=on,file="${OVMF_CODE}"
-    -drive if=pflash,format=raw,file="${EFIVARS}"
+    -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}"
+    -drive "if=pflash,format=raw,file=${EFIVARS}"
   )
 fi
 
@@ -153,15 +168,59 @@ echo "boot-smoke: VM booted and completed cloud-init OK"
 timeout 30 ssh -i "${SSH_KEY}" -p "${SSH_PORT}" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=5 -o BatchMode=yes \
-    ubuntu@127.0.0.1 bash -s <<'EOF'
+    ubuntu@127.0.0.1 bash -s -- "${ROOT_FS_LABEL}" "${target_disk_bytes}" <<'EOF'
 set -euo pipefail
+root_fs_label=$1
+target_disk_bytes=$2
+test "$(findmnt -n -o LABEL /)" = "${root_fs_label}"
+systemctl is-active lvm-growth-firstboot.service
+root_bytes=$(df -B1 --output=size / | tail -n 1 | tr -d ' ')
+minimum_root_bytes=$((target_disk_bytes * 80 / 100))
+test "${root_bytes}" -ge "${minimum_root_bytes}"
 systemctl is-enabled nke-agent.service
 systemctl is-enabled spire-agent.service
 systemctl is-enabled nke-spire-configure.service
-test -x /usr/local/bin/nke-agent || test -x /usr/bin/nke-agent
+test -x /usr/local/bin/nke-agent
+test -x /usr/local/bin/nke-agent-updater
+dpkg-query -W -f='${Status}\n' nke-agent | grep -Fxq 'install ok installed'
+for path in /usr/local/bin/nke-agent /usr/local/bin/nke-agent-updater \
+  /etc/systemd/system/nke-agent.service /etc/systemd/system/nke-agent-updater@.service; do
+  test "$(dpkg-query -S "${path}" | cut -d: -f1)" = nke-agent
+done
+systemctl cat nke-agent.service | grep -Fx 'ExecStartPre=/usr/lib/nke/wait-spiffe-socket.sh'
 test -x /usr/local/bin/spire-agent
+test -x /usr/local/lib/spire-agent/tpm_attestor_agent
+test -x /usr/local/bin/get_tpm_pubhash
 test -x /usr/lib/nke/spire-configure.sh
 test -x /usr/lib/nke/wait-spiffe-socket.sh
+dpkg-query -W -f='${Status}\n' 'nke-cni-calico-manifests-*' | grep -Fxq 'install ok installed'
+# The paths above would also pass against the raw-binary install this package
+# replaced, so assert dpkg actually owns them.
+dpkg-query -W -f='${Status}\n' spire-agent | grep -Fxq 'install ok installed'
+test "$(dpkg-query -S /usr/local/bin/spire-agent | cut -d: -f1)" = spire-agent
+# A unit left in /etc would mask the vendor unit the package ships in /lib.
+test ! -e /etc/systemd/system/spire-agent.service
+id -u spire >/dev/null
+# A profile's agent.conf carries plugin_checksum = "${TPM_PLUGIN_CHECKSUM}"
+# verbatim. Without both halves of this, SPIRE compares the plugin against that
+# literal string, refuses to load it, and the node never attests.
+test "$(. /etc/spire-agent/spire-agent.env; echo "${TPM_PLUGIN_CHECKSUM}")" \
+    = "$(sha256sum /usr/local/lib/spire-agent/tpm_attestor_agent | cut -d' ' -f1)"
+grep -Fq -- -expandEnv /lib/systemd/system/spire-agent.service
+
+# The local apt repo has to offer what a node installs at cluster create.
+# These are staged rather than installed, so nothing above would notice them
+# missing: the arm64 image shipped with no kubeadm at all, and the failure
+# only showed up inside a tenant guest, mid-provision.
+# Not `| grep -q`: grep exits at the first match and SIGPIPEs apt-cache, which
+# set -o pipefail above then reports as a failure.
+have_in_local_repo() {
+    [[ -n "$(apt-cache search --names-only "^$1-[0-9]")" ]] ||
+        { echo "the image's local apt repo offers no $1-* package" >&2; return 1; }
+}
+have_in_local_repo nke-kubeadm-distro
+have_in_local_repo nke-cni-calico-images
+
 EOF
 
-echo "boot-smoke: nke-agent and spire-agent are installed and enabled"
+echo "boot-smoke: image contract and root-filesystem growth are satisfied"

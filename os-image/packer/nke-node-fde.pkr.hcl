@@ -23,7 +23,7 @@ packer {
 
 variable "iso_url" {
   type        = string
-  default     = "https://releases.ubuntu.com/26.04/ubuntu-26.04-live-server-amd64.iso"
+  default     = "https://releases.ubuntu.com/26.04/ubuntu-26.04.1-live-server-amd64.iso"
   description = "Ubuntu 26.04 Server installer ISO (autoinstall needs the installer, not the cloud image)."
 }
 
@@ -46,6 +46,17 @@ variable "luks_passphrase" {
   description = "Build-time-only LUKS passphrase (must match the autoinstall storage password). Replaced by a TPM binding on first boot; see docs/full-disk-encryption.md."
 }
 
+variable "root_fs_label" {
+  type        = string
+  default     = "cloudimg-rootfs"
+  description = "Filesystem label applied to the root volume for cloud-image discovery."
+
+  validation {
+    condition     = length(var.root_fs_label) > 0 && length(var.root_fs_label) <= 16
+    error_message = "The root_fs_label value must contain 1 to 16 characters for ext4."
+  }
+}
+
 # "kvm" when the host exposes /dev/kvm, "tcg" for software emulation.
 # Probed rather than declared: not every build host (or CI runner) exposes
 # /dev/kvm, and a fixed value would either fail to build at all where it's
@@ -60,6 +71,12 @@ variable "cpu_model" {
   type        = string
   default     = "host"
   description = "QEMU CPU model. Use 'host' with KVM, 'max' with TCG emulation."
+}
+
+variable "cpus" {
+  type        = number
+  default     = 4
+  description = "Guest vCPUs. packer/Makefile raises it under TCG emulation."
 }
 
 variable "ssh_timeout" {
@@ -97,8 +114,8 @@ locals {
   ssh_dir   = "${path.root}/.ssh"
   # Deliberately NOT under local.artifacts: the "file" provisioner below
   # uploads local.artifacts/ to the guest wholesale, and this is a
-  # multi-gigabyte ISO, not one of fetch-artifacts.sh's nke-agent/spire-agent
-  # downloads. packer/scripts/prepare-installer-iso.sh downloads iso_url into
+  # multi-gigabyte ISO, not one of the nke-agent/spire-agent artifacts staged
+  # by Make. packer/scripts/prepare-installer-iso.sh downloads iso_url into
   # this directory and produces a GRUB-timeout-patched sibling next to it
   # (see the Makefile) before packer build runs; iso_url below points at
   # that patched copy.
@@ -156,15 +173,7 @@ source "qemu" "nke-fde" {
   # the original download against var.iso_checksum before patching it.
   iso_checksum = "none"
 
-  # machine_type is the QEMU virtual chipset, not a CPU setting — cpu_model
-  # (below) is the actual CPU. This matters here because this variant boots
-  # via OVMF/UEFI (efi_boot below), and the legacy "pc" (i440fx) machine type
-  # QEMU falls back to when machine_type is left unset predates PCIe/UEFI as
-  # first-class targets — a known-fragile pairing with OVMF. q35 (a modern
-  # PCIe-based chipset) resolved intermittent guest-kernel crashes (overlayfs
-  # page faults during curtin's install-time rsync) seen while developing
-  # this variant on "pc". "virt" is arm64's equivalent -- see
-  # local.machine_type's comment.
+  # Use q35 for amd64 UEFI and virt for arm64; cpu_model selects the CPU.
   qemu_binary    = local.qemu_binary
   machine_type   = local.machine_type
   cpu_model      = var.cpu_model
@@ -176,6 +185,8 @@ source "qemu" "nke-fde" {
   # this, QEMU silently drops the guest's TRIM/discard commands, so freed
   # blocks still look "used" to Packer's post-build compaction step.
   disk_discard = "unmap"
+  # See the same setting in nke-node-non-fde.pkr.hcl.
+  disk_cache = "unsafe"
 
   efi_firmware_code = local.efi_firmware_code
   efi_firmware_vars = local.efi_firmware_vars
@@ -187,6 +198,7 @@ source "qemu" "nke-fde" {
       luks_enabled          = true
       luks_passphrase       = var.luks_passphrase
       nvidia_kernel_package = local.nvidia_kernel_package
+      serial_console        = local.arch == "arm64" ? "ttyAMA0" : "ttyS0"
     })
     "/meta-data" = "instance-id: nke-packer-fde\nlocal-hostname: nke-packer-fde\n"
   }
@@ -223,29 +235,21 @@ source "qemu" "nke-fde" {
   ssh_username           = "ubuntu"
   ssh_private_key_file   = "${local.ssh_dir}/id_ed25519"
   ssh_timeout            = var.ssh_timeout
-  ssh_handshake_attempts = 1000
+  # See the same setting in nke-node-non-fde.pkr.hcl.
+  ssh_handshake_attempts = 10000
 
   shutdown_command = "sudo shutdown -P now"
   vm_name          = "nke-node-fde-ubuntu-${local.ubuntu_version}-${local.arch}.qcow2"
   output_directory = "${path.root}/output-fde"
   headless         = true
   memory           = 8192
-  cpus             = 4
+  cpus             = var.cpus
   net_device       = "virtio-net"
 }
 
 build {
   name    = "nke-node-fde"
   sources = ["source.qemu.nke-fde"]
-
-  # Same artifact fetch + install as the base image.
-  provisioner "shell-local" {
-    environment_vars = [
-      "ARTIFACTS_DIR=${local.artifacts}",
-      "ARCH=${local.arch}",
-    ]
-    script = "${path.root}/scripts/fetch-artifacts.sh"
-  }
 
   provisioner "shell" {
     inline = ["mkdir -p /tmp/nke-image/luks"]
@@ -271,7 +275,8 @@ build {
   }
 
   provisioner "shell" {
-    script = "${path.root}/scripts/provision.sh"
+    environment_vars = ["ROOT_FS_LABEL=${var.root_fs_label}"]
+    script           = "${path.root}/scripts/provision.sh"
   }
 
   # See scripts/compress-qcow2.sh's header: the qemu builder's own

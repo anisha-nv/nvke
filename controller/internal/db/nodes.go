@@ -6,6 +6,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -23,22 +24,24 @@ type Node struct {
 	// - worker nodes remain nodepool-managed with non-null node_pool_id/node_set_id
 	// Today active flows still create control-plane nodes with non-null node_pool_id/node_set_id;
 	// null values are reserved for the future no-nodepool control-plane path.
-	NodePoolID                  uuid.UUID         `bun:"type:uuid,nullzero"` // Denormalized for api/join performance, also Node's will never change NodePools.
-	NodeSetID                   uuid.UUID         `bun:"type:uuid,nullzero"`
-	ClusterID                   uuid.UUID         `bun:"type:uuid,notnull"`
-	ControlPlane                bool              `bun:"type:boolean,notnull,default:false"`
-	InstanceTypeID              uuid.UUID         `bun:"type:uuid,notnull"`
-	Name                        string            `bun:"type:text,notnull"`
-	ForgeInstanceID             string            `bun:"type:text,notnull"`
-	ForgeMachineID              string            `bun:"type:text,notnull"`
-	IP                          string            `bun:"type:text,notnull"`
-	SpiffeEnabled               bool              `bun:"type:boolean,notnull,default:false"`
-	Conditions                  NodeConditions    `bun:"type:jsonb"`
-	AgentVersion                string            `bun:"type:text,notnull,default:''"`
-	ControlPlaneConfigurationID uuid.UUID         `bun:"configuration_id,type:uuid,nullzero"`
-	CreatedAt                   time.Time         `bun:"type:timestamptz,notnull,default:current_timestamp"`
-	UpdatedAt                   time.Time         `bun:"type:timestamptz,notnull,default:current_timestamp"`
-	Nico                        *NicoNodeProvider `bun:"nico,type:jsonb"`
+	NodePoolID                  uuid.UUID      `bun:"type:uuid,nullzero"` // Denormalized for api/join performance, also Node's will never change NodePools.
+	NodeSetID                   uuid.UUID      `bun:"type:uuid,nullzero"`
+	ClusterID                   uuid.UUID      `bun:"type:uuid,notnull"`
+	ControlPlane                bool           `bun:"type:boolean,notnull,default:false"`
+	Name                        string         `bun:"type:text,notnull"`
+	IP                          string         `bun:"type:text,notnull"`
+	SpiffeEnabled               bool           `bun:"type:boolean,notnull,default:false"`
+	Conditions                  NodeConditions `bun:"type:jsonb"`
+	AgentVersion                string         `bun:"type:text,notnull,default:''"`
+	ControlPlaneConfigurationID uuid.UUID      `bun:"configuration_id,type:uuid,nullzero"`
+	// DeleteRequest holds the TeardownNode input recorded when a delete was
+	// accepted but not yet started. It is set only on the control-plane-controller
+	// delete path, where the API records intent and the control-plane controller
+	// starts the teardown one node at a time; nil everywhere else.
+	DeleteRequest json.RawMessage   `bun:"delete_request,type:jsonb,nullzero"`
+	CreatedAt     time.Time         `bun:"type:timestamptz,notnull,default:current_timestamp"`
+	UpdatedAt     time.Time         `bun:"type:timestamptz,notnull,default:current_timestamp"`
+	Nico          *NicoNodeProvider `bun:"nico,type:jsonb"`
 }
 
 type NicoNodeProvider struct {
@@ -63,11 +66,16 @@ func (n *Node) GetSpiffeID(trustDomain string) string {
 }
 
 type NodeConditions struct {
-	Pending                 Condition `json:"pending"`
-	Provisioning            Condition `json:"provisioning"`
-	ReadyToJoin             Condition `json:"readyToJoin"`
-	Joined                  Condition `json:"joined"`
-	Provisioned             Condition `json:"provisioned"`
+	Pending             Condition `json:"pending"`
+	ProvisioningClaimed Condition `json:"provisioningClaimed"`
+	Provisioning        Condition `json:"provisioning"`
+	ReadyToJoin         Condition `json:"readyToJoin"`
+	Joined              Condition `json:"joined"`
+	Provisioned         Condition `json:"provisioned"`
+	// DeleteRequested marks a delete that has been accepted but whose teardown
+	// has not started yet. Deleting means the teardown itself is in flight, so at
+	// most one of the two is true at a time.
+	DeleteRequested         Condition `json:"deleteRequested"`
 	Deleting                Condition `json:"deleting"`
 	KubernetesReady         Condition `json:"kubernetesReady"`
 	KubernetesUnschedulable Condition `json:"kubernetesUnschedulable"`
@@ -76,6 +84,60 @@ type NodeConditions struct {
 	MarkedForRecycling      Condition `json:"markedForRecycling"`
 	MarkedForRepair         Condition `json:"markedForRepair"`
 	TeleportRegistered      Condition `json:"teleportRegistered"`
+	// ControlPlaneRolloutRequired reports whether a control-plane-controller-managed
+	// node's pinned control-plane configuration has drifted from the cluster's
+	// desired configuration and the node therefore needs to be rolled (True), or is
+	// up to date (False). Zero value (empty status) for nodes not managed by the
+	// control-plane controller.
+	ControlPlaneRolloutRequired Condition `json:"controlPlaneRolloutRequired"`
+}
+
+// NamedCondition pairs a condition with the name it carries in JSON.
+type NamedCondition struct {
+	Name      string
+	Condition Condition
+}
+
+// All returns every condition with its name, in declaration order. It is the
+// one list of the set's members: Equal compares against it, and callers that
+// need to report which condition changed read it rather than keeping a second
+// list that can drift out of step with this one.
+//
+// Every field must appear here; TestUnit_NodeConditionsAllCoversEveryField
+// fails if one is missed.
+func (c NodeConditions) All() []NamedCondition {
+	return []NamedCondition{
+		{"pending", c.Pending},
+		{"provisioningClaimed", c.ProvisioningClaimed},
+		{"provisioning", c.Provisioning},
+		{"readyToJoin", c.ReadyToJoin},
+		{"joined", c.Joined},
+		{"provisioned", c.Provisioned},
+		{"deleteRequested", c.DeleteRequested},
+		{"deleting", c.Deleting},
+		{"kubernetesReady", c.KubernetesReady},
+		{"kubernetesUnschedulable", c.KubernetesUnschedulable},
+		{"nodeAgentReady", c.NodeAgentReady},
+		{"rebooting", c.Rebooting},
+		{"markedForRecycling", c.MarkedForRecycling},
+		{"markedForRepair", c.MarkedForRepair},
+		{"teleportRegistered", c.TeleportRegistered},
+		{"controlPlaneRolloutRequired", c.ControlPlaneRolloutRequired},
+	}
+}
+
+// Equal reports whether two condition sets describe the same state. Use this
+// instead of ==, which compares the monotonic clock reading and the *Location
+// pointer of every LastTransitionTime and so reports a difference for two
+// identical instants that took different routes into memory.
+func (c NodeConditions) Equal(other NodeConditions) bool {
+	mine, theirs := c.All(), other.All()
+	for i := range mine {
+		if !mine[i].Condition.Equal(theirs[i].Condition) {
+			return false
+		}
+	}
+	return true
 }
 
 type NodeConditionStatus struct {
@@ -106,11 +168,6 @@ type NodeInfo struct {
 	ConfigProfile  string    `bun:"config_profile"`
 }
 
-func (n *Node) BeforeUpdate() error {
-	n.UpdatedAt = time.Now()
-	return nil
-}
-
 func (n *Node) NicoProvider() (NicoNodeProvider, error) {
 	if n.Nico == nil {
 		return NicoNodeProvider{}, fmt.Errorf("%w: node %s nico", ErrMissingProviderPayload, n.ID)
@@ -120,17 +177,36 @@ func (n *Node) NicoProvider() (NicoNodeProvider, error) {
 
 func (n *Node) SetNico(provider NicoNodeProvider) {
 	n.Nico = &provider
-	n.ForgeInstanceID = provider.ForgeInstanceID
-	n.ForgeMachineID = provider.ForgeMachineID
-	n.InstanceTypeID = provider.InstanceTypeID
 }
 
-func (n *Node) SyncProviderFields() {
-	n.Nico = &NicoNodeProvider{
-		ForgeInstanceID: n.ForgeInstanceID,
-		ForgeMachineID:  n.ForgeMachineID,
-		InstanceTypeID:  n.InstanceTypeID,
+// NicoInstanceTypeID returns the instance type recorded on the node's Nico
+// payload, or the zero UUID when no type has been recorded yet. Control-plane
+// nodes are created before the scheduler picks a type, so the zero value is a
+// normal state rather than an error.
+func (n *Node) NicoInstanceTypeID() uuid.UUID {
+	if n.Nico == nil {
+		return uuid.Nil
 	}
+	return n.Nico.InstanceTypeID
+}
+
+// NicoForgeInstanceID returns the Forge instance backing the node, or the empty
+// string when the node has no Forge instance — a CAPI node never has one, and a
+// Nico node does not until Forge has created it.
+func (n *Node) NicoForgeInstanceID() string {
+	if n.Nico == nil {
+		return ""
+	}
+	return n.Nico.ForgeInstanceID
+}
+
+// NicoForgeMachineID returns the Forge machine backing the node, or the empty
+// string when the node has none.
+func (n *Node) NicoForgeMachineID() string {
+	if n.Nico == nil {
+		return ""
+	}
+	return n.Nico.ForgeMachineID
 }
 
 type NodeFilters struct {
@@ -148,8 +224,10 @@ type NodeFilters struct {
 	//   - true:  exact match (status = 'True')
 	//   - false: not definitely true (includes 'False', 'Unknown', and missing/NULL)
 	Pending                 *bool
+	ProvisioningClaimed     *bool
 	Provisioning            *bool
 	Joined                  *bool
+	DeleteRequested         *bool
 	Deleting                *bool
 	KubernetesReady         *bool
 	KubernetesUnschedulable *bool
@@ -167,7 +245,6 @@ type NodeQueries interface {
 	GetNodeForUpdate(ctx context.Context, id uuid.UUID) (Node, error)
 	CreateNode(ctx context.Context, node *Node) (Node, error)
 	UpdateNode(ctx context.Context, node *Node) (Node, error)
-	UpdateNodeForgeDetails(ctx context.Context, nodeID uuid.UUID, forgeInstanceID, forgeMachineID, ip *string) error
 	DeleteNode(ctx context.Context, id uuid.UUID) error
 
 	// TryAcquireNodeProvisioningLock tries to acquire a transaction-level advisory lock for a specific node.
@@ -198,7 +275,6 @@ type NodeQueries interface {
 func (q *queriesImpl) ListNodes(ctx context.Context, filters NodeFilters) ([]Node, error) {
 	var nodes []Node
 	query := q.db.NewSelect().Model(&nodes).
-		ColumnExpr("node.*").
 		Join("LEFT JOIN node_sets nps ON nps.id = node.node_set_id").
 		Join("LEFT JOIN node_pools np ON np.id = COALESCE(nps.node_pool_id, node.node_pool_id)").
 		Join("LEFT JOIN clusters c ON c.id = COALESCE(np.cluster_id, node.cluster_id)")
@@ -213,10 +289,10 @@ func (q *queriesImpl) ListNodes(ctx context.Context, filters NodeFilters) ([]Nod
 		query = query.Where("node.node_set_id = ?", filters.NodeSetID)
 	}
 	if filters.ClusterID != nil {
-		query = query.Where("COALESCE(np.cluster_id, node.cluster_id) = ?", filters.ClusterID)
+		query = query.Where("node.cluster_id = ?", filters.ClusterID)
 	}
 	if filters.SiteID != nil {
-		query = query.Where("c.site_id = ?", filters.SiteID)
+		query = query.Where("c.nico->>'site_id' = ?", filters.SiteID.String())
 	}
 	if filters.ControlPlane != nil {
 		query = query.Where("COALESCE(np.control_plane, node.control_plane) = ?", *filters.ControlPlane)
@@ -233,11 +309,17 @@ func (q *queriesImpl) ListNodes(ctx context.Context, filters NodeFilters) ([]Nod
 	if filters.Pending != nil {
 		query = whereNodeConditionStatus(query, "pending", *filters.Pending)
 	}
+	if filters.ProvisioningClaimed != nil {
+		query = whereNodeConditionStatus(query, "provisioningClaimed", *filters.ProvisioningClaimed)
+	}
 	if filters.Provisioning != nil {
 		query = whereNodeConditionStatus(query, "provisioning", *filters.Provisioning)
 	}
 	if filters.Joined != nil {
 		query = whereNodeConditionStatus(query, "joined", *filters.Joined)
+	}
+	if filters.DeleteRequested != nil {
+		query = whereNodeConditionStatus(query, "deleteRequested", *filters.DeleteRequested)
 	}
 	if filters.Deleting != nil {
 		query = whereNodeConditionStatus(query, "deleting", *filters.Deleting)
@@ -303,9 +385,9 @@ func (q *queriesImpl) ListNodeInfo(ctx context.Context) ([]NodeInfo, error) {
 			n.ip,
 			n.agent_version,
 			n.spiffe_enabled,
-			n.forge_machine_id,
-			ns.os_profile,
-			ns.config_profile
+			COALESCE(n.nico->>'forge_machine_id', '') as forge_machine_id,
+			COALESCE(ns.nico->>'os_profile', '') as os_profile,
+			COALESCE(ns.nico->>'config_profile', '') as config_profile
 		FROM nodes n
 		JOIN node_sets ns ON ns.id = n.node_set_id
 		JOIN node_pools np ON np.id = ns.node_pool_id
@@ -358,44 +440,17 @@ func (q *queriesImpl) GetNodeForUpdate(ctx context.Context, id uuid.UUID) (Node,
 }
 
 func (q *queriesImpl) CreateNode(ctx context.Context, node *Node) (Node, error) {
-	node.SyncProviderFields()
 	_, err := q.db.NewInsert().Model(node).Exec(ctx)
 	return *node, err
 }
 
 func (q *queriesImpl) UpdateNode(ctx context.Context, node *Node) (Node, error) {
-	node.SyncProviderFields()
+	node.UpdatedAt = time.Now()
 	res, err := q.db.NewUpdate().Model(node).WherePK().Exec(ctx)
 	if err != nil {
 		return Node{}, err
 	}
 	return *node, notFoundErrIfNoRowsAffected(res)
-}
-
-func (q *queriesImpl) UpdateNodeForgeDetails(ctx context.Context, nodeID uuid.UUID, forgeInstanceID, forgeMachineID, ip *string) error {
-	if forgeInstanceID == nil && forgeMachineID == nil && ip == nil {
-		return nil
-	}
-
-	return q.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		qi := queriesImpl{db: tx}
-		node, err := qi.GetNodeForUpdate(ctx, nodeID)
-		if err != nil {
-			return err
-		}
-		if forgeInstanceID != nil {
-			node.ForgeInstanceID = *forgeInstanceID
-		}
-		if forgeMachineID != nil {
-			node.ForgeMachineID = *forgeMachineID
-		}
-		if ip != nil {
-			node.IP = *ip
-		}
-
-		_, err = qi.UpdateNode(ctx, &node)
-		return err
-	})
 }
 
 func (q *queriesImpl) DeleteNode(ctx context.Context, id uuid.UUID) error {
@@ -419,11 +474,10 @@ func (q *queriesImpl) UpdateNodeTeleportRegistered(ctx context.Context, nodeID u
 func (q *queriesImpl) ListTeleportEligibleNodes(ctx context.Context, siteID uuid.UUID) ([]Node, error) {
 	var nodes []Node
 	query := q.db.NewSelect().Model(&nodes).
-		ColumnExpr("node.*").
 		Join("LEFT JOIN node_sets ns ON ns.id = node.node_set_id").
 		Join("LEFT JOIN node_pools np ON np.id = COALESCE(ns.node_pool_id, node.node_pool_id)").
 		Join("LEFT JOIN clusters c ON c.id = COALESCE(np.cluster_id, node.cluster_id)").
-		Where("c.site_id = ?", siteID).
+		Where("c.nico->>'site_id' = ?", siteID.String()).
 		Where("c.teleport_enabled = true").
 		Where(`(
 			COALESCE(ns.teleport_enabled, false) = true
@@ -439,11 +493,10 @@ func (q *queriesImpl) ListTeleportEligibleNodes(ctx context.Context, siteID uuid
 func (q *queriesImpl) ListTeleportRegisteredNodes(ctx context.Context, siteID uuid.UUID) ([]Node, error) {
 	var nodes []Node
 	query := q.db.NewSelect().Model(&nodes).
-		ColumnExpr("node.*").
 		Join("JOIN node_sets ns ON ns.id = node.node_set_id").
 		Join("JOIN node_pools np ON np.id = ns.node_pool_id").
 		Join("JOIN clusters c ON c.id = np.cluster_id").
-		Where("c.site_id = ?", siteID).
+		Where("c.nico->>'site_id' = ?", siteID.String()).
 		Where("c.teleport_enabled = true").
 		Where("ns.teleport_enabled = true")
 	query = whereNodeConditionStatus(query, "teleportRegistered", true)
@@ -489,7 +542,6 @@ func (q *queriesImpl) ListNodesEligibleForRecycling(ctx context.Context, nodePoo
 
 	var nodes []Node
 	query := q.db.NewSelect().Model(&nodes).
-		ColumnExpr("node.*").
 		Join("JOIN node_sets ns ON ns.id = node.node_set_id").
 		Join("JOIN node_pools np ON np.id = ns.node_pool_id").
 		Where("ns.node_pool_id = ?", nodePoolID).

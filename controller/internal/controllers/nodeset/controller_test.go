@@ -13,13 +13,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"k8s.io/utils/ptr"
 
-	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile"
-	"github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile/dbwrapper"
-	"github.com/NVIDIA/nke/controller/internal/controllers/nodeset"
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/testutil"
+	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile/dbwrapper"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/nodeset"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/testutil"
 )
 
 // setupProfilesDir creates a temp dir with osProfiles and configProfiles so
@@ -66,10 +67,12 @@ func TestUnit_Reconcile(t *testing.T) {
 	baseCluster := db.Cluster{
 		ID:           clusterID,
 		Name:         "test-cluster",
-		SiteID:       siteID,
-		OrgID:        "test-org",
-		VpcID:        uuid.New(),
 		ProviderType: db.ProviderTypeNico,
+		Nico: &db.NicoClusterProvider{
+			SiteID: siteID,
+			OrgID:  "test-org",
+			VpcID:  uuid.New(),
+		},
 	}
 
 	type parameters struct {
@@ -98,7 +101,7 @@ func TestUnit_Reconcile(t *testing.T) {
 						node.NodePoolID == nodePoolID &&
 						node.NodeSetID == nodeSetID &&
 						node.ControlPlane &&
-						node.InstanceTypeID == instanceTypeID
+						node.NicoInstanceTypeID() == instanceTypeID
 				})).Return(db.Node{}, nil).Once()
 			},
 		},
@@ -156,6 +159,113 @@ func TestUnit_Reconcile(t *testing.T) {
 				t.Helper()
 
 				mockDB.AssertNotCalled(t, "ListNodeSets", mock.Anything, mock.Anything)
+			},
+		},
+		"deletes unclaimed pending node when above desired count": {
+			nodeSet: db.NodeSet{
+				ID:           nodeSetID,
+				NodePoolID:   nodePoolID,
+				DesiredCount: 0,
+			},
+			setup: func(mockDB *testutil.MockDB, mockTx *testutil.MockTx, nodeSet db.NodeSet) {
+				pendingNode := db.Node{
+					ID:        uuid.New(),
+					ClusterID: clusterID,
+					NodeSetID: nodeSetID,
+					Name:      "cp-0",
+					Conditions: db.NodeConditions{
+						Pending:             db.NewCondition(true, "Pending node provisioning"),
+						ProvisioningClaimed: db.NewCondition(false, "Provisioning workflow has not claimed node"),
+					},
+				}
+				mockDB.MockTx = mockTx
+				mockDB.On("RunInTx", mock.Anything, mock.Anything).Return(nil)
+				mockTx.On("GetNodeSet", mock.Anything, nodeSet.ID).Return(nodeSet, nil)
+				mockTx.On("GetNodePool", mock.Anything, nodePoolID).Return(baseNodePool, nil)
+				mockTx.On("ListNodes", mock.Anything, db.NodeFilters{NodeSetID: &nodeSetID}).Return([]db.Node{pendingNode}, nil).Once()
+				mockTx.On("ListNodes", mock.Anything, db.NodeFilters{
+					NodeSetID:           &nodeSetID,
+					Pending:             ptr.To(true),
+					ProvisioningClaimed: ptr.To(false),
+				}).Return([]db.Node{pendingNode}, nil).Once()
+				mockTx.On("TryAcquireNodeProvisioningLock", mock.Anything, pendingNode.ID).Return(true, nil).Once()
+				mockTx.On("GetNodeForUpdate", mock.Anything, pendingNode.ID).Return(pendingNode, nil).Twice()
+				mockTx.On("DeleteNode", mock.Anything, pendingNode.ID).Return(nil).Once()
+			},
+		},
+		"skips pending node claimed after stale list": {
+			nodeSet: db.NodeSet{
+				ID:           nodeSetID,
+				NodePoolID:   nodePoolID,
+				DesiredCount: 0,
+			},
+			setup: func(mockDB *testutil.MockDB, mockTx *testutil.MockTx, nodeSet db.NodeSet) {
+				pendingNode := db.Node{
+					ID:        uuid.New(),
+					ClusterID: clusterID,
+					NodeSetID: nodeSetID,
+					Name:      "cp-0",
+					Conditions: db.NodeConditions{
+						Pending:             db.NewCondition(true, "Pending node provisioning"),
+						ProvisioningClaimed: db.NewCondition(false, "Provisioning workflow has not claimed node"),
+					},
+				}
+				claimedNode := pendingNode
+				claimedNode.Conditions.ProvisioningClaimed = db.NewCondition(true, "Provisioning workflow claimed node")
+
+				mockDB.MockTx = mockTx
+				mockDB.On("RunInTx", mock.Anything, mock.Anything).Return(nil)
+				mockTx.On("GetNodeSet", mock.Anything, nodeSet.ID).Return(nodeSet, nil)
+				mockTx.On("GetNodePool", mock.Anything, nodePoolID).Return(baseNodePool, nil)
+				mockTx.On("ListNodes", mock.Anything, db.NodeFilters{NodeSetID: &nodeSetID}).Return([]db.Node{pendingNode}, nil).Once()
+				mockTx.On("ListNodes", mock.Anything, db.NodeFilters{
+					NodeSetID:           &nodeSetID,
+					Pending:             ptr.To(true),
+					ProvisioningClaimed: ptr.To(false),
+				}).Return([]db.Node{pendingNode}, nil).Once()
+				mockTx.On("TryAcquireNodeProvisioningLock", mock.Anything, pendingNode.ID).Return(true, nil).Once()
+				mockTx.On("GetNodeForUpdate", mock.Anything, pendingNode.ID).Return(claimedNode, nil).Once()
+			},
+			verify: func(t *testing.T, _ *testutil.MockDB, mockTx *testutil.MockTx) {
+				t.Helper()
+
+				mockTx.AssertNotCalled(t, "DeleteNode", mock.Anything, mock.Anything)
+			},
+		},
+		"does not request claimed pending nodes for surplus deletion": {
+			nodeSet: db.NodeSet{
+				ID:           nodeSetID,
+				NodePoolID:   nodePoolID,
+				DesiredCount: 0,
+			},
+			setup: func(mockDB *testutil.MockDB, mockTx *testutil.MockTx, nodeSet db.NodeSet) {
+				claimedNode := db.Node{
+					ID:        uuid.New(),
+					ClusterID: clusterID,
+					NodeSetID: nodeSetID,
+					Name:      "cp-0",
+					Conditions: db.NodeConditions{
+						Pending:             db.NewCondition(true, "Pending node provisioning"),
+						ProvisioningClaimed: db.NewCondition(true, "Provisioning workflow claimed node"),
+					},
+				}
+
+				mockDB.MockTx = mockTx
+				mockDB.On("RunInTx", mock.Anything, mock.Anything).Return(nil)
+				mockTx.On("GetNodeSet", mock.Anything, nodeSet.ID).Return(nodeSet, nil)
+				mockTx.On("GetNodePool", mock.Anything, nodePoolID).Return(baseNodePool, nil)
+				mockTx.On("ListNodes", mock.Anything, db.NodeFilters{NodeSetID: &nodeSetID}).Return([]db.Node{claimedNode}, nil).Once()
+				mockTx.On("ListNodes", mock.Anything, db.NodeFilters{
+					NodeSetID:           &nodeSetID,
+					Pending:             ptr.To(true),
+					ProvisioningClaimed: ptr.To(false),
+				}).Return([]db.Node{}, nil).Once()
+			},
+			verify: func(t *testing.T, _ *testutil.MockDB, mockTx *testutil.MockTx) {
+				t.Helper()
+
+				mockTx.AssertNotCalled(t, "TryAcquireNodeProvisioningLock", mock.Anything, mock.Anything)
+				mockTx.AssertNotCalled(t, "DeleteNode", mock.Anything, mock.Anything)
 			},
 		},
 	}

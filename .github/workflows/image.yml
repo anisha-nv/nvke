@@ -46,7 +46,7 @@ jobs:
   image:
     name: build
     runs-on: linux-amd64-cpu16
-    if: github.repository == 'NVIDIA/nke'
+    if: github.repository == 'dsx-ai-factory/nke'
     timeout-minutes: 20
     permissions:
       contents: read
@@ -170,7 +170,7 @@ jobs:
           docker buildx build \
             --file controller/Dockerfile \
             --platform linux/amd64,linux/arm64 \
-            --tag nke/controller:ci \
+            --tag nke/nke-controller:ci \
             .
 
       # --load does not support multi-platform images. Load the amd64 image
@@ -182,13 +182,13 @@ jobs:
           docker buildx build \
             --file controller/Dockerfile \
             --platform linux/amd64 \
-            --tag nke/controller:ci \
+            --tag nke/nke-controller:ci \
             --load \
             .
 
       - name: Show controller image
         shell: bash
-        run: docker image inspect nke/controller:ci --format 'built {{.RepoTags}} {{.Size}} bytes'
+        run: docker image inspect nke/nke-controller:ci --format 'built {{.RepoTags}} {{.Size}} bytes'
 
       # Scan the image, not the source tree. security-scan.yml runs Grype over
       # `path: "."`, which reads Go dependencies from the repository. It cannot
@@ -208,7 +208,7 @@ jobs:
         id: image-scan
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
-          image: nke/controller:ci
+          image: nke/nke-controller:ci
           severity-cutoff: ${{ env.GRYPE_SEVERITY_CUTOFF }}
           output-format: sarif
           config: .grype.yaml
@@ -284,7 +284,7 @@ jobs:
 
       - name: Upload the image scan SARIF
         if: always() && steps.image-scan.outputs.sarif != ''
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           sarif_file: ${{ steps.image-scan.outputs.sarif }}
           category: grype-image
@@ -292,5 +292,6 @@ jobs:
 # Not built here: controller/hack/Dockerfile.cwe.tilt — it only copies a
 # prebuilt binary, so it has nothing to verify without a preceding build.
 #
-# Nothing is pushed here. Publishing the controller image to nvcr.io now lives
-# in image-nvcr.yml.
+# Nothing is pushed here. Publishing to nvcr.io lives in the per-component
+# workflows: image-nvcr.yml for the controller, image-provisioned-nvcr.yml for
+# cluster-api-provider-provisioned.

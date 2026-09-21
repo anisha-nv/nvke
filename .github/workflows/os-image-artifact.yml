@@ -3,12 +3,12 @@
 
 name: OS Image Artifact
 
-# Builds and validates the FDE and non-FDE Packer node images on an
-# os-image/v* tag (or a manual dispatch), pushes both qcow2s to GHCR as OCI
-# artifacts, and on a real tag cuts a GitHub Release carrying
-# nke-os-image-check + checksums covering all three files. The GitHub
-# Release is created here (not in release.yml) so a failed bake or
-# validation never cuts a release.
+# Builds and validates the FDE and non-FDE Packer node images for amd64 and
+# arm64 on an os-image/v* tag (or a manual dispatch), pushes all four qcow2s
+# to GHCR as OCI artifacts, and on a real tag cuts a GitHub Release carrying
+# nke-os-image-check + checksums covering all five files. The GitHub Release
+# is created here (not in release.yml) so a failed bake or validation never
+# cuts a release.
 #
 # FDE security note: its build-time LUKS_PASSPHRASE defaults to a shared,
 # documented placeholder ("changeit", see
@@ -29,18 +29,21 @@ name: OS Image Artifact
 # entirely, at the cost of `--platform` being informational (for the layer's
 # declared platform metadata) rather than required to disambiguate a pull:
 #
-#   ghcr.io/nvidia/nke/os-image-fde:v0.1.0-amd64
-#   ghcr.io/nvidia/nke/os-image-non-fde:v0.1.0-amd64
-#   ghcr.io/nvidia/nke/os-image-non-fde:v0.1.0-arm64
-#     `-- platform linux/{amd64,arm64}   layer: nke-node-{fde,non-fde}.qcow2
+#   ghcr.io/dsx-ai-factory/nke/os-image-fde:v0.1.0-{amd64,arm64}
+#   ghcr.io/dsx-ai-factory/nke/os-image-non-fde:v0.1.0-{amd64,arm64}
+#     `-- platform linux/{amd64,arm64}
+#         layer: nke-node-{fde,non-fde}-ubuntu-<version>-<arch>.qcow2
 #
-#   oras pull ghcr.io/nvidia/nke/os-image-fde:v0.1.0-amd64 --platform linux/amd64
+#   oras pull ghcr.io/dsx-ai-factory/nke/os-image-fde:v0.1.0-amd64 --platform linux/amd64
 #
-# arm64 only builds the non-FDE variant for now (see the matrix below) --
-# there is no os-image-fde-arm64 tag yet. It also only publishes to GHCR, not
-# the GitHub Release: the release step runs on the amd64 leg only, unchanged
-# from before this matrix existed, since restructuring release-asset
-# attachment to fan in across matrix legs is its own separate piece of work.
+# The layer keeps Packer's filename, which names the Ubuntu point release and
+# the arch, so pulling both arches into one directory does not collide.
+#
+# The arm64 leg runs on the self-hosted fleet from NVIDIA-dev/nke-gha-runners,
+# which has /dev/kvm. Both legs build both variants.
+#
+# The Release is cut by the "release" job, not by a matrix leg: legs run
+# concurrently and none can see another's checksums.
 #
 # Distinct from image.yml, which compiles controller Dockerfiles and pushes
 # nothing. Distinct from image-nvcr.yml, which publishes the controller
@@ -50,6 +53,13 @@ on:
     tags:
       - "os-image/v[0-9]+.[0-9]+.[0-9]+"
       - "os-image/v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+    # The mirror branch, not pull_request: self-hosted runners get no
+    # pull_request events. Path-filtered, because a full bake is not cheap.
+    branches:
+      - "pull-request/[0-9]+"
+    paths:
+      - "os-image/**"
+      - .github/workflows/os-image-artifact.yml
   workflow_dispatch:
     inputs:
       dry_run:
@@ -57,6 +67,15 @@ on:
         required: false
         default: false
         type: boolean
+      arch:
+        description: "Which legs to build. A tag always builds both; this only applies to a manual run."
+        required: false
+        default: both
+        type: choice
+        options:
+          - both
+          - amd64
+          - arm64
 
 permissions: {}
 
@@ -65,58 +84,103 @@ concurrency:
   # expression is the CALLER's name, so any workflow merge-gate.yml calls would
   # share a group with its siblings and cancel them.
   group: OS Image Artifact-${{ github.ref }}
-  # Never cancel a publish midway: a half-pushed qcow2 would leave a tag
-  # pointing at a truncated layer.
-  cancel-in-progress: false
+  # Supersede a mirror-branch build, which cannot publish: the push step needs
+  # a tag or a dispatch. Everything that can publish stays uncancellable, or a
+  # half-pushed qcow2 would leave a tag on a truncated layer.
+  cancel-in-progress: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/pull-request/') }}
 
 env:
-  PACKER_SHA256: "cfefdea4ac580eba7b254ef34d25b756d4961741004e3e701a1476594d13e64a"
-  REPO_FDE: ghcr.io/nvidia/nke/os-image-fde
-  REPO_NON_FDE: ghcr.io/nvidia/nke/os-image-non-fde
+  REPO_FDE: ghcr.io/dsx-ai-factory/nke/os-image-fde
+  REPO_NON_FDE: ghcr.io/dsx-ai-factory/nke/os-image-non-fde
 
 jobs:
+  # A mirror-branch push carries base-branch commits, so the paths above fire
+  # for pull requests that touch no os-image file. Nine of eleven runs queued
+  # for the 64 GiB runner on 2026-09-16 were those. Read the pull request's own
+  # files instead. Tags and dispatch pass through.
+  changes:
+    uses: ./.github/workflows/e2e-pr-path-filter.yml
+    permissions:
+      pull-requests: read
+    with:
+      # Keep in step with the push paths above.
+      relevant_paths: '^os-image/|^\.github/workflows/os-image-artifact\.yml$'
+
+  matrix:
+    needs: changes
+    if: github.repository == 'dsx-ai-factory/nke' && needs.changes.outputs.run_e2e == 'true'
+    name: Pick the legs to build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      legs: ${{ steps.pick.outputs.legs }}
+    steps:
+      - name: Pick
+        id: pick
+        env:
+          # Empty on a tag push, so a tag builds both.
+          WANT: ${{ github.event.inputs.arch }}
+        run: |
+          set -euo pipefail
+          amd64='{"arch":"amd64","runner":"linux-amd64-gpu-l4-latest-1","timeout_minutes":180,"build_fde":true}'
+          # Scale set on the self-hosted fleet; the name is the size,
+          # 16 vCPU and 64 GiB. linux-arm64-cpu16 has no /dev/kvm.
+          #
+          # Back off the arc-arm64-kvm class #838 moved this to, with
+          # kubeadm-bringup-e2e, whose every run there fails at `virsh define`
+          # for want of EFI firmware. Move both back together: one bake on the
+          # old fleet and one on the new would compare two variables at once.
+          arm64='{"arch":"arm64","runner":"nke-arm64-16c64g","timeout_minutes":180,"build_fde":true}'
+          case "${WANT:-both}" in
+            amd64) legs="[${amd64}]" ;;
+            arm64) legs="[${arm64}]" ;;
+            *)     legs="[${amd64},${arm64}]" ;;
+          esac
+          echo "legs=${legs}" >> "$GITHUB_OUTPUT"
+          echo "building: ${legs}"
+
   publish:
-    if: github.repository == 'NVIDIA/nke'
-    name: Build, verify, and release (${{ matrix.arch }})
-    # No arm64-labeled runner exists in this org's pool, so the arm64 leg
-    # cross-builds on this same amd64 runner under QEMU's tcg software
-    # emulation -- there is no way to KVM-accelerate an arm64 guest on x86
-    # hardware regardless of runner choice. build_fde is false for arm64:
-    # this is a first pass at arm64 support, not full parity -- see the
-    # header comment above.
+    needs: matrix
+    if: github.repository == 'dsx-ai-factory/nke'
+    name: Build and verify (${{ matrix.arch }})
+    # Both legs need /dev/kvm; the "matrix" job picks them. The arm64 leg
+    # never finished under tcg, on the amd64 runner or on linux-arm64-cpu16,
+    # which has no /dev/kvm either (#730, #731, #733, #734). Now that it runs
+    # under KVM it builds the FDE variant too.
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            timeout_minutes: 120
-            build_fde: true
-          - arch: arm64
-            timeout_minutes: 240
-            build_fde: false
-    # Packer QEMU needs /dev/kvm for the amd64 leg. linux-amd64-cpu16 (a
-    # container-based pool) never exposed it, forcing every bake onto QEMU's
-    # tcg software emulation — confirmed directly: a full FDE bake took
-    # 1h39m under tcg vs a few minutes locally under real KVM, and tcg's much
-    # slower, less predictable timing was implicated in several failures (a
-    # GRUB boot-menu race, an intermittent overlayfs kernel oops under
-    # curtin's install). This label is expected to expose /dev/kvm; "Enable
-    # KVM access" below fails the amd64 leg immediately if that assumption
-    # turns out wrong, rather than silently falling back to the
-    # ~10x-slower emulated path the way this job used to. The arm64 leg
-    # always runs under tcg by design (see above) and skips that gate.
-    runs-on: linux-amd64-gpu-l4-latest-1
+        include: ${{ fromJSON(needs.matrix.outputs.legs) }}
+    # Both legs require KVM. The "Enable KVM access" step below enforces it.
+    runs-on: ${{ matrix.runner }}
     # amd64: sized for real KVM (FDE bake + demo-fde.sh + non-FDE bake +
     # boot-smoke, each a few minutes, with real headroom); the KVM gate below
     # fails fast instead of burning the timeout if that ever regresses to
-    # tcg. arm64: non-FDE bake + boot-smoke only, but under tcg cross-arch
-    # emulation, which has no local measurement yet to size against -- 240m
-    # is a starting guess, expect to revisit once real runs land.
+    # tcg. Bumped from 120m to 180m after a real run's amd64 leg still timed
+    # out (https://github.com/dsx-ai-factory/nke/actions/runs/34525233526) for a
+    # cause not yet root-caused -- see #695 for one confirmed contributor
+    # (a bloated golden image) and the self-timeout + console-log dump on
+    # the build steps below for diagnosing the next one. arm64: 180m now it
+    # runs under KVM, down from 300m when it was emulated.
     timeout-minutes: ${{ matrix.timeout_minutes }}
+    # contents: read, not write -- the Release is cut by the "release" job.
     permissions:
-      contents: write
+      contents: read
       packages: write
     steps:
+      # GitHub's own timeout-minutes has no grace period: it kills the whole
+      # job process tree at once, so nothing started beforehand (a
+      # background "sleep, then cat" included) gets a chance to run once it
+      # fires. The build steps below self-impose a shorter timeout, computed
+      # from this recorded start time, so they can dump the serial console
+      # log and exit cleanly before GitHub's hard kill ever lands. Recorded
+      # before Checkout, not after: Checkout does a full-history fetch on
+      # this repo, and every second it takes would otherwise silently eat
+      # into the 30s diagnostic buffer those self-timeouts leave themselves.
+      - name: Record job start time
+        id: start_time
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -132,6 +196,16 @@ jobs:
             go.work.sum
             **/go.sum
 
+      # The arm64 ARC scale-set image has no make; the EC2 fleet it replaced
+      # did. Every step from here on shells out to it, so install it before
+      # the first one rather than with the QEMU packages further down.
+      - name: Install make
+        run: |
+          command -v make >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq make
+          }
+
       # Version pins come from make/versions.mk, so `make show-versions` and CI
       # cannot disagree.
       - name: Read pinned tool versions
@@ -140,6 +214,8 @@ jobs:
           {
             echo "oras_version=$(make --no-print-directory print-ORAS_VERSION)"
             echo "packer_version=$(make --no-print-directory print-PACKER_VERSION)"
+            echo "packer_sha256_amd64=$(make --no-print-directory print-PACKER_SHA256_AMD64)"
+            echo "packer_sha256_arm64=$(make --no-print-directory print-PACKER_SHA256_ARM64)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up ORAS
@@ -184,6 +260,7 @@ jobs:
           set -euo pipefail
           make test
           make build
+          make -C packer test
 
       # qemu-system-arm provides qemu-system-aarch64; qemu-efi-aarch64
       # provides the AAVMF firmware the arm64 leg needs (arm64's equivalent
@@ -202,23 +279,16 @@ jobs:
           qemu-img --version | head -1
           swtpm --version
 
-      # A gate, deliberately, on the amd64 leg only: this runner label is
-      # chosen specifically for /dev/kvm (see the comment on runs-on above).
-      # A missing device on the amd64 leg means something about the runner
-      # pool changed and every subsequent step would silently fall back to
-      # tcg (packer/Makefile and boot-smoke.sh both probe and fall back on
-      # their own) -- better to fail here in seconds than rediscover it 1-2
-      # hours into a tcg bake. Same pattern NVIDIA/OpenShell uses for its own
-      # KVM-backed e2e VM tests. The arm64 leg always runs under tcg by
-      # design (no arm64-capable runner exists, and /dev/kvm on this x86
-      # runner can't accelerate an arm64 guest regardless) so there is
-      # nothing to gate there.
+      # Both legs are on labels chosen for /dev/kvm. Without it every later
+      # step falls back to tcg on its own, so fail here in seconds rather
+      # than hours into a bake. arm64 used to warn instead, which is how it
+      # burned 2 to 5 hours per run and never finished.
       - name: Enable KVM access
-        if: matrix.arch == 'amd64'
         run: |
           set -euo pipefail
           if [[ ! -c /dev/kvm ]]; then
-            echo "::error::This runner did not expose /dev/kvm (expected on linux-amd64-gpu-l4-latest-1)"
+            echo "::error::This runner did not expose /dev/kvm (${{ matrix.arch }} leg)"
+            echo "::error::Without it the bake falls back to tcg, which has never finished for arm64."
             lscpu
             grep -m1 -E '^(flags|Features)' /proc/cpuinfo || true
             ls -la /dev
@@ -233,23 +303,23 @@ jobs:
           exec 3>&-
           echo "::notice::/dev/kvm present and writable; building with hardware acceleration"
 
-      - name: Note tcg emulation for arm64
-        if: matrix.arch == 'arm64'
-        run: echo "::notice::arm64 leg cross-builds under QEMU tcg software emulation by design; see the header comment in this workflow"
-
       - name: Install Packer
         env:
           PACKER_VERSION: ${{ steps.versions.outputs.packer_version }}
-          PACKER_SHA256: ${{ env.PACKER_SHA256 }}
+          PACKER_SHA256: ${{ steps.versions.outputs.packer_sha256_amd64 }}
+          PACKER_SHA256_ARM64: ${{ steps.versions.outputs.packer_sha256_arm64 }}
+          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          zip="packer_${PACKER_VERSION}_linux_amd64.zip"
+          expected="${PACKER_SHA256}"
+          [[ "${ARCH}" == "arm64" ]] && expected="${PACKER_SHA256_ARM64}"
+          zip="packer_${PACKER_VERSION}_linux_${ARCH}.zip"
           tmp="$(mktemp -d)"
           curl -fsSL -o "${tmp}/${zip}" \
             "https://releases.hashicorp.com/packer/${PACKER_VERSION}/${zip}"
           actual="$(sha256sum "${tmp}/${zip}" | awk '{print $1}')"
-          if [[ "${actual}" != "${PACKER_SHA256}" ]]; then
-            echo "::error::checksum mismatch for ${zip}: got ${actual}, expected ${PACKER_SHA256}"
+          if [[ "${actual}" != "${expected}" ]]; then
+            echo "::error::checksum mismatch for ${zip}: got ${actual}, expected ${expected}"
             exit 1
           fi
           unzip -d "${tmp}" "${tmp}/${zip}" packer
@@ -266,26 +336,94 @@ jobs:
           echo "${GHCR_TOKEN}" | oras login ghcr.io \
             --username "${{ github.actor }}" --password-stdin
 
+      # Self-timeout, 30s inside the job's real timeout-minutes deadline (see
+      # "Record job start time" above), so a hang here dumps the serial
+      # console log -- the same file "Upload FDE/non-FDE install console
+      # logs" archives -- straight into this step's own output before
+      # exiting, instead of relying on GitHub's hard kill to leave anything
+      # legible behind.
       - name: Build the FDE node image
         if: matrix.build_fde
         env:
           PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: make -C os-image/packer os-image-fde ARCH=${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          deadline=$(( ${{ steps.start_time.outputs.epoch }} + ${{ matrix.timeout_minutes }} * 60 - 30 ))
+          remaining=$(( deadline - $(date +%s) ))
+          if (( remaining <= 0 )); then
+            echo "::error::no time left before the job's ${{ matrix.timeout_minutes }}m timeout; skipping the FDE build"
+            exit 1
+          fi
+          # Stream guest progress while Packer waits for SSH.
+          mkdir -p os-image/packer/build-logs
+          console_log=os-image/packer/build-logs/fde-install-console.log
+          touch "${console_log}"
+          tail -n +1 -F "${console_log}" &
+          console_pid=$!
+          trap 'kill "${console_pid}"; wait "${console_pid}" || true' EXIT
+          status=0
+          timeout --signal=TERM "${remaining}s" \
+            make -C os-image/packer os-image-fde \
+              ARCH=${{ matrix.arch }} ACCELERATOR=kvm || status=$?
+          if [[ "${status}" -eq 124 ]]; then
+            echo "::error::FDE build did not finish within ${remaining}s (job timeout minus a 30s buffer)"
+            echo "::group::os-image/packer/build-logs (dumped before exiting on self-timeout)"
+            for f in os-image/packer/build-logs/*.log; do
+              [[ -f "${f}" ]] || continue
+              echo "--- ${f} ---"
+              cat "${f}"
+            done
+            echo "::endgroup::"
+          fi
+          exit "${status}"
 
       # Full acceptance run: LUKS2+TPM-sealed, wrong-TPM-fails,
       # reboot-auto-unlocks. No manual/scripted console interaction needed —
       # the image auto-unlocks its own first boot via a build-time luks.key=
       # GRUB parameter (see os-image/docs/full-disk-encryption.md). Only run
       # where the FDE image was actually built (see matrix.build_fde above).
+      # ARCH picks the QEMU binary, machine type, UEFI firmware and TPM device.
       - name: Validate FDE TPM unlock (demo-fde.sh)
         if: matrix.build_fde
         working-directory: os-image
+        env:
+          ARCH: ${{ matrix.arch }}
         run: ./demo-fde.sh
 
+      # Same self-timeout pattern as "Build the FDE node image" above.
       - name: Build the non-FDE node image
         env:
           PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: make -C os-image/packer os-image-non-fde ARCH=${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          deadline=$(( ${{ steps.start_time.outputs.epoch }} + ${{ matrix.timeout_minutes }} * 60 - 30 ))
+          remaining=$(( deadline - $(date +%s) ))
+          if (( remaining <= 0 )); then
+            echo "::error::no time left before the job's ${{ matrix.timeout_minutes }}m timeout; skipping the non-FDE build"
+            exit 1
+          fi
+          # Stream guest progress while Packer waits for SSH.
+          mkdir -p os-image/packer/build-logs
+          console_log=os-image/packer/build-logs/non-fde-install-console.log
+          touch "${console_log}"
+          tail -n +1 -F "${console_log}" &
+          console_pid=$!
+          trap 'kill "${console_pid}"; wait "${console_pid}" || true' EXIT
+          status=0
+          timeout --signal=TERM "${remaining}s" \
+            make -C os-image/packer os-image-non-fde \
+              ARCH=${{ matrix.arch }} ACCELERATOR=kvm || status=$?
+          if [[ "${status}" -eq 124 ]]; then
+            echo "::error::non-FDE build did not finish within ${remaining}s (job timeout minus a 30s buffer)"
+            echo "::group::os-image/packer/build-logs (dumped before exiting on self-timeout)"
+            for f in os-image/packer/build-logs/*.log; do
+              [[ -f "${f}" ]] || continue
+              echo "--- ${f} ---"
+              cat "${f}"
+            done
+            echo "::endgroup::"
+          fi
+          exit "${status}"
 
       - name: Boot-smoke the non-FDE qcow2
         run: |
@@ -314,30 +452,51 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Compress the qcow2s for publish
+      # Make owns the final QCOW2 conversion and collection. Its collection
+      # targets require a clean source and exactly one regular image, preserve
+      # Packer's basename, and compare the copied bytes before returning it.
+      - name: Collect the finalized qcow2s
+        id: disks
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           mkdir -p dist
           if [[ "${{ matrix.build_fde }}" == "true" ]]; then
-            fde_src="$(ls os-image/packer/output-fde/*.qcow2)"
-            qemu-img convert -p -c -O qcow2 "${fde_src}" dist/nke-node-fde.qcow2
-            qemu-img info dist/nke-node-fde.qcow2
+            fde_name="$(
+              make --no-print-directory --silent -C os-image/packer \
+                collect-qcow2-fde \
+                ARCH=${{ matrix.arch }} \
+                QCOW2_DIST_DIR="$PWD/dist"
+            )"
+            echo "fde=${fde_name}" >> "$GITHUB_OUTPUT"
           fi
-          non_fde_src="$(ls os-image/packer/output-non-fde/*.qcow2)"
-          qemu-img convert -p -c -O qcow2 "${non_fde_src}" dist/nke-node-non-fde.qcow2
-          qemu-img info dist/nke-node-non-fde.qcow2
+          non_fde_name="$(
+            make --no-print-directory --silent -C os-image/packer \
+              collect-qcow2-non-fde \
+              ARCH=${{ matrix.arch }} \
+              QCOW2_DIST_DIR="$PWD/dist"
+          )"
+          echo "non_fde=${non_fde_name}" >> "$GITHUB_OUTPUT"
 
       # --artifact-platform is still marked experimental in the ORAS CLI. It is
       # load-bearing: without it the manifest has no platform in its config and
       # `oras pull --platform linux/${{ matrix.arch }}` cannot select this disk.
       # Tags are arch-suffixed (see this workflow's header comment) rather
       # than one multi-platform manifest shared across matrix legs.
+      # A pull-request branch must never publish. Its inputs are empty, so
+      # dry_run alone would read as "not a dry run" and push.
       - name: Push the qcow2s to GHCR
-        if: github.event.inputs.dry_run != 'true'
+        if: >-
+          github.event.inputs.dry_run != 'true' &&
+          (startsWith(github.ref, 'refs/tags/os-image/') ||
+           github.event_name == 'workflow_dispatch')
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           ALIASES: ${{ steps.meta.outputs.aliases }}
           ARCH: ${{ matrix.arch }}
+          DISK_FDE: ${{ steps.disks.outputs.fde }}
+          DISK_NON_FDE: ${{ steps.disks.outputs.non_fde }}
         run: |
           set -euo pipefail
           read -ra aliases <<< "${ALIASES}"
@@ -353,8 +512,8 @@ jobs:
 
           for variant in "${variants[@]}"; do
             case "${variant}" in
-              fde) repo="${REPO_FDE}" ;;
-              non-fde) repo="${REPO_NON_FDE}" ;;
+              fde) repo="${REPO_FDE}"; disk="${DISK_FDE}" ;;
+              non-fde) repo="${REPO_NON_FDE}"; disk="${DISK_NON_FDE}" ;;
             esac
             ( cd dist && oras push "${repo}:${tags}" \
                 --artifact-type application/vnd.nvidia.nke.node.qcow2.v1 \
@@ -363,12 +522,15 @@ jobs:
                 --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
                 --annotation "org.opencontainers.image.version=${VERSION}" \
                 --annotation "org.opencontainers.image.licenses=Apache-2.0" \
-                --annotation "org.opencontainers.image.title=nke-node-${variant}.qcow2" \
-                "nke-node-${variant}.qcow2:application/vnd.qemu.qcow2" )
+                --annotation "org.opencontainers.image.title=${disk}" \
+                "${disk}:application/vnd.qemu.qcow2" )
           done
 
       - name: Show published manifests
-        if: github.event.inputs.dry_run != 'true'
+        if: >-
+          github.event.inputs.dry_run != 'true' &&
+          (startsWith(github.ref, 'refs/tags/os-image/') ||
+           github.event_name == 'workflow_dispatch')
         run: |
           set -euo pipefail
           oras manifest fetch --pretty "${REPO_NON_FDE}:sha-${GITHUB_SHA}-${{ matrix.arch }}"
@@ -376,21 +538,282 @@ jobs:
             oras manifest fetch --pretty "${REPO_FDE}:sha-${GITHUB_SHA}-${{ matrix.arch }}"
           fi
 
-      # amd64 only: see this workflow's header comment on why the GitHub
-      # Release doesn't (yet) carry an arm64 qcow2 -- fanning release-asset
-      # attachment in across matrix legs is separate follow-up work.
+      # One file per leg; the release job concatenates them. The checker
+      # binary and the version metadata come from amd64 only.
       - name: Prepare release assets
-        if: matrix.arch == 'amd64'
+        env:
+          ARCH: ${{ matrix.arch }}
+          DISK_FDE: ${{ steps.disks.outputs.fde }}
+          DISK_NON_FDE: ${{ steps.disks.outputs.non_fde }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          AGENT_VERSION: ${{ steps.meta.outputs.agent_version }}
         run: |
           set -euo pipefail
-          cp os-image/bin/nke-os-image-check dist/nke-os-image-check
-          ( cd dist && sha256sum nke-node-fde.qcow2 nke-node-non-fde.qcow2 nke-os-image-check > checksums.txt )
+          mkdir -p assets
+          disks=("${DISK_NON_FDE}")
+          if [[ -n "${DISK_FDE}" ]]; then
+            disks+=("${DISK_FDE}")
+          fi
+          ( cd dist && sha256sum "${disks[@]}" ) > "assets/checksums-${ARCH}.txt"
+          if [[ "${ARCH}" == "amd64" ]]; then
+            cp os-image/bin/nke-os-image-check assets/nke-os-image-check
+            ( cd assets && sha256sum nke-os-image-check >> "checksums-${ARCH}.txt" )
+            {
+              echo "version=${VERSION}"
+              echo "agent_version=${AGENT_VERSION}"
+            } > assets/release-meta.env
+          fi
+          cat "assets/checksums-${ARCH}.txt"
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets-${{ matrix.arch }}
+          path: assets/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Fans the matrix back in: checksums.txt covers every disk both legs built.
+  # Separate jobs, not more steps in "publish": that job also runs on
+  # pull-request/* mirror branches with no publish step, and an
+  # `environment:` gate would apply to the whole job, not just the push
+  # step. Pulls the qcow2 just pushed to GHCR instead of rebuilding it.
+  publish-nvcr:
+    needs: [matrix, publish]
+    if: >-
+      github.repository == 'dsx-ai-factory/nke' &&
+      github.event.inputs.dry_run != 'true' &&
+      (startsWith(github.ref, 'refs/tags/os-image/') ||
+       github.event_name == 'workflow_dispatch')
+    name: Publish to NVCR (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    environment: nvcr
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.legs) }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read pinned tool versions
+        id: versions
+        run: |
+          echo "oras_version=$(make --no-print-directory print-ORAS_VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+        with:
+          version: ${{ steps.versions.outputs.oras_version }}
+
+      - name: Resolve tag
+        id: meta
+        env:
+          ARCH: ${{ matrix.arch }}
+          NKE_NGC_ORG: ${{ vars.NKE_NGC_ORG }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${NKE_NGC_ORG}" ]]; then
+            echo "::error::NKE_NGC_ORG is not set in the nvcr environment"
+            exit 1
+          fi
+          tag="sha-${GITHUB_SHA}-${ARCH}"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            tag="${GITHUB_REF_NAME#os-image/}-${ARCH}"
+          fi
+          {
+            echo "tag=${tag}"
+            echo "nvcr_fde=nvcr.io/${NKE_NGC_ORG}/nke-os-image-fde"
+            echo "nvcr_non_fde=nvcr.io/${NKE_NGC_ORG}/nke-os-image-non-fde"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR (pull) and NVCR (push)
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NGC_TOKEN: ${{ secrets.NGC_REGISTRY_TOKEN_NKE }}
+        run: |
+          set -euo pipefail
+          echo "${GHCR_TOKEN}" | oras login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+          # shellcheck disable=SC2016
+          echo "${NGC_TOKEN}" | oras login nvcr.io \
+            --username '$oauthtoken' --password-stdin
+
+      - name: Copy GHCR to NVCR
+        shell: bash
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          NVCR_FDE: ${{ steps.meta.outputs.nvcr_fde }}
+          NVCR_NON_FDE: ${{ steps.meta.outputs.nvcr_non_fde }}
+          BUILD_FDE: ${{ matrix.build_fde }}
+        run: |
+          set -euo pipefail
+          oras cp "${REPO_NON_FDE}:${TAG}" "${NVCR_NON_FDE}:${TAG}"
+          if [[ "${BUILD_FDE}" == "true" ]]; then
+            oras cp "${REPO_FDE}:${TAG}" "${NVCR_FDE}:${TAG}"
+          fi
+
+  # Same "separate job" reasoning as publish-nvcr. Downloads the qcow2 from
+  # GHCR rather than the runner's local disk, since this job doesn't share a
+  # filesystem with the "publish" matrix leg that built it.
+  publish-s3:
+    needs: [matrix, publish]
+    if: >-
+      github.repository == 'dsx-ai-factory/nke' &&
+      github.event.inputs.dry_run != 'true' &&
+      startsWith(github.ref, 'refs/tags/os-image/')
+    name: Publish to S3 (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    environment: s3-publish
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.legs) }}
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read pinned tool versions
+        id: versions
+        run: |
+          echo "oras_version=$(make --no-print-directory print-ORAS_VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+        with:
+          version: ${{ steps.versions.outputs.oras_version }}
+
+      - name: Log in to GHCR
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "${GHCR_TOKEN}" | oras login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+
+      - name: Resolve release and pull qcow2s
+        id: meta
+        env:
+          ARCH: ${{ matrix.arch }}
+          BUILD_FDE: ${{ matrix.build_fde }}
+          S3_URI: ${{ vars.S3_PUBLISH_S3_URI }}
+          ROLE_ARN: ${{ vars.S3_PUBLISH_AWS_ROLE_ARN }}
+          REGION: ${{ vars.S3_PUBLISH_AWS_REGION }}
+          CF_DOMAIN: ${{ vars.S3_PUBLISH_CLOUDFRONT_DOMAIN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${S3_URI}" || -z "${ROLE_ARN}" || -z "${CF_DOMAIN}" ]]; then
+            echo "::error::S3_PUBLISH_S3_URI / S3_PUBLISH_AWS_ROLE_ARN / S3_PUBLISH_CLOUDFRONT_DOMAIN not set in the s3-publish environment"
+            exit 1
+          fi
+          release="${GITHUB_REF_NAME#os-image/}"
+          tag="${release}-${ARCH}"
+          mkdir -p dist
+          oras pull "${REPO_NON_FDE}:${tag}" -o dist
+          if [[ "${BUILD_FDE}" == "true" ]]; then
+            oras pull "${REPO_FDE}:${tag}" -o dist
+          fi
+          {
+            echo "s3_uri=${S3_URI}"
+            echo "role_arn=${ROLE_ARN}"
+            echo "region=${REGION:-us-west-2}"
+            echo "release=${release}"
+            echo "cf_domain=${CF_DOMAIN}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ steps.meta.outputs.role_arn }}
+          aws-region: ${{ steps.meta.outputs.region }}
+
+      - name: Upload to S3
+        shell: bash
+        env:
+          S3_URI: ${{ steps.meta.outputs.s3_uri }}
+          RELEASE: ${{ steps.meta.outputs.release }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          for f in dist/*.qcow2; do
+            S3_PREFIX="os-image/releases/${RELEASE}/${ARCH}" \
+              ./scripts/upload-s3-flat.sh "$f"
+          done
+
+      - name: Verify upload
+        shell: bash
+        env:
+          CF_DOMAIN: ${{ steps.meta.outputs.cf_domain }}
+          S3_URI: ${{ steps.meta.outputs.s3_uri }}
+          RELEASE: ${{ steps.meta.outputs.release }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          # head-object, not curl on the CloudFront URL: that domain sits
+          # behind a WAF IP allowlist that GitHub-hosted runners are never
+          # on (confirmed live -- a real upload 403's from here every time),
+          # so an HTTP check can never pass from CI. head-object uses this
+          # job's own IAM role instead, so it verifies the same fact --
+          # the object is really there -- without needing network access
+          # to the CDN itself.
+          bucket="${S3_URI#s3://}"
+          bucket="${bucket%%/*}"
+          s3_path="${S3_URI#s3://*/}"
+          for f in dist/*.qcow2; do
+            bn="$(basename "$f")"
+            key="${s3_path}/os-image/releases/${RELEASE}/${ARCH}/${bn}"
+            aws s3api head-object --bucket "${bucket}" --key "${key}" >/dev/null
+            url="https://${CF_DOMAIN}/${key}"
+            echo "OK s3://${bucket}/${key} (${url})"
+          done
+
+  release:
+    needs: publish
+    if: >-
+      github.repository == 'dsx-ai-factory/nke' &&
+      startsWith(github.ref, 'refs/tags/os-image/')
+    name: Cut the GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Download every leg's assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-assets-*
+          merge-multiple: true
+          path: dist
+
+      - name: Merge the per-arch checksums
+        id: meta
+        run: |
+          set -euo pipefail
+          cat dist/checksums-*.txt | sort -k2 > dist/checksums.txt
+          rm -f dist/checksums-*.txt
+          # Already key=value, written by the amd64 leg.
+          cat dist/release-meta.env >> "$GITHUB_OUTPUT"
+          rm -f dist/release-meta.env
           echo "::group::checksums"
           cat dist/checksums.txt
           echo "::endgroup::"
 
       - name: Create GitHub Release
-        if: matrix.arch == 'amd64' && startsWith(github.ref, 'refs/tags/os-image/')
         id: release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
@@ -399,17 +822,17 @@ jobs:
           draft: true
           body: |
             os-image ${{ steps.meta.outputs.version }}: the FDE and non-FDE Packer
-            node images, built and validated against nke-agent
+            node images for amd64 and arm64, built and validated against nke-agent
             `${{ steps.meta.outputs.agent_version }}` (built from source at this
-            commit; Ubuntu 26.04, linux/amd64). An arm64 non-FDE image also
-            publishes to GHCR (see below) but isn't attached to this release yet.
+            commit; Ubuntu 26.04).
 
             Pull the qcow2s with oras (not docker):
 
             ```
-            oras pull ghcr.io/nvidia/nke/os-image-fde:${{ steps.meta.outputs.version }}-amd64 --platform linux/amd64
-            oras pull ghcr.io/nvidia/nke/os-image-non-fde:${{ steps.meta.outputs.version }}-amd64 --platform linux/amd64
-            oras pull ghcr.io/nvidia/nke/os-image-non-fde:${{ steps.meta.outputs.version }}-arm64 --platform linux/arm64
+            oras pull ghcr.io/dsx-ai-factory/nke/os-image-fde:${{ steps.meta.outputs.version }}-amd64 --platform linux/amd64
+            oras pull ghcr.io/dsx-ai-factory/nke/os-image-fde:${{ steps.meta.outputs.version }}-arm64 --platform linux/arm64
+            oras pull ghcr.io/dsx-ai-factory/nke/os-image-non-fde:${{ steps.meta.outputs.version }}-amd64 --platform linux/amd64
+            oras pull ghcr.io/dsx-ai-factory/nke/os-image-non-fde:${{ steps.meta.outputs.version }}-arm64 --platform linux/arm64
             ```
 
             **FDE security note**: this image's `LUKS_PASSPHRASE` is the shared,
@@ -421,9 +844,9 @@ jobs:
             Verify a node closed that window with `luks-tpm-verify` before trusting
             TPM-only unlock in production.
 
-            The GitHub Release attaches `nke-os-image-check` and checksums covering
-            both qcow2s and the checker binary. The disks themselves are the OCI
-            artifacts above; they are too large to attach here.
+            `checksums.txt` covers all four qcow2s and the checker binary. The
+            disks themselves are the OCI artifacts above; they are too large to
+            attach here.
           files: |
             dist/nke-os-image-check
             dist/checksums.txt
@@ -433,7 +856,6 @@ jobs:
           generate_release_notes: false
 
       - name: Publish the release
-        if: matrix.arch == 'amd64' && startsWith(github.ref, 'refs/tags/os-image/')
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RELEASE_ID: ${{ steps.release.outputs.id }}

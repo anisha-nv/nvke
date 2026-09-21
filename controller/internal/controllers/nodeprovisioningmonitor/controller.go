@@ -14,13 +14,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile"
-	"github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile/dbwrapper"
-	dbfilters "github.com/NVIDIA/nke/controller/internal/controllers/dbreconcile/filters"
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/metrics"
-	"github.com/NVIDIA/nke/controller/internal/nodes"
+	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile/dbwrapper"
+	dbfilters "github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile/filters"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/metrics"
+	"github.com/dsx-ai-factory/nke/controller/internal/nodes"
 )
 
 // Controller watches nodes that are in provisioning
@@ -98,8 +98,8 @@ func (c *Controller) reconcile(ctx context.Context, tx db.Tx, dbNode db.Node) (r
 		"nodePoolName", nodePool.Name,
 		"nodeID", dbNode.ID,
 		"nodeName", dbNode.Name,
-		"forgeInstanceID", dbNode.ForgeInstanceID,
-		"forgeMachineID", dbNode.ForgeMachineID,
+		"forgeInstanceID", dbNode.NicoForgeInstanceID(),
+		"forgeMachineID", dbNode.NicoForgeMachineID(),
 		"nodeProvisioningTimeout", c.cfg.NodeProvisioningTimeout.String(),
 		"provisioningAge", provisioningAge.String(),
 	)
@@ -137,7 +137,7 @@ func (c *Controller) reconcile(ctx context.Context, tx db.Tx, dbNode db.Node) (r
 	}
 
 	metrics.RecordNodeProvisioningGiveup(
-		cluster.SiteID.String(),
+		cluster.NicoSiteID().String(),
 		nodePool.ClusterID.String(),
 		nodePool.ID.String(),
 		cluster.Name,

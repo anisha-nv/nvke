@@ -5,7 +5,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,16 +15,13 @@ import (
 
 	"github.com/google/uuid"
 	openapi_types "github.com/oapi-codegen/runtime/types"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	nicov1 "github.com/NVIDIA/cluster-api-provider-nico/api/v1alpha1"
-
-	"github.com/NVIDIA/nke/controller/api"
-	"github.com/NVIDIA/nke/controller/internal/capi"
-	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/constants"
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/naming"
+	"github.com/dsx-ai-factory/nke/controller/api"
+	"github.com/dsx-ai-factory/nke/controller/internal/capi"
+	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/constants"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/naming"
 )
 
 const (
@@ -120,15 +116,6 @@ func (s *clusterService) applyClusterDefaults(req *api.CreateClusterRequest, clu
 		cluster.TeleportEnabled = s.teleportCfg.DefaultClusterEnabled
 	}
 
-	if cluster.SiteID == uuid.Nil || !capi.IsEmptyManifest(cluster.CapiInfraCluster) {
-		return nil
-	}
-
-	manifest, err := forgeCAPINicoClusterManifest(cluster.SiteID)
-	if err != nil {
-		return fmt.Errorf("failed to build default Forge CAPI NicoCluster manifest: %w", err)
-	}
-	cluster.CapiInfraCluster = manifest
 	return nil
 }
 
@@ -332,20 +319,6 @@ func (s *clusterService) preflightCheckCreateClusterRequest(
 	return network, nil
 }
 
-func forgeCAPINicoClusterManifest(siteID uuid.UUID) ([]byte, error) {
-	nicoCluster := nicov1.NicoCluster{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: nicov1.GroupVersion.String(),
-			Kind:       "NicoCluster",
-		},
-		Spec: nicov1.NicoClusterSpec{
-			SiteID: siteID.String(),
-		},
-	}
-
-	return json.Marshal(nicoCluster)
-}
-
 func (s *clusterService) ValidateCreateClusterRequestFields(req *api.CreateClusterRequest) error {
 	mode, err := requestProvider(req.Nico != nil, req.Launchlayer != nil, req.Infra != nil, true)
 	if err != nil {
@@ -361,10 +334,7 @@ func (s *clusterService) ValidateCreateClusterRequestFields(req *api.CreateClust
 		return err
 	}
 	if len(req.Name) > capi.ClusterNameMaxLength {
-		return fmt.Errorf(
-			"cluster name must be %d characters or fewer so it can be used as a cluster namespace name",
-			capi.ClusterNameMaxLength,
-		)
+		return fmt.Errorf("cluster name must be %d characters or fewer so Kubernetes object names derived from it stay within limits", capi.ClusterNameMaxLength)
 	}
 
 	var nodePools []api.NodePoolCreateConfig
@@ -966,7 +936,7 @@ func (s *clusterService) applyClusterLevelControlPlaneSpecUpdate(
 		spec.SetNico(nico)
 
 		if req.Nico.SubnetIDs != nil || req.Nico.VpcPrefixIDs != nil {
-			if err := validateControlPlaneNicoNetworking(spec.SubnetIDs, spec.VpcPrefixIDs); err != nil {
+			if err := validateControlPlaneNicoNetworking(nico.SubnetIDs, nico.VpcPrefixIDs); err != nil {
 				return err
 			}
 		}

@@ -19,12 +19,12 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/NVIDIA/nke/controller/api"
-	"github.com/NVIDIA/nke/controller/internal/capi"
-	"github.com/NVIDIA/nke/controller/internal/config"
-	"github.com/NVIDIA/nke/controller/internal/db"
-	"github.com/NVIDIA/nke/controller/internal/server"
-	"github.com/NVIDIA/nke/controller/internal/testutil"
+	"github.com/dsx-ai-factory/nke/controller/api"
+	"github.com/dsx-ai-factory/nke/controller/internal/capi"
+	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/db"
+	"github.com/dsx-ai-factory/nke/controller/internal/server"
+	"github.com/dsx-ai-factory/nke/controller/internal/testutil"
 )
 
 func ptrString(v string) *string { return &v }
@@ -215,7 +215,7 @@ func TestOpenAPIValidator_CreateCluster(t *testing.T) {
 			{"valid max length", strings.Repeat("a", capi.ClusterNameMaxLength), false},
 			{"contains dot", "test.cluster", true},
 			{"contains uppercase", "Test-cluster", true},
-			{"too long for cluster namespace", strings.Repeat("a", capi.ClusterNameMaxLength+1), true},
+			{"over max length", strings.Repeat("a", capi.ClusterNameMaxLength+1), true},
 		}
 
 		for _, tt := range tests {
@@ -798,7 +798,6 @@ func newTestServerWithValidator(t *testing.T, mockDB *testutil.MockDB) http.Hand
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	cfg := config.Config{
-		FWEAPIKey:            "test-key",
 		ManagedByK8sPlatform: false,
 		ProfilesDir:          "./profiles",
 	}

@@ -22,8 +22,8 @@ import (
 
 	forgesdk "github.com/NVIDIA/ncx-infra-controller-rest/sdk/standard"
 
-	"github.com/NVIDIA/nke/controller/nico-sim/internal/app"
-	"github.com/NVIDIA/nke/controller/nico-sim/internal/seed"
+	"github.com/dsx-ai-factory/nke/controller/nico-sim/internal/app"
+	"github.com/dsx-ai-factory/nke/controller/nico-sim/internal/seed"
 )
 
 // TestEnv wraps a running nico-sim app and httptest server for integration testing.
@@ -60,7 +60,7 @@ func NewTestEnv(t *testing.T, seedDoc seed.Document, profile RuntimeProfile) *Te
 // NewDetachedTestEnv creates a TestEnv not bound to any test—caller must Close() it.
 func NewDetachedTestEnv(seedDoc seed.Document, profile RuntimeProfile) (*TestEnv, error) {
 	cfg := profile.Config
-	logger := slog.New(tint.NewHandler(os.Stderr, &tint.Options{TimeFormat: time.TimeOnly}))
+	logger := slog.New(tint.NewTextHandler(os.Stderr, &tint.Options{TimeFormat: time.TimeOnly}))
 	runCtx, cancel := context.WithCancel(context.Background())
 
 	application, err := app.Setup(runCtx, cfg, seedDoc, logger)
