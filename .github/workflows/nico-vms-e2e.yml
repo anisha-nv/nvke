@@ -103,7 +103,7 @@ jobs:
           - arch: amd64
             runner: linux-amd64-gpu-l4-latest-1
           - arch: arm64
-            runner: nke-arm64-16c64g
+            runner: arc-arm64-kvm
     # Happy path in #804: arm64 41m, amd64 1h31m. Generous for the wider label
     # filters a dispatch can ask for.
     timeout-minutes: 330

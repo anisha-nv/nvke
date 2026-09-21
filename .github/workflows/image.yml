@@ -45,7 +45,7 @@ concurrency:
 jobs:
   image:
     name: build
-    runs-on: linux-amd64-cpu16
+    runs-on: arc-amd64-cpu16
     if: github.repository == 'dsx-ai-factory/nke'
     timeout-minutes: 20
     permissions:

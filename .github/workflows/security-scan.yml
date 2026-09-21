@@ -65,7 +65,7 @@ concurrency:
 jobs:
   grype:
     name: grype
-    runs-on: linux-amd64-cpu16
+    runs-on: arc-amd64-cpu16
     if: github.repository == 'dsx-ai-factory/nke'
     timeout-minutes: 30
     permissions:

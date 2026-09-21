@@ -66,7 +66,7 @@ concurrency:
 jobs:
   analyze:
     name: Analyze ${{ matrix.language }}
-    runs-on: linux-amd64-cpu16
+    runs-on: arc-amd64-cpu16
     if: github.repository == 'dsx-ai-factory/nke'
     timeout-minutes: 60
     permissions:
