@@ -79,6 +79,13 @@ done
   [[ "${EFI_VARS_DEFAULT}" == "$OVMF_VARS_TEMPLATE" ]]
 )
 
+(
+  OVMF_CODE=''
+  OVMF_VARS_TEMPLATE=''
+  nke_qemu_env arm64
+  [[ -f "${EFI_CODE_DEFAULT}" && -f "${EFI_VARS_DEFAULT}" ]]
+)
+
 ACCELERATOR=tcg
 nke_qemu_env arm64
 [[ "${NKE_ACCELERATOR}" == tcg ]]
@@ -124,6 +131,19 @@ if nke_qemu_env ppc64le >/dev/null 2>&1; then
   echo 'invalid architecture unexpectedly accepted' >&2
   exit 1
 fi
+# Empty overrides still require discovery to find a complete firmware pair.
+(
+  OVMF_CODE=''
+  OVMF_VARS_TEMPLATE=''
+  # Isolate missing firmware from any distro firmware installed on the host.
+  nke_find_firmware_pair() { EFI_CODE_DEFAULT=''; EFI_VARS_DEFAULT=''; }
+  if nke_qemu_env arm64 >"${workdir}/missing-firmware.log" 2>&1; then
+    echo 'empty overrides unexpectedly accepted missing firmware' >&2
+    exit 1
+  fi
+  grep -Fq 'no UEFI firmware found' "${workdir}/missing-firmware.log"
+)
+
 uname() { case "$1" in -m) printf '%s\n' ppc64le ;; -s) printf '%s\n' Linux ;; esac; }
 if nke_qemu_env amd64 >/dev/null 2>&1; then
   echo 'invalid host architecture unexpectedly accepted' >&2

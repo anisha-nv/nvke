@@ -101,7 +101,7 @@ nke_qemu_env() {
     nke_find_firmware_pair "$QEMU_BIN" "${firmware[@]}" || return 1
   fi
 
-  if [[ -z "$EFI_CODE_DEFAULT" && -z "${OVMF_CODE+x}" ]] || [[ -z "$EFI_VARS_DEFAULT" && -z "${OVMF_VARS_TEMPLATE+x}" ]]; then
+  if [[ -z "$EFI_CODE_DEFAULT" || -z "$EFI_VARS_DEFAULT" ]]; then
     echo "qemu-arch: no UEFI firmware found for $arch; set OVMF_CODE and OVMF_VARS_TEMPLATE" >&2
     return 1
   fi
