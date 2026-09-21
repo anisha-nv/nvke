@@ -52,8 +52,8 @@ builder or guest package-build fallback.
 `packer/` targets allow `ACCELERATOR=tcg` for development. Emulated builds are
 much slower. Image builds accept `kvm` or `tcg` and nothing else —
 `check-acceleration` rejects `ACCELERATOR=hvf`, which exists only for `run-vm`
-and `boot-smoke`. The build keeps artifacts in `packer/artifacts/<arch>/` and
-uploads them to `/var/tmp/nke-image`, which the provisioner removes before
+and `boot-smoke`. Make stages artifacts in its owned `packer/artifacts/`
+directory; Packer uploads them to `/var/tmp/nke-image`, which the provisioner removes before
 finishing the image. Installer ISOs remain in their separate cache.
 
 Boot tools share architecture, firmware, and acceleration selection. They

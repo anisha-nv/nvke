@@ -45,7 +45,7 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
     def make(self, target, *extra, skip_build_setup=False):
         args = [os.environ.get("MAKE", "make"), "--no-print-directory", "-C", str(PACKER_DIR)]
         if skip_build_setup:
-            args += ["-o", "ssh-key", "-o", "init-fde", "-o", "init-non-fde", "-o", "prepare-installer-iso"]
+            args += ["-o", "ssh-key", "-o", "init-fde", "-o", "init-non-fde", "-o", "prepare-installer-iso", "-o", "prepare-artifacts"]
         args += [target, "ARCH=arm64", "ACCELERATOR=tcg", f"PACKER={self.root / 'packer'}",
                  f"ARTIFACTS_DIR={self.root / 'artifacts'}", f"BUILD_LOGS={self.root / 'logs'}", *extra]
         return subprocess.run(args, env=self.env, text=True, capture_output=True, check=False)
@@ -59,7 +59,7 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
                 self.assertEqual(args[0], "build")
                 self.assertEqual(args[-1], str(PACKER_DIR / f"nke-node-{variant}.pkr.hcl"))
                 for value in ("accelerator=tcg", "cpu_model=max,pauth-impdef=on", "ssh_timeout=180m",
-                              "root_fs_label=cloudimg-rootfs", f"artifacts_dir={self.root / 'artifacts'}",
+                              "root_fs_label=cloudimg-rootfs", f"artifacts_dir={PACKER_DIR / 'artifacts'}",
                               f"efi_firmware_code={self.env['OVMF_CODE']}",
                               f"efi_firmware_vars={self.env['OVMF_VARS_TEMPLATE']}"):
                     self.assertIn(value, args)

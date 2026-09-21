@@ -135,6 +135,7 @@ class PackerMakefileTest(unittest.TestCase):
 
         scripts = workspace / "scripts"
         scripts.mkdir()
+        shutil.copy2(PACKER_DIR / "scripts" / "qemu-arch.sh", scripts / "qemu-arch.sh")
         events = root / "events.log"
         artifacts = workspace / "artifacts"
         if unsafe_artifacts:
@@ -211,6 +212,15 @@ fi
                 root, unsafe_artifacts=unsafe_artifacts
             )
         )
+        host_arch = "x86_64" if arch == "amd64" else "aarch64"
+        self.write_executable(
+            tools / "uname",
+            f'#!/bin/sh\ncase "$1" in -m) echo {host_arch};; -s) echo Linux;; esac\n',
+        )
+        self.write_executable(
+            tools / f"qemu-system-{host_arch}",
+            '#!/bin/sh\nif [ "$1" = -accel ]; then echo tcg; fi\n',
+        )
         if material_inputs is None:
             material_inputs = (
                 ("K8S_VERSIONS", "1.33.5 1.34.1"),
@@ -224,6 +234,9 @@ fi
             f"PYTHON={python_path or sys.executable}",
             f"SOURCE_ROOT={source}",
             f"ARCH={arch}",
+            "ACCELERATOR=tcg",
+            "OVMF_CODE=/firmware/code.fd",
+            "OVMF_VARS_TEMPLATE=/firmware/vars.fd",
         ]
         if not material_inputs_from_environment:
             variables.extend(f"{name}={value}" for name, value in material_inputs)
