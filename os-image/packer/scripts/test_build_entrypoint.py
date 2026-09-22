@@ -4,6 +4,7 @@
 """Exercise Make's Packer argv and early failures without downloading or booting."""
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -16,7 +17,11 @@ class BuildEntrypointTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
+        self.packer_dir = self.root / "packer-project"
+        self.packer_dir.mkdir()
+        shutil.copy(PACKER_DIR / "Makefile", self.packer_dir)
+        shutil.copytree(PACKER_DIR / "scripts", self.packer_dir / "scripts")
         self.env = os.environ.copy()
         self.env.update(
             PATH=f"{self.root}:{self.env['PATH']}",
@@ -35,6 +40,11 @@ class BuildEntrypointTest(unittest.TestCase):
 import json, os, sys
 from pathlib import Path
 Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
+values = dict(arg.split('=', 1) for arg in sys.argv[1:] if '=' in arg)
+variant = 'non-fde' if 'non-fde' in values['-only'] else 'fde'
+output = Path(values['output_directory']) / variant
+output.mkdir(parents=True, exist_ok=True)
+(output / 'nke-node.qcow2').touch()
 ''')
 
     def script(self, name, text):
@@ -43,9 +53,10 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
         p.chmod(0o755)
 
     def make(self, target, *extra, skip_build_setup=False):
-        args = [os.environ.get("MAKE", "make"), "--no-print-directory", "-C", str(PACKER_DIR)]
+        args = [os.environ.get("MAKE", "make"), "--no-print-directory", "-C", str(self.packer_dir)]
         if skip_build_setup:
-            args += ["-o", "ssh-key", "-o", "init-fde", "-o", "init-non-fde", "-o", "prepare-installer-iso", "-o", "prepare-artifacts"]
+            args += ["-o", "ssh-key", "-o", "init-fde", "-o", "init-non-fde", "-o", "prepare-installer-iso", "-o", "prepare-artifacts", "-o", "prepare-packer-inputs"]
+            target = "_" + target
         args += [target, "ARCH=arm64", "ACCELERATOR=tcg", f"PACKER={self.root / 'packer'}",
                  f"ARTIFACTS_DIR={self.root / 'artifacts'}", f"BUILD_LOGS={self.root / 'logs'}", *extra]
         return subprocess.run(args, env=self.env, text=True, capture_output=True, check=False)
@@ -57,9 +68,9 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 args = json.loads(Path(self.env['PACKER_ARGS']).read_text())
                 self.assertEqual(args[0], "build")
-                self.assertEqual(args[-1], str(PACKER_DIR / f"nke-node-{variant}.pkr.hcl"))
+                self.assertEqual(args[-1], str(self.packer_dir))
                 for value in ("accelerator=tcg", "cpu_model=max,pauth-impdef=on", "ssh_timeout=180m",
-                              "root_fs_label=cloudimg-rootfs", f"artifacts_dir={PACKER_DIR / 'artifacts'}",
+                              "root_fs_label=cloudimg-rootfs", f"material_manifest={self.packer_dir / '.packer-inputs/material-manifest.json'}",
                               f"efi_firmware_code={self.env['OVMF_CODE']}",
                               f"efi_firmware_vars={self.env['OVMF_VARS_TEMPLATE']}"):
                     self.assertIn(value, args)
