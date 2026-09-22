@@ -87,6 +87,7 @@ class PackerProfileTest(unittest.TestCase):
                             result = subprocess.run(
                                 [os.environ.get("PACKER", "packer"), "console",
                                  *(["-var", f"image_profile={profile}"] if profile else []),
+                                 "-var", f"architecture={arch}",
                                  "-var", f"material_manifest={manifest}",
                                  "-var", f"output_directory={root}/output",
                                  "-var", f"ssh_private_key_file={key}",
