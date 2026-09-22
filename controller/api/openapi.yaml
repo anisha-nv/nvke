@@ -2343,12 +2343,10 @@ components:
     LaunchLayerNodePoolProvider:
       type: object
       additionalProperties: false
-      required: [machine, spireAttestationMethod]
+      required: [machine]
       properties:
         machine:
           $ref: "#/components/schemas/LaunchLayerMachine"
-        spireAttestationMethod:
-          $ref: "#/components/schemas/SpireAttestationMethodCreate"
         bootstrapFiles:
           type: array
           items:
@@ -2369,8 +2367,6 @@ components:
       properties:
         machine:
           $ref: "#/components/schemas/LaunchLayerMachine"
-        spireAttestationMethod:
-          $ref: "#/components/schemas/SpireAttestationMethod"
         bootstrapFiles:
           type: array
           items:
@@ -2392,7 +2388,7 @@ components:
     LaunchLayerControlPlaneProvider:
       type: object
       additionalProperties: false
-      required: [machinePreferences, spireAttestationMethod]
+      required: [machinePreferences]
       description: |
         Read-only control-plane snapshot. All stored preferences are shown; the
         current controller-mode node context selects the first, not a fallback.
@@ -2403,8 +2399,6 @@ components:
           minItems: 1
           items:
             $ref: "#/components/schemas/LaunchLayerMachine"
-        spireAttestationMethod:
-          $ref: "#/components/schemas/SpireAttestationMethodCreate"
         bootstrapFiles:
           type: array
           items:
@@ -2589,9 +2583,6 @@ components:
             Generic escape hatch: no concrete module schema is validated here.
             Use launchlayer.machine for first-class LaunchLayer validation.
           x-go-type-skip-optional-pointer: true
-        spireAttestationMethod:
-          $ref: "#/components/schemas/SpireAttestationMethodCreate"
-          description: How CWE configures SPIRE agent attestation for CAPI-backed nodes
         bootstrapFiles:
           type: array
           items:
@@ -2620,9 +2611,6 @@ components:
             Generic escape hatch: no concrete module schema is validated here.
             Use launchlayer.machine for first-class LaunchLayer validation.
           x-go-type-skip-optional-pointer: true
-        spireAttestationMethod:
-          $ref: "#/components/schemas/SpireAttestationMethod"
-          description: How CWE configures SPIRE agent attestation for CAPI-backed nodes
         bootstrapFiles:
           type: array
           items:
@@ -2649,9 +2637,6 @@ components:
             Generic escape hatch: no concrete module schema is validated here.
             Use launchlayer.machine for first-class LaunchLayer validation.
           x-go-type-skip-optional-pointer: true
-        spireAttestationMethod:
-          $ref: "#/components/schemas/SpireAttestationMethodCreate"
-          description: How CWE configures SPIRE agent attestation for CAPI-backed nodes
         bootstrapFiles:
           type: array
           items:
@@ -2820,9 +2805,6 @@ components:
             Generic escape hatch: no concrete module schema is validated here.
             Use launchlayer.machine for first-class LaunchLayer validation.
           x-go-type-skip-optional-pointer: true
-        spireAttestationMethod:
-          $ref: "#/components/schemas/SpireAttestationMethodCreate"
-          description: How CWE configures SPIRE agent attestation for CAPI-backed control plane nodes
         bootstrapFiles:
           type: array
           items:
@@ -2851,9 +2833,6 @@ components:
             Generic escape hatch: no concrete module schema is validated here.
             Use launchlayer.machine for first-class LaunchLayer validation.
           x-go-type-skip-optional-pointer: true
-        spireAttestationMethod:
-          $ref: "#/components/schemas/SpireAttestationMethod"
-          description: How CWE configures SPIRE agent attestation for CAPI-backed control plane nodes
         bootstrapFiles:
           type: array
           items:
@@ -2899,21 +2878,6 @@ components:
         - "smallest"
         - "largest"
       description: The strategy to use for selecting the OS install disk on nodes.
-      x-go-type-skip-optional-pointer: true
-
-    SpireAttestationMethod:
-      type: string
-      enum:
-        - "tpm"
-        - "joinToken"
-      description: How CWE configures SPIRE agent attestation for CAPI-backed nodes.
-
-    SpireAttestationMethodCreate:
-      type: string
-      enum:
-        - "tpm"
-        - "joinToken"
-      description: How CWE configures SPIRE agent attestation for CAPI-backed nodes.
       x-go-type-skip-optional-pointer: true
 
     ListOSProfilesResponse:

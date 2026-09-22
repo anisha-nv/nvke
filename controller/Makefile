@@ -181,6 +181,15 @@ test: ## Execute unit tests (excludes integration tests). (run by the merge gate
 	# by accident anyway: `.` is a regex wildcard, not a path prefix.
 	go test $(GO_TEST_FLAGS) ./... -coverprofile=coverage.txt -covermode $(GO_COVER_MODE)
 
+# The `integration` build tag covers two packages here, and neither needs a
+# service to be running. internal/agent binds a loopback socket and mints its
+# own certificates; internal/teleport skips every tagged test unless
+# TELEPORT_ENABLED is set. Kept out of `test` above so a developer with
+# TELEPORT_ENABLED exported does not reach a live Teleport from a unit run.
+.PHONY: test-integration-local
+test-integration-local: ## Execute the `integration`-tagged tests that need no external service. (run by the merge gate)
+	go test $(GO_TEST_FLAGS) -tags=integration -count=1 ./internal/agent/... ./internal/teleport/...
+
 .PHONY: test-integration
 test-integration: ## Execute tests against a running CWE deployment.
 	@echo "Running integration tests..."
@@ -331,6 +340,19 @@ PUSH_TAGS ?=
 ARCH ?= amd64
 BUILDX_EXTRA_ARGS ?=
 
+# Every stage after the push used to re-resolve a mutable tag: the manifest
+# stitched <t>-amd64 and <t>-arm64, the SBOM re-pulled sha-<sha>-<arch>, and the
+# promotion resolved the version tag again. Each could read a newer push than
+# the one that run made. These files carry the digest forward instead. Under
+# bin/, which is already gitignored.
+DIGEST_FILE       ?= $(CURDIR)/bin/image-digest-$(ARCH).txt
+INDEX_DIGEST_FILE ?= $(CURDIR)/bin/image-digest-index.txt
+
+# The per-arch sources docker-manifest stitches. Empty means the mutable
+# per-arch tags, which is what a local run wants. CI passes the digests
+# docker-push-arch recorded, so the index holds exactly what this run pushed.
+ARCH_DIGESTS ?=
+
 .PHONY: check-img-repo
 check-img-repo:
 	@test -n "$(IMG_REPO)" || { echo "ERROR: IMG_REPO must be set explicitly"; exit 1; }
@@ -338,6 +360,7 @@ check-img-repo:
 
 .PHONY: docker-push-arch
 docker-push-arch: check-img-repo ## Build+push one arch to IMG_REPO, tags <t>-$(ARCH)
+	@mkdir -p $(dir $(DIGEST_FILE))
 	@# --provenance=false: the default provenance turns a single-arch push into an
 	@# OCI index, which breaks docker-manifest's imagetools create and the NGC UI.
 	docker buildx build -f Dockerfile \
@@ -346,14 +369,30 @@ docker-push-arch: check-img-repo ## Build+push one arch to IMG_REPO, tags <t>-$(
 	  --build-arg BUILD_VERSION=${BUILD_VERSION} \
 	  --build-arg GIT_VERSION=${GIT_VERSION} \
 	  $(BUILDX_EXTRA_ARGS) \
+	  --metadata-file $(DIGEST_FILE).json \
 	  ..
+	@# containerimage.digest is the manifest buildx just pushed. Read with sed
+	@# rather than jq, which the self-hosted runners do not all carry.
+	@sed -n 's/.*"containerimage\.digest": *"\([^"]*\)".*/\1/p' $(DIGEST_FILE).json > $(DIGEST_FILE)
+	@test -s $(DIGEST_FILE) || { echo "ERROR: no containerimage.digest in $(DIGEST_FILE).json"; exit 1; }
+	@echo "pushed $(IMG_REPO)@$$(cat $(DIGEST_FILE))"
 
 .PHONY: docker-manifest
 docker-manifest: check-img-repo ## Stitch <t>-amd64 + <t>-arm64 into <t> under IMG_REPO
+	@mkdir -p $(dir $(INDEX_DIGEST_FILE))
 	@set -e; for t in $(PUSH_TAGS); do \
-	  docker buildx imagetools create -t "$(IMG_REPO):$$t" \
-	    "$(IMG_REPO):$$t-amd64" "$(IMG_REPO):$$t-arm64"; \
+	  if [ -n "$(ARCH_DIGESTS)" ]; then \
+	    srcs=""; for d in $(ARCH_DIGESTS); do srcs="$$srcs $(IMG_REPO)@$$d"; done; \
+	  else \
+	    srcs="$(IMG_REPO):$$t-amd64 $(IMG_REPO):$$t-arm64"; \
+	  fi; \
+	  docker buildx imagetools create -t "$(IMG_REPO):$$t" $$srcs; \
 	done
+	@# One inspect, not one per stage: every tag above points at the same index,
+	@# and everything downstream reads this digest rather than a tag.
+	@docker buildx imagetools inspect "$(IMG_REPO):$(firstword $(PUSH_TAGS))" \
+	  --format '{{.Manifest.Digest}}' > $(INDEX_DIGEST_FILE)
+	@echo "index $(IMG_REPO)@$$(cat $(INDEX_DIGEST_FILE))"
 
 ##@ Run
 

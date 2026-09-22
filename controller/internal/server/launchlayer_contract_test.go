@@ -114,7 +114,7 @@ func TestLaunchLayerAndGenericAdmissionAreIndependent(t *testing.T) {
 				for i := range *body.NodePools {
 					p := &(*body.NodePools)[i]
 					p.Launchlayer = nil
-					p.Infra = &api.InfraNodePoolProvider{SpireAttestationMethod: "joinToken", MachineTemplate: map[string]any{"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha1", "kind": "LaunchLayerMachineTemplate"}}
+					p.Infra = &api.InfraNodePoolProvider{MachineTemplate: map[string]any{"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha1", "kind": "LaunchLayerMachineTemplate"}}
 				}
 			}
 			tx := &launchLayerRecordingTx{}
@@ -161,7 +161,7 @@ func TestGenericManifestExtensionsSurviveAdmission(t *testing.T) {
 			for i := range *body.NodePools {
 				p := &(*body.NodePools)[i]
 				p.Launchlayer = nil
-				p.Infra = &api.InfraNodePoolProvider{SpireAttestationMethod: "joinToken", MachineTemplate: map[string]any{
+				p.Infra = &api.InfraNodePoolProvider{MachineTemplate: map[string]any{
 					"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha1", "kind": kind + "MachineTemplate",
 					"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"futureExtension": "preserve-me"}}},
 				}}
@@ -208,7 +208,7 @@ func TestLaunchLayerLaterWriteGatesAndImmutableModes(t *testing.T) {
 				providerKey := "launchlayer"
 				if scenario == "generic-on-typed" {
 					providerKey = "infra"
-					nodeIntent = &api.InfraNodePoolProvider{MachineTemplate: launchLayerTemplate(), SpireAttestationMethod: "tpm"}
+					nodeIntent = &api.InfraNodePoolProvider{MachineTemplate: launchLayerTemplate()}
 				}
 				body := map[string]any{providerKey: nodeIntent}
 				method, path := http.MethodPatch, "/api/nodePools/"+pool.ID.String()

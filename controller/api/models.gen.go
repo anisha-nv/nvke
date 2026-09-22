@@ -42,18 +42,6 @@ const (
 	LaunchLayerMachineFulfillmentStrategyWAITFORRESOURCE LaunchLayerMachineFulfillmentStrategy = "WAIT_FOR_RESOURCE"
 )
 
-// Defines values for SpireAttestationMethod.
-const (
-	SpireAttestationMethodJoinToken SpireAttestationMethod = "joinToken"
-	SpireAttestationMethodTpm       SpireAttestationMethod = "tpm"
-)
-
-// Defines values for SpireAttestationMethodCreate.
-const (
-	SpireAttestationMethodCreateJoinToken SpireAttestationMethodCreate = "joinToken"
-	SpireAttestationMethodCreateTpm       SpireAttestationMethodCreate = "tpm"
-)
-
 // Defines values for UpdateInProgressType.
 const (
 	UpdateInProgressTypeCpNodesRecycling UpdateInProgressType = "cp_nodes_recycling"
@@ -540,9 +528,6 @@ type InfraControlPlaneProvider struct {
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed control plane nodes
 	PreKubeadmCommands []string `json:"preKubeadmCommands,omitempty"`
-
-	// SpireAttestationMethod How CWE configures SPIRE agent attestation for CAPI-backed nodes.
-	SpireAttestationMethod SpireAttestationMethodCreate `json:"spireAttestationMethod,omitempty"`
 }
 
 // InfraControlPlaneProviderUpdate The mutable infra provider control plane fields. Every field carries three states: omitted
@@ -558,9 +543,6 @@ type InfraControlPlaneProviderUpdate struct {
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed control plane nodes
 	PreKubeadmCommands []string `json:"preKubeadmCommands,omitempty"`
-
-	// SpireAttestationMethod How CWE configures SPIRE agent attestation for CAPI-backed nodes.
-	SpireAttestationMethod *SpireAttestationMethod `json:"spireAttestationMethod,omitempty"`
 }
 
 // InfraNodePoolProvider Infra provider fields for a node pool. Mutually exclusive with `nico`.
@@ -575,9 +557,6 @@ type InfraNodePoolProvider struct {
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed nodes
 	PreKubeadmCommands []string `json:"preKubeadmCommands,omitempty"`
-
-	// SpireAttestationMethod How CWE configures SPIRE agent attestation for CAPI-backed nodes.
-	SpireAttestationMethod SpireAttestationMethodCreate `json:"spireAttestationMethod,omitempty"`
 }
 
 // InfraNodePoolProviderUpdate The mutable infra provider node pool fields. Every field carries three states: omitted
@@ -593,9 +572,6 @@ type InfraNodePoolProviderUpdate struct {
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed nodes
 	PreKubeadmCommands []string `json:"preKubeadmCommands,omitempty"`
-
-	// SpireAttestationMethod How CWE configures SPIRE agent attestation for CAPI-backed nodes.
-	SpireAttestationMethod *SpireAttestationMethod `json:"spireAttestationMethod,omitempty"`
 }
 
 // InfraNodeSetProvider Infra provider fields for a node set (read-only snapshot).
@@ -610,9 +586,6 @@ type InfraNodeSetProvider struct {
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed nodes
 	PreKubeadmCommands []string `json:"preKubeadmCommands,omitempty"`
-
-	// SpireAttestationMethod How CWE configures SPIRE agent attestation for CAPI-backed nodes.
-	SpireAttestationMethod SpireAttestationMethodCreate `json:"spireAttestationMethod,omitempty"`
 }
 
 // LaunchLayerClusterProvider Immutable LaunchLayer cluster intent. Select an existing VPC with vpcID,
@@ -636,9 +609,6 @@ type LaunchLayerControlPlaneProvider struct {
 	BootstrapFiles     *[]CloudInitFile     `json:"bootstrapFiles,omitempty"`
 	MachinePreferences []LaunchLayerMachine `json:"machinePreferences"`
 	PreKubeadmCommands *[]string            `json:"preKubeadmCommands,omitempty"`
-
-	// SpireAttestationMethod How CWE configures SPIRE agent attestation for CAPI-backed nodes.
-	SpireAttestationMethod SpireAttestationMethodCreate `json:"spireAttestationMethod"`
 }
 
 // LaunchLayerControlPlaneProviderCreate defines model for LaunchLayerControlPlaneProviderCreate.
@@ -674,9 +644,6 @@ type LaunchLayerNodePoolProvider struct {
 	// On PATCH the whole machine object replaces the stored intent.
 	Machine            LaunchLayerMachine `json:"machine"`
 	PreKubeadmCommands *[]string          `json:"preKubeadmCommands,omitempty"`
-
-	// SpireAttestationMethod How CWE configures SPIRE agent attestation for CAPI-backed nodes.
-	SpireAttestationMethod SpireAttestationMethodCreate `json:"spireAttestationMethod"`
 }
 
 // LaunchLayerNodePoolProviderUpdate Omitted fields preserve stored intent. A supplied machine fully replaces
@@ -690,9 +657,6 @@ type LaunchLayerNodePoolProviderUpdate struct {
 	// On PATCH the whole machine object replaces the stored intent.
 	Machine            *LaunchLayerMachine `json:"machine,omitempty"`
 	PreKubeadmCommands *[]string           `json:"preKubeadmCommands,omitempty"`
-
-	// SpireAttestationMethod How CWE configures SPIRE agent attestation for CAPI-backed nodes.
-	SpireAttestationMethod *SpireAttestationMethod `json:"spireAttestationMethod,omitempty"`
 }
 
 // LaunchLayerNodeSetProvider defines model for LaunchLayerNodeSetProvider.
@@ -1228,12 +1192,6 @@ type OSProfile struct {
 	// Name The name of the OS profile
 	Name string `json:"name"`
 }
-
-// SpireAttestationMethod How CWE configures SPIRE agent attestation for CAPI-backed nodes.
-type SpireAttestationMethod string
-
-// SpireAttestationMethodCreate How CWE configures SPIRE agent attestation for CAPI-backed nodes.
-type SpireAttestationMethodCreate string
 
 // UpdateClusterControlPlaneConfig `nico`, `launchlayer`, and `infra` are mutually exclusive: supply at most one
 // (all may be omitted). Multiple payloads are rejected with 400, as is a

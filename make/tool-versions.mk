@@ -7,7 +7,14 @@
 # Derived, not duplicated: go.work owns the Go version.
 GOVULNCHECK_GO_VERSION ?= $(shell awk '/^go /{print $$2; exit}' $(dir $(lastword $(MAKEFILE_LIST)))../go.work)
 GOVULNCHECK_VERSION    ?= v1.6.0
-GOVULNCHECK_WAIVED_MODULES ?= controller/nico-sim
+# Waived govulncheck findings, as <module>=<OSV-id>[,<OSV-id>...]. Scoped to
+# the advisory, not the module, so an unrelated reachable vulnerability in the
+# same module still fails the gate. Empty: nothing is waived. A waived advisory
+# that stops being called fails the gate, so an entry cannot outlive its reason.
+GOVULNCHECK_WAIVED ?=
+# Set both with any waiver. Name a person as the owner, not a team.
+GOVULNCHECK_WAIVER_OWNER  ?=
+GOVULNCHECK_WAIVER_REVIEW ?=
 
 # Committed digests, not fetched from the release. A checksum served by the
 # same host as the artifact shares its compromise boundary; a committed one

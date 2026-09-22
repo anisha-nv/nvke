@@ -83,9 +83,8 @@ func apiNodePoolFromDB(pool *db.NodePool) (api.NodePool, error) {
 // objects reuse CAPI persistence; they never select public request/response mode.
 func infraNodePatch(p *api.LaunchLayerNodePoolProviderUpdate) *api.InfraNodePoolProviderUpdate {
 	out := &api.InfraNodePoolProviderUpdate{
-		SpireAttestationMethod: p.SpireAttestationMethod,
-		BootstrapFiles:         sliceValue(p.BootstrapFiles),
-		PreKubeadmCommands:     sliceValue(p.PreKubeadmCommands),
+		BootstrapFiles:     sliceValue(p.BootstrapFiles),
+		PreKubeadmCommands: sliceValue(p.PreKubeadmCommands),
 	}
 	if p.Machine != nil {
 		out.MachineTemplate = launchLayerMachineTemplate(*p.Machine)
@@ -96,15 +95,15 @@ func infraNodePatch(p *api.LaunchLayerNodePoolProviderUpdate) *api.InfraNodePool
 func infraControlPlanePatch(p *api.LaunchLayerControlPlaneProviderUpdate) *api.InfraControlPlaneProviderUpdate {
 	n := infraNodePatch(p)
 	return &api.InfraControlPlaneProviderUpdate{
-		MachineTemplate: n.MachineTemplate, SpireAttestationMethod: n.SpireAttestationMethod,
-		BootstrapFiles: n.BootstrapFiles, PreKubeadmCommands: n.PreKubeadmCommands,
+		MachineTemplate: n.MachineTemplate,
+		BootstrapFiles:  n.BootstrapFiles, PreKubeadmCommands: n.PreKubeadmCommands,
 	}
 }
 
 func infraControlPlaneCreate(p *api.LaunchLayerControlPlaneProviderCreate) *api.InfraControlPlaneProvider {
 	return &api.InfraControlPlaneProvider{
-		MachineTemplate: launchLayerMachineTemplate(p.Machine), SpireAttestationMethod: p.SpireAttestationMethod,
-		BootstrapFiles: sliceValue(p.BootstrapFiles), PreKubeadmCommands: sliceValue(p.PreKubeadmCommands),
+		MachineTemplate: launchLayerMachineTemplate(p.Machine),
+		BootstrapFiles:  sliceValue(p.BootstrapFiles), PreKubeadmCommands: sliceValue(p.PreKubeadmCommands),
 	}
 }
 
@@ -176,10 +175,9 @@ func dbLaunchLayerNodeProvider(p *api.LaunchLayerNodePoolProvider) (db.CAPINodeP
 		return db.CAPINodePoolProvider{}, err
 	}
 	return db.CAPINodePoolProvider{
-		InfraMachineTemplate:   raw,
-		SpireAttestationMethod: db.SpireAttestationMethod(p.SpireAttestationMethod),
-		BootstrapFiles:         dbCloudInitFilesFromAPI(sliceValue(p.BootstrapFiles)),
-		PreKubeadmCommands:     append([]string(nil), sliceValue(p.PreKubeadmCommands)...),
+		InfraMachineTemplate: raw,
+		BootstrapFiles:       dbCloudInitFilesFromAPI(sliceValue(p.BootstrapFiles)),
+		PreKubeadmCommands:   append([]string(nil), sliceValue(p.PreKubeadmCommands)...),
 	}, nil
 }
 
@@ -247,11 +245,8 @@ func apiLaunchLayerNodeProvider(p *db.CAPINodePoolProvider) (*api.LaunchLayerNod
 	if err != nil {
 		return nil, err
 	}
-	if validateCAPISpireAttestationMethod(string(p.SpireAttestationMethod)) != nil {
-		return nil, errStoredLaunchLayerIntent
-	}
 	out := &api.LaunchLayerNodePoolProvider{
-		Machine: machine, SpireAttestationMethod: api.SpireAttestationMethodCreate(p.SpireAttestationMethod),
+		Machine:            machine,
 		BootstrapFiles:     apiCloudInitFilesFromDB(p.BootstrapFiles),
 		PreKubeadmCommands: cloneSlicePtr(p.PreKubeadmCommands),
 	}
@@ -273,12 +268,8 @@ func apiLaunchLayerControlPlane(p *db.CAPIControlPlaneProvider) (*api.LaunchLaye
 	if p == nil || len(p.InfraMachineTemplatePreferences) == 0 {
 		return nil, errStoredLaunchLayerIntent
 	}
-	if validateCAPISpireAttestationMethod(string(p.SpireAttestationMethod)) != nil {
-		return nil, errStoredLaunchLayerIntent
-	}
 	out := &api.LaunchLayerControlPlaneProvider{
-		SpireAttestationMethod: api.SpireAttestationMethodCreate(p.SpireAttestationMethod),
-		BootstrapFiles:         apiCloudInitFilesFromDB(p.BootstrapFiles), PreKubeadmCommands: cloneSlicePtr(p.PreKubeadmCommands),
+		BootstrapFiles: apiCloudInitFilesFromDB(p.BootstrapFiles), PreKubeadmCommands: cloneSlicePtr(p.PreKubeadmCommands),
 		MachinePreferences: make([]api.LaunchLayerMachine, len(p.InfraMachineTemplatePreferences)),
 	}
 	if validateCloudInitFiles(sliceValue(out.BootstrapFiles)) != nil {

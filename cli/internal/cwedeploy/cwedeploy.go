@@ -37,6 +37,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/dsx-ai-factory/nke/controller/deploy/charts"
 )
 
 const (
@@ -63,12 +65,6 @@ const (
 	spireCRDsReleaseName = "spire-crds"
 	spireReleaseName     = "spire"
 	cweReleaseName       = "cloud-workflow-engine"
-
-	// postgresChartRef is the Bitnami postgresql chart, pulled over OCI to
-	// avoid the classic HTTP repo's full index.yaml download. Version pin
-	// matches controller/Tiltfile's CHART_VERSION_POSTGRESQL.
-	postgresChartRef     = "oci://registry-1.docker.io/bitnamicharts/postgresql"
-	postgresChartVersion = "18.5.15"
 
 	// temporalChartRepo/temporalChartName are passed via `helm ... --repo`
 	// rather than a `helm repo add`, so this package does not mutate the
@@ -238,16 +234,6 @@ type Config struct {
 	// routing -- looks the same, and this is the only way to bisect it.
 	DisableMTLS bool
 
-	// ChartPath is the local filesystem path to
-	// controller/deploy/charts/controller. Empty triggers
-	// repo-root discovery from the working directory (see resolveChartPath).
-	// This is a real gap for nkectl shipped as a standalone binary outside a
-	// repository checkout: the chart is not yet published anywhere
-	// (chart-publish.yml only fires on controller/v* release tags, and none
-	// exist yet). Set explicitly once that changes, pointing at an OCI
-	// chart ref instead.
-	ChartPath string
-
 	// ProvisionedProviderImage is the cluster-api-provider-provisioned image to
 	// run as the CAPI infrastructure provider for hosts that already exist.
 	// Required for site-cluster creation. Published by
@@ -256,11 +242,6 @@ type Config struct {
 	// lane uses. Either way the image is loaded into the cluster rather than
 	// pulled, because the bootstrap cluster has no pull secret.
 	ProvisionedProviderImage string
-
-	// ProvisionedProviderPath is the local path to
-	// cluster-api-provider-provisioned/config/default. Empty triggers
-	// repo-root discovery, with the same standalone-binary caveat as ChartPath.
-	ProvisionedProviderPath string
 
 	// NodeAgentPort is the port CWE dials nke-agent on. Empty leaves CWE's own
 	// default (15005) alone. It comes from the site spec, because it describes
@@ -280,10 +261,6 @@ type Config struct {
 
 	// ReadyTimeout bounds how long WaitReady polls /readyz before giving up.
 	ReadyTimeout time.Duration
-
-	// PostgresChartRef is where helm pulls the Bitnami postgresql chart from,
-	// as an OCI reference or a local path. Empty uses Docker Hub's OCI registry.
-	PostgresChartRef string
 
 	// TemporalChartRef is where helm pulls the Temporal chart from, as an OCI
 	// reference or a local path. Empty uses the go.temporal.io chart repo.
@@ -310,16 +287,13 @@ func DefaultConfig() Config {
 		// Callers set SPIFFEClusterName; an empty trust domain is derived from
 		// it below.
 		SPIFFETrustDomain: os.Getenv("NKECTL_SPIFFE_TRUST_DOMAIN"),
-		ChartPath:         os.Getenv("NKECTL_CWE_CHART_PATH"),
 
 		ProvisionedProviderImage: os.Getenv("NKECTL_CAPI_PROVISIONED_IMAGE"),
-		ProvisionedProviderPath:  os.Getenv("NKECTL_CAPI_PROVISIONED_PATH"),
 		CWEPort:                  envPort("NKECTL_CWE_PORT", DefaultCWEPort),
 
 		HelmTimeout:  envDuration("NKECTL_CWE_HELM_TIMEOUT", 5*time.Minute),
 		ReadyTimeout: envDuration("NKECTL_CWE_READY_TIMEOUT", 5*time.Minute),
 
-		PostgresChartRef:  os.Getenv("NKECTL_CWE_POSTGRES_CHART"),
 		TemporalChartRef:  os.Getenv("NKECTL_CWE_TEMPORAL_CHART"),
 		SPIREChartRef:     os.Getenv("NKECTL_CWE_SPIRE_CHART"),
 		SPIRECRDsChartRef: os.Getenv("NKECTL_CWE_SPIRE_CRDS_CHART"),
@@ -385,13 +359,24 @@ func (e *Engine) Deploy(ctx context.Context, kubeconfigPath string, cfg Config) 
 			"(see Config.ProvisionedProviderImage)")
 	}
 
-	chartPath := cfg.ChartPath
-	if chartPath == "" {
-		var err error
-		chartPath, err = resolveChartPath()
-		if err != nil {
-			return err
-		}
+	// The charts this binary was built with. helm takes a directory and this
+	// process runs the helm binary rather than linking its loader, so they are
+	// written out for the length of the deploy.
+	chartPath, err := os.MkdirTemp("", "nkectl-controller-chart-*")
+	if err != nil {
+		return fmt.Errorf("cwedeploy: creating a directory for the controller chart: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(chartPath) }()
+	if err := charts.Extract(charts.NKEController, chartPath); err != nil {
+		return fmt.Errorf("cwedeploy: writing out the controller chart: %w", err)
+	}
+	postgresChartPath, err := os.MkdirTemp("", "nkectl-postgres-chart-*")
+	if err != nil {
+		return fmt.Errorf("cwedeploy: creating a directory for the postgres chart: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(postgresChartPath) }()
+	if err := charts.Extract(charts.Postgresql, postgresChartPath); err != nil {
+		return fmt.Errorf("cwedeploy: writing out the postgres chart: %w", err)
 	}
 
 	password := cfg.PostgresPassword
@@ -417,23 +402,15 @@ func (e *Engine) Deploy(ctx context.Context, kubeconfigPath string, cfg Config) 
 	}
 	cwePort := effectiveCWEPort(cfg)
 
-	postgresValues, cleanup, err := writeEmbeddedFile(postgresValuesFile)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-
-	postgresChart := cfg.PostgresChartRef
-	if postgresChart == "" {
-		postgresChart = postgresChartRef
-	}
-	e.log.Info("installing postgres", "namespace", postgresNamespace, "version", postgresChartVersion, "chart", postgresChart)
+	// No values file and no version flag: the chart carries its own defaults
+	// -- the databases CWE and Temporal expect, the Service name both dial,
+	// and the image pinned by digest -- and its version is the binary's.
+	// Only the password is supplied per run.
+	e.log.Info("installing postgres", "namespace", postgresNamespace, "chart", postgresChartPath)
 	if _, err := e.helm(ctx, kubeconfigPath,
-		"upgrade", "--install", postgresReleaseName, postgresChart,
+		"upgrade", "--install", postgresReleaseName, postgresChartPath,
 		"--namespace", postgresNamespace, "--create-namespace",
-		"--values", postgresValues,
 		"--set-string", "auth.password="+password,
-		"--version", postgresChartVersion,
 		"--wait", "--timeout", helmTimeout.String(),
 	); err != nil {
 		return fmt.Errorf("cwedeploy: installing postgres: %w", err)
@@ -705,45 +682,6 @@ func writeTempFile(pattern string, body []byte) (path string, cleanup func(), er
 		return "", func() {}, fmt.Errorf("cwedeploy: closing %s: %w", tmpName, err)
 	}
 	return tmpName, cleanup, nil
-}
-
-// resolveChartPath locates controller/deploy/charts/controller by
-// walking up from the current working directory looking for go.work (the
-// repository root marker). This only works inside a checkout of this
-// monorepo -- see the ChartPath doc comment for why that is a known gap, not
-// an oversight.
-func resolveChartPath() (string, error) {
-	root, err := repoRoot()
-	if err != nil {
-		return "", fmt.Errorf("cwedeploy: Config.ChartPath is empty and %w; "+
-			"set NKECTL_CWE_CHART_PATH explicitly", err)
-	}
-	chart := filepath.Join(root, "controller", "deploy", "charts", "controller")
-	if _, err := os.Stat(chart); err != nil {
-		return "", fmt.Errorf("cwedeploy: found repository root at %s but no chart at %s", root, chart)
-	}
-	return chart, nil
-}
-
-// repoRoot walks up from the working directory looking for go.work, this
-// repository's root marker. Shared by everything that has to find a path inside
-// the checkout; see resolveChartPath for why that is a known gap for a
-// standalone binary rather than an oversight.
-func repoRoot() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("resolving the working directory: %w", err)
-	}
-	for {
-		if _, statErr := os.Stat(filepath.Join(dir, "go.work")); statErr == nil {
-			return dir, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", errors.New("no repository root (go.work) was found above the working directory")
-		}
-		dir = parent
-	}
 }
 
 // splitImageRef splits "repo:tag", "repo@sha256:..." or "repo:tag@sha256:..."

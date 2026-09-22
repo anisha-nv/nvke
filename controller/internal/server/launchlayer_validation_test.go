@@ -64,7 +64,6 @@ func launchLayerCreateRequest(controllerMode, managed bool) api.CreateClusterReq
 
 func launchLayerNodeIntent() *api.LaunchLayerNodePoolProvider {
 	return &api.LaunchLayerNodePoolProvider{
-		SpireAttestationMethod: "joinToken",
 		Machine: api.LaunchLayerMachine{
 			InstanceType: "example-type", HostOSProfile: testutil.PtrTo("example-host:1"), VMProfile: testutil.PtrTo("example-vm:1"),
 			SecurityGroups: &api.LaunchLayerSecurityGroups{PrimaryNetworkInterface: &[]string{"example-primary"}, GpuNetworkInterface: &[]string{"example-gpu"}},
@@ -122,9 +121,8 @@ func TestLaunchLayerCreateHTTPRejectsBeforeTransaction(t *testing.T) {
 		{"wrong pool mode", func(r *api.CreateClusterRequest) {
 			p := &(*r.NodePools)[0]
 			p.Launchlayer = nil
-			p.Infra = &api.InfraNodePoolProvider{MachineTemplate: launchLayerTemplate(), SpireAttestationMethod: "joinToken"}
+			p.Infra = &api.InfraNodePoolProvider{MachineTemplate: launchLayerTemplate()}
 		}, "immutable"},
-		{"shared SPIRE", func(r *api.CreateClusterRequest) { (*r.NodePools)[0].Launchlayer.SpireAttestationMethod = "invalid" }, "spireAttestationMethod"},
 		{"shared CNI", func(r *api.CreateClusterRequest) { r.CniPlugin = "invalid" }, "invalid CNI plugin"},
 		{"reserved bootstrap", func(r *api.CreateClusterRequest) {
 			(*r.NodePools)[0].Launchlayer.BootstrapFiles = &[]api.CloudInitFile{{Path: "/etc/spire-agent/agent.conf", Content: "example-secret-value"}}
@@ -215,7 +213,6 @@ func TestLaunchLayerCreateHTTPPersistsIntent(t *testing.T) {
 					expected, err := json.Marshal(launchLayerTemplate())
 					require.NoError(t, err)
 					require.JSONEq(t, string(expected), string(pool.Capi.InfraMachineTemplate))
-					require.Equal(t, db.SpireAttestationMethodJoinToken, pool.Capi.SpireAttestationMethod)
 				}
 				require.Len(t, tx.outboxes, 1+len(tx.pools))
 				require.Equal(t, "ProvisionCluster", tx.outboxes[0])
@@ -249,7 +246,7 @@ func TestLaunchLayerValidationPreservesGenericCreate(t *testing.T) {
 	body.Infra = &api.InfraClusterProvider{Cluster: map[string]any{"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta2", "kind": "DockerCluster"}}
 	for i := range *body.NodePools {
 		(*body.NodePools)[i].Launchlayer = nil
-		(*body.NodePools)[i].Infra = &api.InfraNodePoolProvider{SpireAttestationMethod: "joinToken", MachineTemplate: map[string]any{"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta2", "kind": "DockerMachineTemplate"}}
+		(*body.NodePools)[i].Infra = &api.InfraNodePoolProvider{MachineTemplate: map[string]any{"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta2", "kind": "DockerMachineTemplate"}}
 	}
 	tx := &launchLayerRecordingTx{}
 	database := &testutil.MockDB{GetTx: func() db.Tx { return tx }}

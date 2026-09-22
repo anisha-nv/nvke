@@ -31,7 +31,7 @@ func TestTypedLaunchLayerMappingAndReplacement(t *testing.T) {
 			FulfillmentStrategy: testutil.PtrTo(api.LaunchLayerMachineFulfillmentStrategyWAITFORRESOURCE),
 			SecurityGroups:      &api.LaunchLayerSecurityGroups{PrimaryNetworkInterface: &[]string{"one", "two"}, GpuNetworkInterface: &[]string{}},
 		},
-		SpireAttestationMethod: "joinToken", BootstrapFiles: &[]api.CloudInitFile{{Path: "/etc/example", Content: "safe"}},
+		BootstrapFiles:     &[]api.CloudInitFile{{Path: "/etc/example", Content: "safe"}},
 		PreKubeadmCommands: &[]string{"example-command"},
 	}
 	require.NoError(t, validateLaunchLayerNodeProvider(intent, "launchlayer"))
@@ -54,7 +54,6 @@ func TestTypedLaunchLayerMappingAndReplacement(t *testing.T) {
 	read, err := apiNodePoolFromDB(&pool)
 	require.NoError(t, err)
 	require.Equal(t, api.LaunchLayerMachine{InstanceType: "after"}, read.Launchlayer.Machine)
-	require.Equal(t, api.SpireAttestationMethodCreateJoinToken, read.Launchlayer.SpireAttestationMethod)
 	require.Nil(t, read.Infra)
 	require.NoError(t, validateLaunchLayerNodePoolUpdate(cluster, &pool, patch))
 	// The identical replacement contract applies to the control-plane snapshot.

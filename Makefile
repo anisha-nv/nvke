@@ -54,8 +54,7 @@ LICENSE_FILES = git ls-files -- '*.go' '*.sh' '*.py' '*.js' '*.css' '*.html' '*.
 	| grep -vE '^generated/' \
 	| grep -vE '\.pb\.go$$' \
 	| grep -vE '^controller/deploy/charts/' \
-	| grep -vE '^controller/test/fixtures/' \
-	| grep -vE '^(\.github/|build/|\.grype\.yaml$$)'
+	| grep -vE '^controller/test/fixtures/'
 
 # Modules in go.work — every module in the repository. Building needs no
 # NVIDIA credentials: the one still-INTERNAL dependency
@@ -66,10 +65,12 @@ WORK_MODULES := agent \
                 cluster-api-provider-provisioned \
                 controller \
                 controller/api \
+                controller/deploy/charts \
                 controller/nico-sim \
                 controller/hack/capd-reboot-controller \
                 cli \
                 controller/test/e2e \
+                management-engine \
                 os-image
 
 # Modules whose commands `build` can compile with `go build -o bin/ ./cmd/...`,
@@ -338,7 +339,7 @@ work-check: ## Verify go.work and go.work.sum are complete and current. (run by 
 #
 # This target used to blame the vendor tree for that, and for any other `go list`
 # failure. It printed "vendor/ is inconsistent" and sent the reader to
-# `make work-sync`, which rewrites go.mod, go.sum and vendor/ across nine
+# `make work-sync`, which rewrites go.mod, go.sum and vendor/ across ten
 # modules. The case below reports what actually failed.
 work-check-offline: ## Verify vendor/ agrees with every go.mod. Needs no network.
 	@echo "- Checking vendor/ agrees with every go.mod (offline)..."
@@ -373,6 +374,9 @@ test: ## Run each module's own test suite.
 		echo "- testing $$m"; \
 		if [ -f $$m/Makefile ] && $(MAKE) -C $$m -n test >/dev/null 2>&1; then \
 			$(MAKE) -C $$m test || exit 1; \
+			if $(MAKE) -C $$m -n test-integration-local >/dev/null 2>&1; then \
+				$(MAKE) -C $$m test-integration-local || exit 1; \
+			fi; \
 		else \
 			$(GO) -C $$m test $(GO_TEST_FLAGS) -skip '^TestE2E$$' ./... || exit 1; \
 		fi; \
@@ -383,8 +387,6 @@ test-compile: ## Type-check test variants that need external services to run.
 	@cd controller/test/e2e && CGO_ENABLED=1 $(GO) vet ./...
 	@echo "- compile controller/e2e with gofail"
 	@cd controller && CGO_ENABLED=1 $(GO) vet -tags gofail ./e2e/...
-	@echo "- compile controller Teleport integration tests"
-	@cd controller && CGO_ENABLED=1 $(GO) vet -tags integration ./internal/teleport/...
 	@echo "- compile nico-sim integration tests"
 	@cd controller/nico-sim && CGO_ENABLED=1 $(GO) vet -tags integration ./test/integration/...
 	@echo "- compile controller integration tests"
@@ -400,15 +402,22 @@ PREFLIGHT_MODULES := controller/hack/capd-reboot-controller \
                      controller/test/e2e \
                      controller/nico-sim \
                      controller/api \
+                     controller/deploy/charts \
                      agent \
                      cli \
                      controller \
+                     management-engine \
                      os-image
 
 # controller/api ships no tests of its own, so linting and testing it alone
 # compiles nothing that uses it. These are the modules that import it, and a
 # change to the API has to build them to mean anything.
 API_DEPENDENTS := controller cli controller/test/e2e
+
+# The modules that import controller/deploy/charts, so a chart change builds
+# what ships it. nkectl is the consumer; until it imports the module, this only
+# costs the cli suite a run it cannot fail.
+CHARTS_DEPENDENTS := cli
 
 # The modules CI tests with -race. agent-test.yml races agent; the unit-test
 # matrix in controller-test.yml sets GO_TEST_FLAGS: -race for the whole job, so
@@ -461,10 +470,11 @@ preflight: ## Lint and test the modules you changed. MODULES=... to choose them 
 	              git diff --cached --name-only; \
 	              git diff --name-only; \
 	              git ls-files --others --exclude-standard; } | sort -u ); \
-	build_system=no; workflows=no; shell=no; chart=no; workspace=no; licences=no; \
+	build_system=no; workflows=no; shell=no; chart=no; workspace=no; licences=no; provider_manifest=no; \
 	printf '%s\n' "$$changed" | grep -qE '^Makefile$$|^make/[^/]+\.mk$$' && build_system=yes || true; \
 	printf '%s\n' "$$changed" | grep -qE '^\.github/workflows/.*\.ya?ml$$' && workflows=yes || true; \
 	printf '%s\n' "$$changed" | grep -qE '^controller/deploy/charts/|^controller/hack/chart-.*-assertions\.(py|sh)$$|^\.github/workflows/chart\.yml$$' && chart=yes || true; \
+	printf '%s\n' "$$changed" | grep -qE '^cluster-api-provider-provisioned/config/|^cli/internal/cwedeploy/manifests/provisioned-provider\.yaml$$' && provider_manifest=yes || true; \
 	printf '%s\n' "$$changed" | grep -qE '(^|/)(go\.mod|go\.sum)$$|^go\.work|^vendor/' && workspace=yes || true; \
 	printf '%s\n' "$$changed" | grep -qE '\.(go|sh|py|js|css|html|ya?ml)$$' && licences=yes || true; \
 	for f in $$changed; do \
@@ -474,7 +484,7 @@ preflight: ## Lint and test the modules you changed. MODULES=... to choose them 
 		esac; \
 	done; \
 	if [ "$$build_system" = yes ]; then \
-		workflows=yes; shell=yes; chart=yes; workspace=yes; licences=yes; \
+		workflows=yes; shell=yes; chart=yes; workspace=yes; licences=yes; provider_manifest=yes; \
 	fi; \
 	if [ -n "$(MODULES)" ]; then \
 		mods="$(MODULES)"; \
@@ -491,6 +501,7 @@ preflight: ## Lint and test the modules you changed. MODULES=... to choose them 
 			echo "$$m"; \
 			case "$$m" in \
 				(controller/api) printf '%s\n' $(API_DEPENDENTS) ;; \
+				(controller/deploy/charts) printf '%s\n' $(CHARTS_DEPENDENTS) ;; \
 			esac; \
 		done | sort -u); \
 	fi; \
@@ -506,6 +517,7 @@ preflight: ## Lint and test the modules you changed. MODULES=... to choose them 
 	[ "$$workflows" = yes ] && echo "  lint-workflows       (workflow or build-system changes)" || true; \
 	[ "$$shell" = yes ] && echo "  lint-shell           (shell or build-system changes)" || true; \
 	[ "$$chart" = yes ] && echo "  chart-check          (chart or build-system changes)" || true; \
+	[ "$$provider_manifest" = yes ] && echo "  provider-manifest-check (the provisioned provider's manifests changed)" || true; \
 	echo; \
 	echo "Will NOT run, and is not covered:"; \
 	echo "  - the e2e lanes (kind, Docker; CAPD additionally needs Linux amd64)"; \
@@ -549,6 +561,10 @@ preflight: ## Lint and test the modules you changed. MODULES=... to choose them 
 	if [ "$$chart" = yes ]; then \
 		echo "==> chart-check"; \
 		$(MAKE) --no-print-directory chart-check || failed="$$failed chart"; \
+	fi; \
+	if [ "$$provider_manifest" = yes ]; then \
+		echo "==> provider-manifest-check"; \
+		$(MAKE) --no-print-directory -C cli provider-manifest-check || failed="$$failed provider-manifest"; \
 	fi; \
 	echo; \
 	if [ -n "$$failed" ]; then \

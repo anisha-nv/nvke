@@ -60,10 +60,7 @@ func TestValidateCreateNodePoolRequest_NicoRejectsInfraPayloadWhateverItCarries(
 			name:  "empty machineTemplate",
 			infra: &api.InfraNodePoolProvider{MachineTemplate: map[string]interface{}{}},
 		},
-		{
-			name:  "spireAttestationMethod",
-			infra: &api.InfraNodePoolProvider{SpireAttestationMethod: api.SpireAttestationMethodCreateJoinToken},
-		},
+		{name: "empty infra payload", infra: &api.InfraNodePoolProvider{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -93,8 +90,7 @@ func TestValidateCreateNodePoolRequest_RejectsUnsupportedParentProvider(t *testi
 			NodeNamePrefix:   "worker",
 			DesiredNodeCount: 1,
 			Infra: &api.InfraNodePoolProvider{
-				MachineTemplate:        map[string]interface{}{"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1", "kind": "ExampleMachineTemplate"},
-				SpireAttestationMethod: api.SpireAttestationMethodCreateTpm,
+				MachineTemplate: map[string]interface{}{"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1", "kind": "ExampleMachineTemplate"},
 			},
 		})
 
@@ -205,17 +201,6 @@ func TestValidateUpdateNodePoolRequest_ForgeRejectsCAPISpecificFieldsIndividuall
 
 		require.EqualError(t, err, "infra is not supported, please use nico")
 	})
-
-	t.Run("infra.spireAttestationMethod", func(t *testing.T) {
-		joinToken := api.SpireAttestationMethodJoinToken
-		err := service.validateUpdateNodePoolRequest(db.Cluster{ProviderType: db.ProviderTypeNico, Nico: &db.NicoClusterProvider{SiteID: uuid.New()}}, &api.UpdateNodePoolRequest{
-			Infra: &api.InfraNodePoolProviderUpdate{
-				SpireAttestationMethod: &joinToken,
-			},
-		})
-
-		require.EqualError(t, err, "infra is not supported, please use nico")
-	})
 }
 
 func TestValidateUpdatedNodePool_CAPIRequiresEmptyDiskSelectionStrategy(t *testing.T) {
@@ -245,8 +230,7 @@ func TestValidateCreateNodePoolRequest_NodeNamePrefixLength(t *testing.T) {
 			NodeNamePrefix:   nodeNamePrefix,
 			DesiredNodeCount: 1,
 			Infra: &api.InfraNodePoolProvider{
-				MachineTemplate:        map[string]interface{}{"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1", "kind": "ExampleMachineTemplate"},
-				SpireAttestationMethod: api.SpireAttestationMethodCreateTpm,
+				MachineTemplate: map[string]interface{}{"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1", "kind": "ExampleMachineTemplate"},
 			},
 		}
 	}

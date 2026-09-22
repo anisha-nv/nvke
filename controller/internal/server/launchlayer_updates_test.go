@@ -47,7 +47,7 @@ func TestLaunchLayerStandaloneCreateRejectsMismatchedBinding(t *testing.T) {
 			cluster := launchLayerStoredCluster(t)
 			body := api.CreateNodePoolRequest{
 				ClusterID: cluster.ID, Name: "new-pool", NodeNamePrefix: "new", DesiredNodeCount: 0,
-				Infra: &api.InfraNodePoolProvider{MachineTemplate: launchLayerTemplate(), SpireAttestationMethod: "joinToken"},
+				Infra: &api.InfraNodePoolProvider{MachineTemplate: launchLayerTemplate()},
 			}
 			body.Infra.MachineTemplate["kind"] = kind
 			database := &testutil.MockDB{}
@@ -73,12 +73,10 @@ func TestLaunchLayerNodePoolPatchValidatesMergedIntent(t *testing.T) {
 		}}}, false, false, http.StatusBadRequest},
 		{"clear template", map[string]any{"launchlayer": map[string]any{"machine": map[string]any{}}}, false, false, http.StatusBadRequest},
 		{"null template", map[string]any{"launchlayer": map[string]any{"machine": nil}}, false, false, http.StatusBadRequest},
-		{"invalid attestation", map[string]any{"launchlayer": map[string]any{"spireAttestationMethod": "invalid"}}, false, false, http.StatusBadRequest},
-		{"tpm attestation rejected", map[string]any{"launchlayer": map[string]any{"spireAttestationMethod": "tpm"}}, false, false, http.StatusBadRequest},
-		{"merged old template invalid", map[string]any{"launchlayer": map[string]any{"spireAttestationMethod": "joinToken"}}, true, false, http.StatusInternalServerError},
+		{"merged old template invalid", map[string]any{"launchlayer": map[string]any{"preKubeadmCommands": []string{}}}, true, false, http.StatusInternalServerError},
 		{"stored binding invalid", map[string]any{"launchlayer": map[string]any{"machine": launchLayerSpec(launchLayerTemplate())}}, false, true, http.StatusInternalServerError},
 		{"valid template", map[string]any{"launchlayer": map[string]any{"machine": launchLayerSpec(launchLayerTemplate())}}, false, false, http.StatusOK},
-		{"preserve omitted template", map[string]any{"launchlayer": map[string]any{"spireAttestationMethod": "joinToken"}}, false, false, http.StatusOK},
+		{"preserve omitted template", map[string]any{"launchlayer": map[string]any{"preKubeadmCommands": []string{}}}, false, false, http.StatusOK},
 		{"scalar maintenance on legacy binding", map[string]any{"description": "new description"}, true, true, http.StatusOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -153,7 +151,7 @@ func TestLaunchLayerControlPlanePatchRejectsInvalidEffectiveTemplate(t *testing.
 			if tc.badStoredBinding {
 				cluster.Capi.InfraCluster = json.RawMessage(`{"kind":"LaunchLayerCluster"}`)
 			}
-			infra := map[string]any{"spireAttestationMethod": "joinToken"}
+			infra := map[string]any{}
 			if tc.template != nil {
 				infra["machine"] = tc.template
 				if tc.template["spec"] != nil {
@@ -235,31 +233,15 @@ func TestLaunchLayerControlPlanePatchPreservesOmittedTemplate(t *testing.T) {
 	tx := &launchLayerLifecycleTx{cluster: cluster}
 	database := &testutil.MockDB{GetTx: func() db.Tx { return tx }}
 	database.On("RunInTx", mock.Anything, mock.Anything).Return(nil).Once()
-	body := map[string]any{"controlPlaneConfig": map[string]any{"launchlayer": map[string]any{"spireAttestationMethod": "joinToken"}}}
+	body := map[string]any{"controlPlaneConfig": map[string]any{"launchlayer": map[string]any{"preKubeadmCommands": []string{}}}}
 	response := launchLayerHTTP(t, launchLayerHandler(t, database, true), http.MethodPatch, "/api/clusters/"+cluster.ID.String(), body)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.Len(t, tx.configs, 1)
 	require.JSONEq(t, string(raw), string(tx.configs[0].Config.Capi.InfraMachineTemplatePreferences[0]))
+	// spireAttestationMethod is no longer part of the API; this stored value
+	// survives an unrelated patch simply because nothing in the write path
+	// touches it any more, see infraControlPlanePatch.
 	require.Equal(t, db.SpireAttestationMethodJoinToken, tx.configs[0].Config.Capi.SpireAttestationMethod)
 	require.Empty(t, tx.outboxes)
 	database.AssertExpectations(t)
-}
-
-func TestLaunchLayerControlPlanePatchRejectsTpmAttestation(t *testing.T) {
-	cluster := launchLayerStoredCluster(t)
-	raw, err := json.Marshal(launchLayerTemplate())
-	require.NoError(t, err)
-	cluster.ControlPlaneConfig.SetCapi(db.CAPIControlPlaneProvider{
-		InfraMachineTemplatePreferences: []json.RawMessage{raw}, SpireAttestationMethod: db.SpireAttestationMethodJoinToken,
-	})
-	cluster.ControlPlaneConfig.DesiredCount = 1
-	tx := &testutil.MockTx{}
-	database := &testutil.MockDB{MockTx: tx}
-	database.On("RunInTx", mock.Anything, mock.Anything).Return(nil).Maybe()
-	tx.On("GetClusterForUpdate", mock.Anything, cluster.ID).Return(cluster, nil).Maybe()
-	body := map[string]any{"controlPlaneConfig": map[string]any{"launchlayer": map[string]any{"spireAttestationMethod": "tpm"}}}
-	response := launchLayerHTTP(t, launchLayerHandler(t, database, true), http.MethodPatch, "/api/clusters/"+cluster.ID.String(), body)
-	require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
-	require.Contains(t, response.Body.String(), "tpm is not supported for launchlayer")
-	tx.AssertNotCalled(t, "CreateControlPlaneConfiguration", mock.Anything, mock.Anything)
 }

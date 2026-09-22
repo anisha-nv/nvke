@@ -71,6 +71,7 @@ lint-chart: ## Lint and render the Helm chart, then validate it. (run by the mer
 	@./controller/hack/chart-node-agent-auth-assertions.sh
 	@./controller/hack/chart-provider-assertions.sh
 	@./controller/hack/chart-capi-rbac-assertions.sh
+	@./controller/hack/chart-spire-attestation-assertions.sh
 
 chart-rbac-check: ## Assert that tenant RBAC grants every permission the controller uses.
 	@$(call require_tool,helm,$(HELM_VERSION))
@@ -119,7 +120,9 @@ vulncheck: ## Report vulnerabilities reachable from each module. (run by the mer
 	 for m in $(WORK_MODULES); do \
 		echo "- $$m"; \
 		GOTOOLCHAIN=go$(GOVULNCHECK_GO_VERSION) \
-		GOVULNCHECK_WAIVED_MODULES="$(GOVULNCHECK_WAIVED_MODULES)" \
+		GOVULNCHECK_WAIVED="$(GOVULNCHECK_WAIVED)" \
+		GOVULNCHECK_WAIVER_OWNER="$(GOVULNCHECK_WAIVER_OWNER)" \
+		GOVULNCHECK_WAIVER_REVIEW="$(GOVULNCHECK_WAIVER_REVIEW)" \
 			./hack/govulncheck-gate.sh "$$m"; \
 		rc=$$?; \
 		[ $$rc -eq 0 ] || fail=1; \
@@ -175,6 +178,7 @@ gate: ## Run the merge-gate checks that work on a laptop.
 	@$(MAKE) --no-print-directory docs-check
 	@$(MAKE) --no-print-directory chart-check
 	@$(MAKE) --no-print-directory -C controller generate-check
+	@$(MAKE) --no-print-directory -C cli provider-manifest-check
 	@$(MAKE) --no-print-directory vulncheck
 	@echo
 	@echo "Merge-gate jobs not run locally:"

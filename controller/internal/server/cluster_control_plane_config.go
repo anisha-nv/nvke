@@ -197,9 +197,6 @@ func validateCreateCAPIControlPlaneConfig(c *api.CreateClusterControlPlaneConfig
 	if err := validateCAPIInfrastructureManifest(c.Infra.MachineTemplate); err != nil {
 		return fmt.Errorf("invalid controlPlaneConfig.infra.machineTemplate: %w", err)
 	}
-	if err := validateCAPISpireAttestationMethod(string(c.Infra.SpireAttestationMethod)); err != nil {
-		return err
-	}
 	return validateCloudInitFiles(c.Infra.BootstrapFiles)
 }
 
@@ -335,7 +332,6 @@ func controlPlaneConfigSpecFromCreateAPI(
 	case db.ProviderTypeCAPI:
 		capiControlPlaneProvider := db.CAPIControlPlaneProvider{}
 		if c.Infra != nil {
-			capiControlPlaneProvider.SpireAttestationMethod = db.SpireAttestationMethod(c.Infra.SpireAttestationMethod)
 			capiControlPlaneProvider.BootstrapFiles = dbCloudInitFilesFromAPI(c.Infra.BootstrapFiles)
 			capiControlPlaneProvider.PreKubeadmCommands = append([]string(nil), c.Infra.PreKubeadmCommands...)
 			if prefs, err := infraMachineTemplatePrefsFromAPI(c.Infra.MachineTemplate); err == nil {
@@ -374,9 +370,8 @@ func apiInfraControlPlaneProviderFromDB(capiControlPlaneProvider *db.CAPIControl
 	}
 
 	out := &api.InfraControlPlaneProvider{
-		MachineTemplate:        firstInfraMachineTemplateObject(capiControlPlaneProvider.InfraMachineTemplatePreferences),
-		SpireAttestationMethod: api.SpireAttestationMethodCreate(capiControlPlaneProvider.SpireAttestationMethod),
-		PreKubeadmCommands:     append([]string(nil), capiControlPlaneProvider.PreKubeadmCommands...),
+		MachineTemplate:    firstInfraMachineTemplateObject(capiControlPlaneProvider.InfraMachineTemplatePreferences),
+		PreKubeadmCommands: append([]string(nil), capiControlPlaneProvider.PreKubeadmCommands...),
 	}
 	if files := apiCloudInitFilesFromDB(capiControlPlaneProvider.BootstrapFiles); files != nil {
 		out.BootstrapFiles = *files

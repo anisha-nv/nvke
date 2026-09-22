@@ -945,9 +945,6 @@ func (s *clusterService) applyClusterLevelControlPlaneSpecUpdate(
 		if err != nil {
 			return err
 		}
-		if req.Infra.SpireAttestationMethod != nil {
-			capi.SpireAttestationMethod = db.SpireAttestationMethod(*req.Infra.SpireAttestationMethod)
-		}
 		if req.Infra.BootstrapFiles != nil {
 			capi.BootstrapFiles = dbCloudInitFilesFromAPI(req.Infra.BootstrapFiles)
 		}
