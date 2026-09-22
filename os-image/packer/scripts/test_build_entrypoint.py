@@ -55,7 +55,7 @@ output.mkdir(parents=True, exist_ok=True)
     def make(self, target, *extra, skip_build_setup=False):
         args = [os.environ.get("MAKE", "make"), "--no-print-directory", "-C", str(self.packer_dir)]
         if skip_build_setup:
-            args += ["-o", "ssh-key", "-o", "init-fde", "-o", "init-non-fde", "-o", "prepare-installer-iso", "-o", "prepare-artifacts", "-o", "prepare-packer-inputs"]
+            args += ["-o", "prepare-image-build"]
             target = "_" + target
         args += [target, "ARCH=arm64", "ACCELERATOR=tcg", f"PACKER={self.root / 'packer'}",
                  f"ARTIFACTS_DIR={self.root / 'artifacts'}", f"BUILD_LOGS={self.root / 'logs'}", *extra]
