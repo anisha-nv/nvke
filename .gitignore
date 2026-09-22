@@ -64,3 +64,6 @@ os-image/efi/output/
 *-etcd-encryption-key.json
 .*-etcd-encryption-key.json.*
 cli/e2e/bootstrap/.etcd-encryption-key.json
+
+# Python test caches
+__pycache__/
