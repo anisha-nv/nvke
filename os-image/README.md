@@ -119,7 +119,7 @@ emulation, and an explicit unavailable `ACCELERATOR=kvm` or `hvf` fails early.
 On Apple Silicon, `run-vm` and `boot-smoke` can use HVF with an already-built
 compatible arm64 development image. For the production arm64 image, pass
 `ACCELERATOR=tcg` to the boot tools; the generic boot helper does not infer the
-kernel's page size from an arbitrary disk. macOS package builds use the NixOS
+kernel's page size from an arbitrary disk. Apple Silicon macOS package builds use the NixOS
 VM; full image baking still requires the host Packer/ISO tools and a supported
 QEMU/kernel combination.
 The boot scripts also need `cloud-localds`, SSH and, for smoke tests, `timeout`.
@@ -162,7 +162,7 @@ make os-image-fde ARCH=arm64
 ```
 
 Both variants build for arm64. Host package-builder mode requires an arm64
-Linux host and cgo toolchain. On supported macOS and mismatched Linux hosts,
+Linux host and cgo toolchain. On Apple Silicon macOS and mismatched Linux hosts,
 `auto` selects the NixOS VM, which provides that toolchain. QEMU can emulate
 the image guest with `tcg`; package compilation happens separately. `ARCH` picks the right ISO URL,
 QEMU binary (`qemu-system-aarch64`), machine type (`virt`), and UEFI firmware

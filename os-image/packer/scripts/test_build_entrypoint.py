@@ -367,6 +367,51 @@ sys.exit(0 if any("root@" in a for a in args)
 class GuestUpdaterTest(unittest.TestCase):
     """The guest must reject absent or unreadable updater build outputs."""
 
+    def test_guest_fetch_uses_guest_checkout(self):
+        for source_root in (None, "/host/checkout"):
+            with self.subTest(source_root=source_root), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                repo = root / "guest checkout"
+                scripts = repo / "os-image/packer/scripts"
+                scripts.mkdir(parents=True)
+                shutil.copy(PACKER_DIR / "scripts/fetch-artifacts.sh", scripts)
+                files = repo / "os-image/files"
+                files.mkdir()
+                for name in ("nke-agent-spire.conf", "wait-spiffe-socket.sh"):
+                    shutil.copy(PACKER_DIR.parent / "files" / name, files)
+                updater = repo / "agent/bin/linux_arm64/nke-agent-updater"
+                updater.parent.mkdir(parents=True)
+                updater.touch()
+                artifacts = root / "artifacts"
+                artifacts.mkdir()
+                tools = root / "tools"
+                tools.mkdir()
+                # Keep the real fetch script and shell; replace compilation and
+                # guest-only cache setup, which cannot run on the test host.
+                for name in ("mkdir", "ln", "go", "check-ubuntu-elf", "readelf"):
+                    tool = tools / name
+                    tool.write_text("#!/bin/sh\nexit 0\n")
+                    tool.chmod(0o755)
+                make = tools / "make"
+                make.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$TEST_MAKE_LOG"\n')
+                make.chmod(0o755)
+                log = root / "make.log"
+                env = os.environ | {"PATH": f"{tools}:{os.environ['PATH']}",
+                                    "REPO_ROOT": str(repo), "ARCH": "arm64",
+                                    "ARTIFACTS_DIR": str(artifacts), "TEST_MAKE_LOG": str(log)}
+                env.pop("SOURCE_ROOT", None)
+                if source_root is not None:
+                    env["SOURCE_ROOT"] = source_root
+                result = subprocess.run(
+                    [shutil.which("bash"), str(PACKER_DIR.parent / "nix/build-guest.sh")],
+                    env=env, text=True, capture_output=True, timeout=15,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                calls = log.read_text().splitlines()
+                self.assertEqual(len(calls), 5, calls)
+                self.assertIn(f"-C {repo}/agent deb-arm64", calls[0])
+                self.assertTrue((artifacts / "nke-agent-spire.conf").is_file())
+
     def test_updater_validation(self):
         for kind in ("missing", "invalid", "dynamic", "static"):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
