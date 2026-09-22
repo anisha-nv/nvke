@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/dsx-ai-factory/nke/cli/internal/bootstrap/bundle"
 	"github.com/dsx-ai-factory/nke/cli/internal/bootstrapengine"
 	"github.com/dsx-ai-factory/nke/cli/internal/clients"
 	"github.com/dsx-ai-factory/nke/cli/internal/config"
@@ -42,6 +43,14 @@ const (
 	registryAPIKeyEnv = "REGISTRY_API_KEY" //nolint:gosec // G101: this is an env var name, not a credential
 )
 
+// errBundleNotImplemented is returned when a site spec names a bundle and the
+// command is not a dry run. The bundle is loaded, validated and resolved, and
+// --dry-run prints where every artifact would be pulled from; pulling through
+// it is not wired into the deploy yet.
+var errBundleNotImplemented = errors.New("bundle-driven bootstrap is not implemented yet: " +
+	"bootstrapBundleFile is validated and shown by --dry-run, but the deploy does not pull through it; " +
+	"remove bootstrapBundleFile from the site spec to bootstrap, or run with --dry-run")
+
 // newBootstrapCmd is the "bootstrap" command group. Site bootstrap is the only
 // subcommand today; the group leaves room for further bootstrap targets.
 func newBootstrapCmd() *cobra.Command {
@@ -58,6 +67,10 @@ type bootstrapSiteOptions struct {
 	siteSpec       string
 	dryRun         bool
 	registryAPIKey string
+	// public says the public pull is intended. It is refused when the bundle
+	// declares a registry. Optional today; a later change requires it when
+	// nothing declares a registry.
+	public bool
 	// diagnosticsDir is where a failed bootstrap writes what the cluster had
 	// to say for itself, before it is torn down.
 	diagnosticsDir    string
@@ -142,7 +155,13 @@ site spec file format.`,
   nkectl bootstrap site -f sitespec.yaml --dry-run
 
   # Supply the registry credential without putting it in the file
-  REGISTRY_API_KEY=... nkectl bootstrap site -f sitespec.yaml`,
+  REGISTRY_API_KEY=... nkectl bootstrap site -f sitespec.yaml
+
+  # Show where every artifact in the bootstrap bundle would be pulled from
+  nkectl bootstrap site -f sitespec.yaml --dry-run   # with bootstrapBundleFile set
+
+  # Pull from public registries on purpose: no registry of your own
+  nkectl bootstrap site -f sitespec.yaml --public`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -157,6 +176,9 @@ site spec file format.`,
 		"Load and validate the site spec and print it, but do not dispatch any workflow")
 	cmd.Flags().StringVar(&opts.registryAPIKey, "registry-api-key", "",
 		"Container registry credential (overrides registry.apiKey and the "+registryAPIKeyEnv+" env var)")
+	cmd.Flags().BoolVar(&opts.public, "public", false,
+		"Pull every artifact from its public registry. Use it with no bootstrapBundleFile, or with a "+
+			"bootstrap bundle that has no registryMirror. Refused when the bundle declares a registry.")
 	cmd.Flags().StringVar(&opts.diagnosticsDir, "diagnostics-dir",
 		envOrDefault("NKECTL_BOOTSTRAP_DIAGNOSTICS_DIR", "cluster-diagnostics"),
 		"Directory a failed bootstrap writes cluster diagnostics to before tearing the cluster down. "+
@@ -201,9 +223,29 @@ func runBootstrapSite(out io.Writer, opts *bootstrapSiteOptions) (err error) {
 		return err
 	}
 
+	// Resolve the bundle before anything is stood up. A bad bundle costs a
+	// message, not a Kind cluster.
+	usesBundle := inv.BootstrapBundleFile != ""
+	if usesBundle {
+		closure, err := resolveBundle(inv, opts.siteSpec, opts.public)
+		if err != nil {
+			return err
+		}
+		// Log each override. It is the difference between what was tested and
+		// what this run installs.
+		for _, o := range closure.Overrides {
+			logger.Warn("bundle entry overridden", "path", o.Path, "reason", o.Reason)
+		}
+		fmt.Fprintln(out)
+		fmt.Fprint(out, closure.DryRunTable(inv.Registry.APIKey != ""))
+	}
+
 	if opts.dryRun {
 		fmt.Fprintln(out, "\nDry run: site spec is valid. No workflow dispatched.")
 		return nil
+	}
+	if usesBundle {
+		return errBundleNotImplemented
 	}
 
 	// Before anything is stood up: the whole command runs on
@@ -852,6 +894,33 @@ func ensureImageAvailable(
 		}
 	}
 	return engine.LoadImage(ctx, cluster.Name, image)
+}
+
+// resolveBundle loads and validates the bootstrap bundle, then resolves every
+// artifact. --public and a declared registry are refused together.
+func resolveBundle(inv *sitespec.SiteSpec, siteSpecPath string, public bool) (bundle.Closure, error) {
+	path := inv.BootstrapBundlePath(siteSpecPath)
+	b, err := bundle.Load(path)
+	if err != nil {
+		return bundle.Closure{}, err
+	}
+	manifest := bundle.LoadManifest()
+	if err := b.Validate(manifest); err != nil {
+		return bundle.Closure{}, err
+	}
+	if err := b.ValidateReferences(); err != nil {
+		return bundle.Closure{}, err
+	}
+	if b.RegistryMirror != nil {
+		if public {
+			return bundle.Closure{}, fmt.Errorf("--public contradicts bootstrap bundle %s, which declares registryMirror %s: "+
+				"drop the flag to pull from that registry, or remove the block to pull from public registries", path, b.RegistryMirror.Endpoint)
+		}
+		if err := b.RegistryMirror.CheckCredentialTransport(inv.Registry.APIKey != ""); err != nil {
+			return bundle.Closure{}, fmt.Errorf("bundle %s: %w", path, err)
+		}
+	}
+	return bundle.Resolve(b, manifest)
 }
 
 // dumpSiteSpec prints the loaded, defaulted site spec as YAML so the operator

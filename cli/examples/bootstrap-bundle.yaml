@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# The bootstrap bundle for `nkectl bootstrap site`. It says where the bootstrap
+# pulls its artifacts from and names the two images you build. nkectl pins
+# what the artifacts are; `nkectl get bootstrap-manifest` prints that list.
+#
+# Fill in the three values below. Check the file with
+# `nkectl validate bootstrap-bundle -f <this file>`. Point
+# sitespec.bootstrapBundleFile at it. Relative paths are relative to this file.
+#
+# For development, delete the registryMirror and images blocks instead. nkectl
+# then pulls every artifact from its public registry and side-loads
+# cwe-controller:local and cluster-api-provider-provisioned:local from your
+# image store. Pass --public to `bootstrap site` to confirm that.
+
+# Your registry. Every artifact is pulled from it, the two images you build
+# included. Nothing is pulled from a public registry. One credential covers
+# all of it. Copy the manifest's entries into it: an image <registry>/<path>
+# goes to <endpoint>/<registry>/<path>, and a chart goes to
+# <endpoint>/charts/<name>. The commented fields adapt that layout. caCertFile
+# is the CA that signed the registry's certificate.
+registryMirror:
+  endpoint: "registry.customer.internal"
+  # ociNamespaces:
+  #   - registry: "docker.io"
+  #     namespace: "dockerhub"
+  # chartsNamespace: "charts"
+  # caCertFile: "registry-ca.crt"
+
+# The images you build, from controller/Dockerfile and
+# cluster-api-provider-provisioned/Dockerfile. Push both to the registry above
+# and name them here.
+images:
+  controller: "registry.customer.internal/nke/controller:1.4.0"
+  provisionedProvider: "registry.customer.internal/nke/cluster-api-provider-provisioned:1.4.0"
+
+# An override replaces one entry of the manifest. Use it for a security fix
+# that has not shipped, or for a component your team builds. The key is the
+# entry path from `nkectl get bootstrap-manifest`. Give a reason and the
+# replacement. An image takes ref and digest. A chart takes repo, name and
+# version, or a ref. --dry-run prints every override. The bootstrap logs each
+# one.
+# overrides:
+#   spire.images.server:
+#     reason: "CVE-2026-1234; 1.15.4 not shipped yet"
+#     ref: ghcr.io/spiffe/spire-server:1.15.4
+#     digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+#   temporal.chart:
+#     reason: "internal chart build"
+#     ref: oci://registry.example/charts/temporal

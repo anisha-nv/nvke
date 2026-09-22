@@ -9,7 +9,10 @@ below is on `main`; the steps the CLI does not cover are marked.
 | Command | What it does | Status |
 |---|---|---|
 | `nkectl generate sitespec <name> --nodes hosts.csv` | Writes a site spec for `bootstrap site` from a node CSV. `--set path=value` fills in what the CSV does not carry. | Available |
-| `nkectl bootstrap site -f sitespec.yaml` | Stands up an ephemeral Kind cluster running CWE, has CWE create the site cluster on the spec's hosts through `nke-agent`, writes `<name>.kubeconfig` and `<name>-etcd-encryption-key.json`, tears the Kind cluster down. `--dry-run` validates the spec only. | Available |
+| `nkectl template bootstrap-bundle` | Writes a bootstrap bundle to fill in: your registry and the two images you build. `sitespec.bootstrapBundleFile` points at it. See [bundle.md](bundle.md). | Available; `--dry-run` only |
+| `nkectl validate bootstrap-bundle -f bootstrap-bundle.yaml` | Checks a bootstrap bundle and prints where every artifact would come from. Needs no site. | Available |
+| `nkectl get bootstrap-manifest` | Prints every chart and image `bootstrap site` pulls, with version and digest. Use it to populate your registry. Needs no site. | Available |
+| `nkectl bootstrap site -f sitespec.yaml` | Stands up an ephemeral Kind cluster running CWE, has CWE create the site cluster on the spec's hosts through `nke-agent`, writes `<name>.kubeconfig` and `<name>-etcd-encryption-key.json`, tears the Kind cluster down. `--dry-run` validates the spec only. `--public` confirms a pull from public registries. | Available |
 | Install an infrastructure provider on the new cluster | Install Cluster API and CAPNICo, before the site controller. See [Infrastructure Providers](../../docs/site-bootstrap/infrastructure-providers.md). No `nkectl` command. | Not in the CLI |
 | Install the site controller on the new cluster | Deploy the controller Helm chart (`controller/deploy/charts/controller`). No `nkectl` command yet. | Not in the CLI |
 | `nkectl config set-site --url <cwe-url> --kubeconfig <path>` | Points the CLI at a site controller. `use-site` switches between entries, `view` prints the config. | Available |
@@ -50,12 +53,40 @@ nkectl generate sitespec my-tier0-site --nodes hosts.csv > sitespec.yaml
 
 # Override fields the CSV does not carry
 nkectl generate sitespec my-tier0-site --nodes hosts.csv \
-  --set cluster.cniName=calico \
-  --set cluster.podCidr=10.100.0.0/16 > sitespec.yaml
+  --set cluster.podCidr=10.100.0.0/16 \
+  --set cluster.controlPlaneVIP=10.10.50.100 > sitespec.yaml
 ```
 
 The file format is described in [sitespec.md](sitespec.md); a complete example
 is in [examples/sitespec.yaml](../examples/sitespec.yaml).
+
+### 1b. Name your registry (production)
+
+On a site with a registry of its own, write a bundle file and name the
+registry in it. `nkectl` then pulls every artifact from that registry.
+
+```bash
+# What to copy into your registry, with version and digest
+nkectl get bootstrap-manifest
+
+# The bootstrap bundle. Fill in your registry and the two images you pushed
+# to it, then check the file.
+nkectl template bootstrap-bundle > bootstrap-bundle.yaml
+nkectl validate bootstrap-bundle -f bootstrap-bundle.yaml
+```
+
+Name it in the site spec when you generate it:
+
+```bash
+nkectl generate sitespec my-tier0-site --nodes hosts.csv \
+  --set bootstrapBundleFile=bootstrap-bundle.yaml > sitespec.yaml
+```
+
+A complete example is in
+[examples/bootstrap-bundle.yaml](../examples/bootstrap-bundle.yaml). Skip this
+step for development. `nkectl` then pulls from public registries, side-loads
+the two images from your local image store, and `bootstrap site` takes
+`--public`. [bundle.md](bundle.md) covers both forms.
 
 ### 2. Bootstrap the site cluster
 
@@ -65,7 +96,13 @@ nkectl bootstrap site -f sitespec.yaml --dry-run
 
 # Bootstrap. The registry credential comes from the environment, not the file.
 REGISTRY_API_KEY=... nkectl bootstrap site -f sitespec.yaml
+
+# Development: no registry of your own
+nkectl bootstrap site -f sitespec.yaml --public
 ```
+
+`--dry-run` with a `bootstrapBundleFile` also prints where every artifact
+would come from. The deploy does not pull through the bootstrap bundle yet.
 
 The command needs nerdctl and containerd on the host, and network reach to
 the hosts' `nke-agent` ports. On success it

@@ -1,0 +1,18 @@
+{{- /*
+hosts.toml for one upstream registry, redirected to the mirror. No server
+line: a miss fails at the mirror. override_path with an explicit /v2 path
+makes a namespace such as /v2/ghcr.io work.
+*/ -}}
+[host."{{ .HostURL }}"]
+  capabilities = ["pull", "resolve"]
+  override_path = true
+{{- if .CAPath }}
+  ca = "{{ .CAPath }}"
+{{- end }}
+{{- if .SkipVerify }}
+  skip_verify = true
+{{- end }}
+{{- if .Authorization }}
+  [host."{{ .HostURL }}".header]
+    authorization = "Basic {{ .Authorization }}"
+{{- end }}

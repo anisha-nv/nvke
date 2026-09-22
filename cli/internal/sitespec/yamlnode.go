@@ -189,6 +189,7 @@ func applySpec(root *yaml.Node, spec *SiteSpec) error {
 		{pathSpireTrustDomain, spec.Spire.TrustDomain},
 		{pathSpireCACertFile, spec.Spire.CACertFile},
 		{pathSpireCAKeyFile, spec.Spire.CAKeyFile},
+		{pathBundleFile, spec.BootstrapBundleFile},
 	} {
 		if f.value == "" {
 			continue

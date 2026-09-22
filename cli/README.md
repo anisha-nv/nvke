@@ -11,6 +11,7 @@ NKE control-plane CLI. Bootstraps site controllers and manages tenant cluster li
 - **Site bootstrap** — `nkectl bootstrap site` creates an ephemeral Kind cluster, deploys CWE onto it, then drives kubeadm init/join across pre-provisioned nodes via `nke-agent` gRPC; no SSH required
 - **Cluster lifecycle** — `nkectl get/create/patch/delete clusters` manages tenant clusters through the CWE API
 - **Site spec** — `nkectl generate sitespec` writes a site spec from a node CSV; `nkectl bootstrap site --dry-run` validates one without touching a node
+- **Bootstrap bundle** — `nkectl template bootstrap-bundle` writes the file that names your registry and the images you build; `nkectl validate bootstrap-bundle` checks it. `nkectl get bootstrap-manifest` prints every chart and image the bootstrap pulls ([`docs/bundle.md`](docs/bundle.md))
 - **Config** — `nkectl config set-site` points the CLI at a site controller.
 
 ## Installation
@@ -123,6 +124,7 @@ site spec file rather than from flags or the environment. See
 |---|---|
 | `cluster.*.tpmEkThumbprint` | Which nodes may attest to SPIRE. No node listed, no node admitted; a site spec with none deploys no TPM attestor at all. |
 | `spire.caCertFile` / `caKeyFile` | A CA for SPIRE to chain its own to, so a node given that certificate when it was provisioned verifies the server on first contact. Without it SPIRE is self-signed. |
+| `bootstrapBundleFile` | The bootstrap bundle. It names your registry, the two images you build, and any override. `nkectl` pins everything else it pulls. `--dry-run` validates and shows it. The deploy does not use it yet. See [`docs/bundle.md`](docs/bundle.md). |
 
 ### What gets installed
 

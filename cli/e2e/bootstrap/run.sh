@@ -7,6 +7,13 @@
 #
 # Stages:
 #   1. Fake node containers come up and nke-agent answers on each.
+#   1b. The bootstrap bundle, dry-run only. The lane builds one the way an
+#      operator does: `template bootstrap-bundle`, three values filled in, a
+#      registry that does not exist. `validate` must accept it. --dry-run must
+#      resolve every artifact against its registry. --public must be refused.
+#      Without --dry-run the run must stop at the not-implemented error. A
+#      bundle with no registry must resolve under --public. The real run
+#      names no bundle and passes --public.
 #   2. `bootstrap site`, run in the background. The moment its ephemeral Kind
 #      cluster is ready this suite bridges the two container networks and
 #      proves packets cross both ways. The command then deploys Postgres,
@@ -505,6 +512,133 @@ if [ -n "${CONTROL_PLANE_VIP}" ]; then
   start_bgp_speaker || exit 1
 fi
 
+# ── Stage 1b: bootstrap bundle and registry mirror, dry run ──────────────
+#
+# Built the way an operator builds it: the template, with its three values
+# filled in and Docker Hub moved to a namespace. The registry does not exist;
+# --dry-run only resolves. The image tags are the ones this lane built.
+BUNDLE_FILE="${SCRIPT_DIR}/.bootstrap-bundle.yaml"
+BUNDLE_MIRROR="mirror.e2e.invalid:5000"
+"${NKECTL}" template bootstrap-bundle |
+  sed -e "s|endpoint: \"\"|endpoint: \"${BUNDLE_MIRROR}\"|" \
+      -e "s|controller: \"\"|controller: \"${BUNDLE_MIRROR}/nke/${NKECTL_CWE_IMAGE##*/}\"|" \
+      -e "s|provisionedProvider: \"\"|provisionedProvider: \"${BUNDLE_MIRROR}/nke/${NKECTL_CAPI_PROVISIONED_IMAGE##*/}\"|" \
+      -e '/^  endpoint: /a\
+  ociNamespaces:\
+    - registry: "docker.io"\
+      namespace: "dockerhub"' >"${BUNDLE_FILE}"
+
+log "running: nkectl validate bootstrap-bundle -f ${BUNDLE_FILE}"
+validate_out="$("${NKECTL}" validate bootstrap-bundle -f "${BUNDLE_FILE}" 2>&1)" || {
+  printf '%s\n' "${validate_out}"
+  log "FAIL: validate bootstrap-bundle rejected the file built from the template"
+  exit 1
+}
+grep -qF -- "is valid." <<<"${validate_out}" || {
+  printf '%s\n' "${validate_out}"
+  log "FAIL: validate bootstrap-bundle did not report the file valid"
+  exit 1
+}
+log "PASS: the template, filled in, validates"
+
+BUNDLE_SITESPEC="${SCRIPT_DIR}/.sitespec.bundle.yaml"
+cp "${RENDERED_SITESPEC}" "${BUNDLE_SITESPEC}"
+printf '\nbootstrapBundleFile: "%s"\n' "$(basename "${BUNDLE_FILE}")" >>"${BUNDLE_SITESPEC}"
+
+log "running: nkectl bootstrap site -f ${BUNDLE_SITESPEC} --dry-run (bundle + registryMirror)"
+dry_run_out="$("${NKECTL}" bootstrap site -f "${BUNDLE_SITESPEC}" --dry-run 2>&1)" || {
+  printf '%s\n' "${dry_run_out}"
+  log "FAIL: bootstrap site --dry-run rejected the bundle fixture"
+  exit 1
+}
+for want in \
+  "registryMirror: https://mirror.e2e.invalid:5000" \
+  "docker.io/temporalio/server:1.30.3 -> mirror.e2e.invalid:5000/dockerhub/temporalio/server:1.30.3" \
+  "ghcr.io/spiffe/spire-server:1.15.3 -> mirror.e2e.invalid:5000/ghcr.io/spiffe/spire-server:1.15.3" \
+  "oci://mirror.e2e.invalid:5000/charts" \
+  "${BUNDLE_MIRROR}/nke/${NKECTL_CWE_IMAGE##*/}  (built by you; on the mirror)" \
+  "Dry run: site spec is valid"; do
+  grep -qF -- "${want}" <<<"${dry_run_out}" || {
+    printf '%s\n' "${dry_run_out}"
+    log "FAIL: --dry-run output lacks \"${want}\""
+    exit 1
+  }
+done
+log "PASS: bootstrap site --dry-run resolved the bundle against the declared mirror"
+
+# --public contradicts a declared registry. nkectl must refuse it.
+log "running: nkectl bootstrap site -f ${BUNDLE_SITESPEC} --dry-run --public (must be refused)"
+if contradiction_out="$("${NKECTL}" bootstrap site -f "${BUNDLE_SITESPEC}" --dry-run --public 2>&1)"; then
+  printf '%s\n' "${contradiction_out}"
+  log "FAIL: --public was accepted alongside a declared registryMirror"
+  exit 1
+fi
+grep -qF -- "--public contradicts bootstrap bundle" <<<"${contradiction_out}" || {
+  printf '%s\n' "${contradiction_out}"
+  log "FAIL: --public with a declared registry failed for a reason other than the contradiction"
+  exit 1
+}
+log "PASS: --public is refused when the bundle declares a registry"
+
+# The development form: a bundle with no registry, only the controller image.
+# --public says the public pull is intended.
+PUBLIC_BUNDLE="${SCRIPT_DIR}/.bundle.public.yaml"
+PUBLIC_SITESPEC="${SCRIPT_DIR}/.sitespec.public.yaml"
+printf 'images:\n  controller: "%s"\n' "${NKECTL_CWE_IMAGE}" >"${PUBLIC_BUNDLE}"
+cp "${RENDERED_SITESPEC}" "${PUBLIC_SITESPEC}"
+printf '\nbootstrapBundleFile: "%s"\n' "$(basename "${PUBLIC_BUNDLE}")" >>"${PUBLIC_SITESPEC}"
+
+log "running: nkectl bootstrap site -f ${PUBLIC_SITESPEC} --dry-run --public (no registry declared)"
+public_out="$("${NKECTL}" bootstrap site -f "${PUBLIC_SITESPEC}" --dry-run --public 2>&1)" || {
+  printf '%s\n' "${public_out}"
+  log "FAIL: bootstrap site --dry-run --public rejected a bundle with no registry"
+  exit 1
+}
+for want in \
+  "registryMirror: none" \
+  "ghcr.io/spiffe/spire-server:1.15.3  (public)" \
+  "${NKECTL_CWE_IMAGE}  (built by you"; do
+  grep -qF -- "${want}" <<<"${public_out}" || {
+    printf '%s\n' "${public_out}"
+    log "FAIL: the public --dry-run output lacks \"${want}\""
+    exit 1
+  }
+done
+# No redirect arrow anywhere: without a mirror nothing is rewritten.
+if grep -q ' -> ' <<<"${public_out}"; then
+  printf '%s\n' "${public_out}"
+  log "FAIL: the public bundle resolved against a registry it does not declare"
+  exit 1
+fi
+log "PASS: a bundle with no registry resolves publicly under --public"
+
+log "running: nkectl bootstrap site -f ${BUNDLE_SITESPEC} (must stop at the not-implemented stub)"
+# Register the teardown first. If the stub is skipped, the run creates a
+# cluster, and the teardown must already exist.
+defer teardown_bootstrap_cluster
+set +e
+stub_out="$("${NKECTL}" bootstrap site -f "${BUNDLE_SITESPEC}" 2>&1)"
+stub_status=$?
+set -e
+if [ "${stub_status}" -eq 0 ]; then
+  printf '%s\n' "${stub_out}"
+  log "FAIL: bootstrap site with a bundle exited 0; the deploy does not pull through it yet"
+  exit 1
+fi
+grep -qF "bundle-driven bootstrap is not implemented yet" <<<"${stub_out}" || {
+  printf '%s\n' "${stub_out}"
+  log "FAIL: bootstrap site with a bundle failed for a reason other than the stub"
+  exit 1
+}
+# Capture first so a failing nerdctl fails here. -a counts exited containers.
+containers="$(nerdctl ps -a --format '{{.Names}}')" ||
+  { log "FAIL: nerdctl ps failed while checking that the stub path created nothing"; exit 1; }
+if grep -q "^${BOOTSTRAP_KIND_CLUSTER}-control-plane$" <<<"${containers}"; then
+  log "FAIL: the stub path created the bootstrap kind cluster"
+  exit 1
+fi
+log "PASS: bootstrap site stopped at the named stub before running anything"
+
 # No chart is named here. What gets installed is pinned in
 # cli/internal/cwedeploy, which is the thing under test: the SPIFFE project's
 # public hardened charts, needing no registry credential of their own.
@@ -512,7 +646,7 @@ fi
 # leftover from an interrupted run has to go first.
 rm -f "${ETCD_KEY_FILE}"
 
-log "running: nkectl bootstrap site -f ${RENDERED_SITESPEC} --keep-bootstrap-cluster --timeout 15m" \
+log "running: nkectl bootstrap site -f ${RENDERED_SITESPEC} --public --keep-bootstrap-cluster --timeout 15m" \
   "(NKECTL_CWE_IMAGE=${NKECTL_CWE_IMAGE}," \
   "NKECTL_CAPI_PROVISIONED_IMAGE=${NKECTL_CAPI_PROVISIONED_IMAGE})"
 
@@ -526,7 +660,7 @@ defer teardown_bootstrap_cluster
 # setsid makes nkectl a process-group leader so abort_bootstrap can signal the
 # kind, nerdctl and helm it drives as one group; nkectl does not forward
 # signals to its children.
-setsid "${NKECTL}" bootstrap site -f "${RENDERED_SITESPEC}" --keep-bootstrap-cluster \
+setsid "${NKECTL}" bootstrap site -f "${RENDERED_SITESPEC}" --public --keep-bootstrap-cluster \
   --timeout 15m --kubeconfig-out "${TENANT_KUBECONFIG}" \
   --encryption-key-out "${ETCD_KEY_FILE}" >"${BOOTSTRAP_LOG}" 2>&1 &
 bootstrap_pid=$!

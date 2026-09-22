@@ -141,8 +141,10 @@ wider local setup, see **[docs/getting-started.md](docs/getting-started.md)**.
 The controller has its own guide in
 [controller/README.md](controller/README.md). For a worked `nkectl` input, see
 [cli/examples/sitespec.yaml](cli/examples/sitespec.yaml), which describes a
-site, and [cli/examples/capd-cluster.yaml](cli/examples/capd-cluster.yaml),
-which requests a cluster.
+site, [cli/examples/bootstrap-bundle.yaml](cli/examples/bootstrap-bundle.yaml),
+which names the registry a site pulls from, and
+[cli/examples/capd-cluster.yaml](cli/examples/capd-cluster.yaml), which
+requests a cluster.
 
 ## Requirements
 

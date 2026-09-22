@@ -264,7 +264,7 @@ cp-03,10.10.50.4,<sha256 of the node's TPM EK>
 
 ```bash
 nkectl generate sitespec my-site --nodes hosts.csv \
-  --set cluster.cniName=calico \
+  --set cluster.controlPlaneVIP=10.10.50.100 \
   --set spire.trustDomain=site.example.com \
   --set spire.caCertFile=./spire-ca.crt \
   --set spire.caKeyFile=./spire-ca.key > sitespec.yaml

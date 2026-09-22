@@ -578,7 +578,7 @@ func TestValidateReferences(t *testing.T) {
 			inv := minimalValid()
 			inv.Spire = tc.spire
 
-			err := inv.ValidateReferences()
+			err := inv.ValidateReferences("")
 			if gotErr := err != nil; gotErr != tc.wantErr {
 				t.Fatalf("ValidateReferences(%+v) error = %v, want error: %v", tc.spire, err, tc.wantErr)
 			}

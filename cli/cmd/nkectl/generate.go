@@ -13,8 +13,7 @@ import (
 	"github.com/dsx-ai-factory/nke/cli/internal/sitespec"
 )
 
-// newGenerateCmd is the "generate" command group. Site spec is the only
-// subcommand today; the group leaves room for further generated artifacts.
+// newGenerateCmd is the "generate" command group.
 func newGenerateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "generate",
@@ -64,8 +63,8 @@ carries a value nobody typed.`,
 
   # Override fields the CSV does not carry
   nkectl generate sitespec my-tier0-site --nodes hosts.csv \
-    --set cluster.cniName=calico \
-    --set cluster.podCidr=10.100.0.0/16 > sitespec.yaml`,
+    --set cluster.podCidr=10.100.0.0/16 \
+    --set bootstrapBundleFile=bootstrap-bundle.yaml > sitespec.yaml`,
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {

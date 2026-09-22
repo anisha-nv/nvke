@@ -10,6 +10,10 @@ bin/
 # carrying live TPM thumbprints.
 e2e/bootstrap/.hosts.csv
 e2e/bootstrap/.sitespec.rendered.yaml
+e2e/bootstrap/.sitespec.bundle.yaml
+e2e/bootstrap/.sitespec.public.yaml
+e2e/bootstrap/.bundle.public.yaml
+e2e/bootstrap/.bootstrap-bundle.yaml
 
 # The etcd encryption key `nkectl bootstrap site` writes, the temporary file
 # it is assembled in, and the E2E's copy next to the site spec. The root

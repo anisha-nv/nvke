@@ -43,7 +43,7 @@ this document uses. Run it with an unknown path to list what it accepts:
 
 ```bash
 nkectl generate sitespec my-tier0-site --nodes hosts.csv \
-  --set cluster.cniName=calico \
+  --set cluster.controlPlaneVIP=10.10.50.100 \
   --set cluster.podCidr=10.100.0.0/16 > sitespec.yaml
 ```
 
@@ -67,7 +67,7 @@ is a file `bootstrap site` accepts.
 | `cluster.nodes[].ip` | string | yes, per entry | Valid IPv4 or IPv6 address. Unique across all nodes. |
 | `cluster.nodes[].tpmEkThumbprint` | string | no | SHA-256 of the node's TPM endorsement key: 64 lowercase hex digits. See below. |
 | `cluster.k8sVersion` | string | yes | Plain semantic version, e.g. `1.32.0` (no leading `v`). |
-| `cluster.cniName` | string | yes | One of `calico`, `ovn-kubernetes`. |
+| `cluster.cniName` | string | yes | `ovn-kubernetes`. `calico` is accepted for development. |
 | `cluster.cniVersion` | string | no | CNI plugin version. Empty uses the node-agent default. |
 | `cluster.controlPlaneVIP` | string | no | Optional IPv4 control-plane VIP. Empty uses the IP of the node that initializes the cluster. See below. |
 | `cluster.podCidr` | string | yes | Valid CIDR. A comma-separated list of CIDRs is allowed. |
@@ -81,6 +81,7 @@ is a file `bootstrap site` accepts.
 | `spire.trustDomain` | string | no | SPIFFE trust domain. Defaults to `<bootstrap-cluster>.nke.local`. Use the same value for the permanent site SPIRE server. |
 | `spire.caCertFile` | string | no | Path to a CA certificate for SPIRE to chain its own CA to. See below. |
 | `spire.caKeyFile` | string | no | Path to that CA's private key. Required with `caCertFile`. |
+| `bootstrapBundleFile` | string | no | Path of the bootstrap bundle, relative to this file. It names your registry, the two images you build, and any override. See [bundle.md](bundle.md). |
 
 The version (image/chart tag) is baked into the `nkectl` build, so it is not
 part of the site spec.
@@ -123,6 +124,7 @@ A set variable takes precedence over the file value.
 | `NKECTL_SPIFFE_TRUST_DOMAIN` | `spire.trustDomain` |
 | `SPIRE_CA_CERT_FILE` | `spire.caCertFile` |
 | `SPIRE_CA_KEY_FILE` | `spire.caKeyFile` |
+| `BOOTSTRAP_BUNDLE_FILE` | `bootstrapBundleFile` |
 | `NKECTL_CLUSTER_NODES` | `cluster.nodes` — format `name:ip,name:ip`, applied only when the file lists no nodes |
 
 A malformed `NKECTL_CLUSTER_NODES` entry fails the load rather than being
@@ -177,6 +179,22 @@ nothing outside the cluster has to verify it — and means nodes cannot be given
 trust anchor in advance. Both files are checked for existence at load, while
 nothing has been touched yet: otherwise a wrong path surfaces minutes later as a
 helm failure naming a temporary file rather than the field that was wrong.
+
+## The bootstrap bundle
+
+`bootstrapBundleFile` names the bootstrap bundle. That file says where
+`bootstrap site` pulls its artifacts from: your registry, or the public
+registries when none is declared. It names the two images you build. It may
+override an manifest entry. `nkectl` pins what the artifacts are; `nkectl
+get bootstrap-manifest` prints them. This file describes the cluster.
+
+`bootstrapBundleFile` is optional. Today only `--dry-run` honours it. Without
+it, or without a registry in it, pass `--public` to `bootstrap site`. See
+[bundle.md](bundle.md).
+
+A relative `bootstrapBundleFile` is relative to the site spec file, not the
+working directory. A site spec and its bootstrap bundle can then sit side by
+side in git. nkectl checks that the file exists at load, like the SPIRE CA.
 
 ## etcd encryption at rest
 

@@ -34,7 +34,7 @@ cluster:
   # Kubernetes version to install — plain semantic version, no leading "v".
   k8sVersion: "1.34.2"
 
-  # CNI plugin: "calico" or "ovn-kubernetes".
+  # CNI plugin. "calico" is accepted for development.
   cniName: "ovn-kubernetes"
   # Optional CNI plugin version. Empty uses the node-agent's built-in default.
   # The value is plugin-specific — a Calico version such as "3.31.4" is not
@@ -76,6 +76,14 @@ cluster:
 #   trustDomain: "site.example.com"
 #   caCertFile: "/etc/nke/spire-ca.crt"
 #   caKeyFile: "/etc/nke/spire-ca.key"
+
+# Bootstrap bundle. Optional.
+#
+# The bootstrap bundle: where the bootstrap pulls its artifacts from, the two
+# images you build, and any override. Start from "nkectl template
+# bootstrap-bundle" and check it with "nkectl validate bootstrap-bundle".
+# A relative path is relative to this file. See docs/bundle.md.
+# bootstrapBundleFile: "bootstrap-bundle.yaml"
 
 # Container registry for the bootstrap engine chart. The version (chart tag) is
 # baked into the nkectl build, so it is not set here. The controller image the

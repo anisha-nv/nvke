@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -61,6 +62,7 @@ const (
 	pathSpireTrustDomain     = "spire.trustDomain"
 	pathSpireCACertFile      = "spire.caCertFile"
 	pathSpireCAKeyFile       = "spire.caKeyFile"
+	pathBundleFile           = "bootstrapBundleFile"
 )
 
 var (
@@ -94,6 +96,21 @@ type SiteSpec struct {
 	Registry Registry `yaml:"registry"`
 	// Spire holds the identity-plane settings for the bootstrap.
 	Spire Spire `yaml:"spire"`
+	// BootstrapBundleFile is the path of the bootstrap bundle: the registry the
+	// bootstrap pulls from, the images the operator builds, and any override.
+	// A relative path is relative to the site spec file. Optional. See
+	// docs/bundle.md.
+	BootstrapBundleFile string `yaml:"bootstrapBundleFile,omitempty"`
+}
+
+// BootstrapBundlePath returns the bootstrap bundle's path resolved against the
+// site spec file's directory, or "" when none is named. An absolute path is
+// returned unchanged.
+func (inv *SiteSpec) BootstrapBundlePath(siteSpecPath string) string {
+	if inv.BootstrapBundleFile == "" || filepath.IsAbs(inv.BootstrapBundleFile) {
+		return inv.BootstrapBundleFile
+	}
+	return filepath.Join(filepath.Dir(siteSpecPath), inv.BootstrapBundleFile)
 }
 
 // Spire describes the identity plane `nkectl bootstrap site` stands up.
@@ -237,6 +254,7 @@ func envBindings() map[string]string {
 		"NKECTL_SPIFFE_TRUST_DOMAIN":     pathSpireTrustDomain,
 		"SPIRE_CA_CERT_FILE":             pathSpireCACertFile,
 		"SPIRE_CA_KEY_FILE":              pathSpireCAKeyFile,
+		"BOOTSTRAP_BUNDLE_FILE":          pathBundleFile,
 	}
 }
 
@@ -294,7 +312,7 @@ func Load(path string) (*SiteSpec, error) {
 	// problem in one pass, as it did before the two were separated.
 	checks := &validator{}
 	inv.appendDataChecks(checks)
-	inv.appendReferenceChecks(checks)
+	inv.appendReferenceChecks(checks, path)
 	if err := checks.err(); err != nil {
 		return nil, fmt.Errorf("site spec file %s: %w", path, err)
 	}
@@ -370,6 +388,7 @@ func (inv *SiteSpec) appendDataChecks(v *validator) {
 	v.checkNodeAgentPort(inv.Cluster.NodeAgentPort)
 	v.checkRegistry(inv.Registry)
 	v.checkSpire(inv.Spire)
+	v.checkBundle(inv.BootstrapBundleFile)
 }
 
 // ValidateReferences checks that the files the site spec names can be read,
@@ -378,16 +397,20 @@ func (inv *SiteSpec) appendDataChecks(v *validator) {
 // Call it from the command that is about to act on the sitespec. A caller that
 // only writes the site spec out should not: the files it names are needed where
 // the bootstrap runs, which is not necessarily where the file was produced.
-func (inv *SiteSpec) ValidateReferences() error {
+//
+// siteSpecPath is where the site spec was read from; a relative bootstrapBundleFile is
+// resolved against its directory. Empty resolves against the working directory.
+func (inv *SiteSpec) ValidateReferences(siteSpecPath string) error {
 	v := &validator{}
-	inv.appendReferenceChecks(v)
+	inv.appendReferenceChecks(v, siteSpecPath)
 	return v.err()
 }
 
 // appendReferenceChecks runs every check that reads the filesystem, adding each
 // problem to v. See appendDataChecks for why it takes the validator.
-func (inv *SiteSpec) appendReferenceChecks(v *validator) {
+func (inv *SiteSpec) appendReferenceChecks(v *validator, siteSpecPath string) {
 	v.checkSpireFiles(inv.Spire)
+	v.checkBundleFile(inv.BootstrapBundlePath(siteSpecPath))
 }
 
 // validator accumulates field-level errors so the caller sees every problem
@@ -647,6 +670,28 @@ func (v *validator) checkSpireFiles(s Spire) {
 		if _, err := os.Stat(file); err != nil {
 			v.addf("%s %q cannot be read: %v", path, file, err)
 		}
+	}
+}
+
+// checkBundle validates the bootstrap bundle path without reading it.
+func (v *validator) checkBundle(bundleFile string) {
+	if strings.ContainsAny(bundleFile, "\t\n") {
+		v.addf("%s %q must be a file path", pathBundleFile, bundleFile)
+	}
+}
+
+// checkBundleFile reports a bootstrap bundle that cannot be read, at load. Its
+// content is checked by the command that acts on it.
+func (v *validator) checkBundleFile(bundlePath string) {
+	if bundlePath == "" {
+		return
+	}
+	info, err := os.Stat(bundlePath)
+	switch {
+	case err != nil:
+		v.addf("%s %q cannot be read: %v", pathBundleFile, bundlePath, err)
+	case info.IsDir():
+		v.addf("%s %q is a directory, not a bootstrap bundle", pathBundleFile, bundlePath)
 	}
 }
 
