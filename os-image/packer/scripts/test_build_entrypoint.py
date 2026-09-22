@@ -59,7 +59,7 @@ output.mkdir(parents=True, exist_ok=True)
             # Each invocation represents a fresh build in this test-owned project.
             for output in self.packer_dir.glob("output-*"):
                 shutil.rmtree(output)
-            args += ["-o", "ssh-key", "-o", "init-fde", "-o", "init-non-fde", "-o", "prepare-installer-iso", "-o", "prepare-artifacts", "-o", "prepare-packer-inputs"]
+            args += ["-o", "prepare-image-build"]
             target = "_" + target if target.startswith("os-image-") else target
         args += [target, "ARCH=arm64", f"PACKER={self.root / 'packer'}",
                  f"ARTIFACTS_DIR={self.root / 'artifacts'}", f"BUILD_LOGS={self.root / 'logs'}", *extra]
