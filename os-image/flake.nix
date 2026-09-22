@@ -18,6 +18,8 @@
         amd64 = "x86_64-linux";
         arm64 = "aarch64-linux";
       };
+      # Stable per-architecture defaults; NKE_BUILDER_SSH_PORT overrides.
+      defaultSshPort = arch: if arch == "arm64" then "5422" else "5423";
       mkBuilder =
         hostSystem: arch: guestSystem:
         let
@@ -71,9 +73,7 @@
               kvm|hvf) cpu=host ;;
               *) echo "ACCELERATOR must be kvm, hvf, or tcg" >&2; exit 1 ;;
             esac
-            export QEMU_NET_OPTS="hostfwd=tcp:127.0.0.1:''${SSH_PORT:-${
-              if arch == "arm64" then "5422" else "5423"
-            }}-:22"
+            export QEMU_NET_OPTS="hostfwd=tcp:127.0.0.1:''${NKE_BUILDER_SSH_PORT:-${defaultSshPort arch}}-:22"
             exec ${guest.config.system.build.vm}/bin/run-nke-builder-${arch}-vm \
               -machine ${machine},accel="$accel" -cpu "$cpu" "$@"
           '';
@@ -87,7 +87,7 @@
             name = "nke-builder-ssh";
             runtimeInputs = [ pkgs.openssh ];
             text = ''
-              exec ssh -F /dev/null -p "$SSH_PORT" \
+              exec ssh -F /dev/null -p "$NKE_BUILDER_SSH_PORT" \
                 -i "$NKE_BUILDER_STATE_DIR/client-key" \
                 -o IdentityAgent=none -o IdentitiesOnly=yes -o BatchMode=yes \
                 -o ConnectTimeout=2 -o StrictHostKeyChecking=yes \
@@ -111,6 +111,7 @@
             arch=${arch}
             launcher=${launcher}/bin/nke-builder-${arch}
             guest_script=${./nix/build-guest.sh}
+            default_ssh_port=${defaultSshPort arch}
           ''
           + builtins.readFile ./nix/build-packages.sh;
         };

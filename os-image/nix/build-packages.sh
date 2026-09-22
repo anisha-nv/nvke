@@ -14,7 +14,7 @@ while (($#)); do
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-: "${artifacts:?--output is required}" "${arch:?}" "${launcher:?}" "${guest_script:?}"
+: "${artifacts:?--output is required}" "${arch:?}" "${launcher:?}" "${guest_script:?}" "${default_ssh_port:?}"
 repo=$(git -C "$source_dir" rev-parse --show-toplevel)
 mkdir -p "$artifacts"
 artifacts=$(cd "$artifacts" && pwd -P)
@@ -34,10 +34,8 @@ export NKE_BUILDER_HOST_KEY=$state/host-key
 host_public_key=$(ssh-keygen -y -f "$NKE_BUILDER_HOST_KEY")
 printf 'nke-package-builder %s\n' "$host_public_key" > "$state/known_hosts"
 export NIX_DISK_IMAGE=$state/root.qcow2 TMPDIR=$state/runtime USE_TMPDIR=1
-# Stable, separate default ports for each architecture; override for other instances.
-if [[ "$arch" == arm64 ]]; then default_port=5422; else default_port=5423; fi
-export SSH_PORT=${SSH_PORT:-$default_port}
-unset ACCELERATOR  # the Packer Makefile exports its own; let nke_qemu_env pick for this VM
+export NKE_BUILDER_SSH_PORT=${NKE_BUILDER_SSH_PORT:-$default_ssh_port}
+unset ACCELERATOR  # the Packer Makefile exports its own; the launcher picks one for this VM
 run_id=$(date +%s)-$$
 rm -f "$state"/console-*.log
 log=$state/console-$run_id.log
