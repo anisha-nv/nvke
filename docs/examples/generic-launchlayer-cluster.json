@@ -23,7 +23,6 @@
       "controlPlane": true,
       "desiredNodeCount": 1,
       "infra": {
-        "spireAttestationMethod": "joinToken",
         "machineTemplate": {
           "apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha1",
           "kind": "LaunchLayerMachineTemplate",
@@ -45,7 +44,6 @@
       "controlPlane": false,
       "desiredNodeCount": 2,
       "infra": {
-        "spireAttestationMethod": "joinToken",
         "machineTemplate": {
           "apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha1",
           "kind": "LaunchLayerMachineTemplate",

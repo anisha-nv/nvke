@@ -14,8 +14,7 @@
           "instanceType": "example-control-plane-type",
           "hostOSProfile": "example-nke-host:1",
           "fulfillmentStrategy": "BEST_EFFORT"
-        },
-        "spireAttestationMethod": "joinToken"
+        }
       }
     },
     {
@@ -36,8 +35,7 @@
             ]
           },
           "vmProfile": "example-nke-vm:1"
-        },
-        "spireAttestationMethod": "joinToken"
+        }
       }
     }
   ],

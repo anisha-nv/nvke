@@ -18,7 +18,6 @@ nodePools:
     controlPlane: true
     desiredNodeCount: 1
     launchlayer:
-      spireAttestationMethod: joinToken
       machine:
         instanceType: example-control-plane
         hostOSProfile: example-host:1
@@ -28,7 +27,6 @@ nodePools:
     controlPlane: false
     desiredNodeCount: 2
     launchlayer:
-      spireAttestationMethod: tpm
       machine:
         instanceType: example-worker
         hostOSProfile: example-host:1

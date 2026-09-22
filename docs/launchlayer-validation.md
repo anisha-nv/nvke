@@ -62,7 +62,6 @@ Kubernetes resource envelopes inside `launchlayer`.
 | machine.hostOSProfile / vmProfile | Independently optional strings. name[:version] is a convention, not an enforced regex or substrate selector. |
 | machine.fulfillmentStrategy | Optional BEST_EFFORT, ALL_OR_NOTHING, or WAIT_FOR_RESOURCE. Omission leaves CAPLL to default. |
 | machine.securityGroups | Optional primaryNetworkInterface and gpuNetworkInterface string arrays; ordering and explicit empty arrays are preserved. |
-| Pool/CP launchlayer.spireAttestationMethod | Required on create: tpm or joinToken. |
 | Pool/CP launchlayer.bootstrapFiles / preKubeadmCommands | Optional existing cloud-init inputs. Reserved SPIRE paths remain controller-managed. |
 
 Owner presence is intentionally stricter than the CRD's optional owner because
@@ -99,8 +98,7 @@ Control-plane responses expose all stored `machinePreferences`, for example:
   "launchlayer": {
     "machinePreferences": [
       {"instanceType": "example-control-plane-type", "hostOSProfile": "example-host:1"}
-    ],
-    "spireAttestationMethod": "tpm"
+    ]
   }
 }
 ```
