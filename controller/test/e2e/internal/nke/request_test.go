@@ -13,7 +13,7 @@ import (
 
 func TestNodePoolRequestPreservesLaunchLayer(t *testing.T) {
 	clusterID := uuid.New()
-	provider := &api.LaunchLayerNodePoolProvider{Machine: api.LaunchLayerMachine{InstanceType: "example-type"}, SpireAttestationMethod: "tpm"}
+	provider := &api.LaunchLayerNodePoolProvider{Machine: api.LaunchLayerMachine{InstanceType: "example-type"}}
 	request := nodePoolRequest(clusterID, api.NodePoolCreateConfig{Launchlayer: provider})
 	if request.ClusterID != clusterID || request.Launchlayer != provider || request.Infra != nil || request.Nico != nil {
 		t.Fatal("standalone pool conversion must preserve the typed provider and parent")
