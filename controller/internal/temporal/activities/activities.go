@@ -49,21 +49,27 @@ func NewActivities(
 	}
 }
 
-// WithTrustDomainBundleGetter overrides how Activities fetches the SPIRE
-// trust domain and bundle. Production callers never need this: NewActivities
-// already wires the real implementation. It exists so a test in another
-// package can exercise SpiffeEnabled-true code paths without a live SPIRE
-// server, the same way an in-package test can set the unexported field
-// directly.
-func (a *Activities) WithTrustDomainBundleGetter(fn trustDomainAndBundleGetter) *Activities {
-	a.getTrustDomainBundle = fn
-	return a
-}
-
-// WithJoinTokenCreator overrides how Activities mints a SPIRE join token, for
-// the same reason and with the same production-caller exemption as
-// WithTrustDomainBundleGetter.
-func (a *Activities) WithJoinTokenCreator(fn joinTokenCreator) *Activities {
-	a.createJoinToken = fn
+// NewActivitiesForTest builds Activities with the given SPIRE trust-domain-bundle
+// getter and join-token creator, so a test in another package can exercise
+// SpiffeEnabled-true code paths without a live SPIRE server, the same way an
+// in-package test can set the unexported fields directly.
+//
+// This is a free function rather than an Activities method: worker.RegisterActivity
+// registers every exported method of the value NewActivities returns, so an
+// exported builder method on *Activities panics at registration time unless
+// its signature matches an activity's (result, error) shape.
+func NewActivitiesForTest(
+	cfg config.Config,
+	database db.DB,
+	k8sClient ctrlclient.Client,
+	nodeAgentClient agent.Client,
+	trustDomain string,
+	tenantClientProvider TenantClientProvider,
+	getTrustDomainBundle trustDomainAndBundleGetter,
+	createJoinToken joinTokenCreator,
+) *Activities {
+	a := NewActivities(cfg, database, k8sClient, nodeAgentClient, trustDomain, tenantClientProvider)
+	a.getTrustDomainBundle = getTrustDomainBundle
+	a.createJoinToken = createJoinToken
 	return a
 }

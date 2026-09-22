@@ -110,16 +110,17 @@ func TestTypedLaunchLayerHTTPPersistenceThroughProductionRendering(t *testing.T)
 					// joinToken is the only attestation method LaunchLayer accepts, and
 					// minting a real one needs a live SPIRE server. SpiffeEnabled is on
 					// so the production code path renders bootstrap files at all;
-					// WithTrustDomainBundleGetter/WithJoinTokenCreator stand in for the
-					// live SPIRE calls the same way an in-package test would set those
+					// the trust-domain-bundle getter and join-token creator stand in for
+					// the live SPIRE calls the same way an in-package test would set those
 					// unexported fields directly.
-					activity := activities.NewActivities(config.Config{SpiffeEnabled: true}, queries, applied, nil, "example.trust.domain", nil).
-						WithTrustDomainBundleGetter(func(context.Context, config.Config) (string, string, error) {
+					activity := activities.NewActivitiesForTest(config.Config{SpiffeEnabled: true}, queries, applied, nil, "example.trust.domain", nil,
+						func(context.Context, config.Config) (string, string, error) {
 							return "example.trust.domain", "example-trust-bundle", nil
-						}).
-						WithJoinTokenCreator(func(context.Context, config.Config, string) (string, error) {
+						},
+						func(context.Context, config.Config, string) (string, error) {
 							return "example-join-token", nil
-						})
+						},
+					)
 					require.NoError(t, activity.CreateCAPIInfraMachineForNode(t.Context(), activities.CreateCAPIInfraMachineForNodeInput{NodeID: node.ID}))
 					require.Len(t, applied.objects, 3)
 					machine := applied.objects[0].(*unstructured.Unstructured)
