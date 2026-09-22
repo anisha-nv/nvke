@@ -258,7 +258,7 @@ func (q *queriesImpl) ListNodePools(ctx context.Context, filters NodePoolFilters
 	var nodePools []NodePool
 	query := q.db.NewSelect().
 		Model(&nodePools).
-		ColumnExpr("node_pool.*").
+		ExcludeColumn().
 		ColumnExpr("c.api_provider AS cluster_api_provider").
 		Join("JOIN clusters c ON c.id = node_pool.cluster_id")
 
@@ -318,7 +318,7 @@ func (q *queriesImpl) ListNodePoolMetrics(ctx context.Context) ([]NodePoolMetric
 func (q *queriesImpl) GetNodePool(ctx context.Context, id uuid.UUID) (NodePool, error) {
 	var nodePool NodePool
 	err := q.db.NewSelect().Model(&nodePool).
-		ColumnExpr("node_pool.*").ColumnExpr("c.api_provider AS cluster_api_provider").
+		ExcludeColumn().ColumnExpr("c.api_provider AS cluster_api_provider").
 		Join("JOIN clusters c ON c.id = node_pool.cluster_id").
 		Where("node_pool.id = ?", id).Scan(ctx)
 	if err != nil {
@@ -333,7 +333,7 @@ func (q *queriesImpl) GetNodePool(ctx context.Context, id uuid.UUID) (NodePool, 
 func (q *queriesImpl) GetNodePoolForUpdate(ctx context.Context, id uuid.UUID) (NodePool, error) {
 	var nodePool NodePool
 	err := q.db.NewSelect().Model(&nodePool).
-		ColumnExpr("node_pool.*").ColumnExpr("c.api_provider AS cluster_api_provider").
+		ExcludeColumn().ColumnExpr("c.api_provider AS cluster_api_provider").
 		Join("JOIN clusters c ON c.id = node_pool.cluster_id").
 		Where("node_pool.id = ?", id).For("UPDATE OF node_pool").Scan(ctx)
 	if err != nil {

@@ -84,7 +84,7 @@ type NodeSetQueries interface {
 func (q *queriesImpl) ListNodeSets(ctx context.Context, filters NodeSetFilters) ([]NodeSet, error) {
 	var nodeSets []NodeSet
 	query := q.db.NewSelect().Model(&nodeSets).
-		ColumnExpr("node_set.*").
+		ExcludeColumn().
 		ColumnExpr("c.api_provider AS cluster_api_provider").
 		Join("JOIN node_pools np ON np.id = node_set.node_pool_id").
 		Join("JOIN clusters c ON c.id = np.cluster_id")
@@ -108,7 +108,7 @@ func (q *queriesImpl) GetNodeSet(ctx context.Context, id uuid.UUID) (NodeSet, er
 	var config NodeSet
 	err := q.db.NewSelect().
 		Model(&config).
-		ColumnExpr("node_set.*").ColumnExpr("c.api_provider AS cluster_api_provider").
+		ExcludeColumn().ColumnExpr("c.api_provider AS cluster_api_provider").
 		Join("JOIN node_pools np ON np.id = node_set.node_pool_id").
 		Join("JOIN clusters c ON c.id = np.cluster_id").
 		Where("node_set.id = ?", id).
