@@ -64,8 +64,9 @@ Use `build-packages-amd64` for x86 packages. The command starts the VM, copies
 in your checkout, builds the packages, copies the results to your output
 directory, and shuts down the VM. The first build takes longer; later builds
 reuse a persistent disk containing the Nix store and compiler/download caches.
-Only the `debs/` subdirectory of the output is the builder's to replace; anything
-else already there is left alone.
+The builder copies top-level artifacts, replacing same-named files such as
+`nke-agent.deb`, and synchronizes `debs/` with deletion of stale packages.
+Unrelated files outside `debs/` are preserved.
 
 To check the prerequisites without building anything:
 

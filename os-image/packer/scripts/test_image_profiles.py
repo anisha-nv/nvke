@@ -65,27 +65,45 @@ fi
 
 @unittest.skipUnless(shutil.which("packer"), "Packer is needed to evaluate HCL profiles")
 class PackerProfileTest(unittest.TestCase):
-    def test_kernel_and_artifact_names(self):
-        for variant in ("fde", "non-fde"):
-            for arch in ("amd64", "arm64"):
-                for profile in (None, "production", "development"):
-                    with self.subTest(variant=variant, arch=arch, profile=profile):
-                        result = subprocess.run(
-                            ["packer", "console",
-                             *(["-var", f"image_profile={profile}"] if profile else []),
-                             "-var", f"iso_url=https://example.com/ubuntu-26.04.1-live-server-{arch}.iso",
-                             str(PACKER_DIR / f"nke-node-{variant}.pkr.hcl")],
-                            input="jsonencode([local.kernel_package, local.image_name, local.output_directory])\n",
-                            text=True, capture_output=True,
-                        )
-                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                        kernel, name, directory = json.loads(result.stdout)
-                        expected = "linux-generic" if profile == "development" else (
-                            "linux-nvidia-64k" if arch == "arm64" else "linux-nvidia")
-                        self.assertEqual(kernel, expected)
-                        suffix = "-development" if profile == "development" else ""
-                        self.assertEqual(name, f"nke-node-{variant}{suffix}-ubuntu-26.04.1-{arch}.qcow2")
-                        self.assertEqual(directory, str(PACKER_DIR / f"output-{variant}{suffix}"))
+    def test_kernel_and_artifact_directories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            key = root / "key"
+            key.touch()
+            manifest = root / "material-manifest.json"
+            for variant in ("fde", "non-fde"):
+                for arch in ("amd64", "arm64"):
+                    manifest.write_text(json.dumps({
+                        "schemaVersion": "nke.dev/os-image-materials/v1",
+                        "materials": [
+                            {"binding": binding, "path": f"materials/{binding}",
+                             "kind": kind, "architecture": arch, "digest": "sha256:" + "0" * 64}
+                            for binding, kind in (("installer-iso", "disk-image"),
+                                                  ("image-inputs", "archive"))
+                        ],
+                    }))
+                    for profile in (None, "production", "development"):
+                        with self.subTest(variant=variant, arch=arch, profile=profile):
+                            result = subprocess.run(
+                                [os.environ.get("PACKER", "packer"), "console",
+                                 *(["-var", f"image_profile={profile}"] if profile else []),
+                                 "-var", f"material_manifest={manifest}",
+                                 "-var", f"output_directory={root}/output",
+                                 "-var", f"ssh_private_key_file={key}",
+                                 "-var", f"ssh_public_key_file={key}",
+                                 "-var", f"efi_firmware_code={key}",
+                                 "-var", f"efi_firmware_vars={key}",
+                                 str(PACKER_DIR)],
+                                input=f"jsonencode([local.kernel_package, local.variant_output_directories.{variant.replace('-', '_')}])\n",
+                                text=True, capture_output=True,
+                            )
+                            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                            kernel, directory = json.loads(result.stdout)
+                            expected = "linux-generic" if profile == "development" else (
+                                "linux-nvidia-64k" if arch == "arm64" else "linux-nvidia")
+                            self.assertEqual(kernel, expected)
+                            suffix = "-development" if profile == "development" else ""
+                            self.assertEqual(directory, str(root / f"output/{variant}{suffix}"))
 
 
 if __name__ == "__main__":

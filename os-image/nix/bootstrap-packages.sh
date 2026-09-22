@@ -16,6 +16,8 @@ vm_pid=
 runtime=
 ready=0
 stop_bootstrap() {
+  # Recover the only background job if interrupted before vm_pid was assigned.
+  vm_pid=${vm_pid:-$(jobs -pr)}
   [[ -n "$vm_pid" ]] || return 0
   if [[ "$ready" == 1 ]]; then
     timeout 15 "${ssh[@]}" poweroff >/dev/null 2>&1 || true
@@ -29,7 +31,8 @@ stop_bootstrap() {
 }
 cleanup() {
   status=$?
-  trap - EXIT INT TERM
+  trap - EXIT
+  trap '' INT TERM
   stop_bootstrap
   if [[ -n "$runtime" ]]; then rm -rf -- "$runtime"; fi
   rm -f "$plan"
@@ -71,6 +74,7 @@ if [[ "$bootstrap" == 1 ]]; then
   fi
   key=$state/client-key
   [[ -e "$key" ]] || ssh-keygen -q -t ed25519 -N '' -f "$key"
+  [[ -s "$key.pub" ]] || ssh-keygen -y -f "$key" > "$key.pub"
   # Store ownership makes the public-key share acceptable to sshd StrictModes.
   # Only the public key enters the store; the private key stays in user state.
   install -m 0644 "$key.pub" "$state/keys/builder_ed25519.pub"

@@ -8,17 +8,23 @@ ifneq ($(origin MAKEFILE_LIST),file)
 endif
 override PACKER_MAKEFILE := $(abspath $(lastword $(MAKEFILE_LIST)))
 override PACKER_ROOT := $(abspath $(dir $(PACKER_MAKEFILE)))
+override PACKER_PROJECT := $(PACKER_ROOT)
 SSH_DIR     := $(CURDIR)/.ssh
-# Packer's HCL consumes this mutable scratch path. Keep it Make-owned because
-# prepare-artifacts replaces it and clean removes it. Externally staged inputs
-# need a separate read-only path rather than an override of this directory.
+# Make stages source-built packages here before adapting them into Packer's
+# explicit material layout. Keep the mutable scratch path Make-owned because
+# prepare-artifacts replaces it and clean removes it.
 override ARTIFACTS := $(PACKER_ROOT)/artifacts
-# Deliberately separate from ARTIFACTS: the FDE/non-FDE "file" provisioner
-# uploads ARTIFACTS/ to the guest wholesale (it's meant to hold only
-# fetch-artifacts.sh's nke-agent/spire-agent downloads). The installer ISO
-# (GBs, cached across builds) must never land in that directory, or it gets
-# uploaded too -- this is exactly what caused an FDE build to try uploading
-# 5.8GB instead of ~120MB and fail with a misleading "Disk quota exceeded".
+override PACKER_INPUT_ROOT := $(PACKER_ROOT)/.packer-inputs
+override MATERIAL_MANIFEST := $(PACKER_INPUT_ROOT)/material-manifest.json
+# Keep the variants in separate scratch roots. Direct Packer callers already
+# get variant subdirectories under their output_directory; Make additionally
+# isolates its two entry points so one completed build cannot remove the other
+# build's active output during cleanup.
+override PACKER_OUTPUT_DIRECTORY_FDE = $(PACKER_ROOT)/.packer-output-fde$(PROFILE_SUFFIX)
+override PACKER_OUTPUT_DIRECTORY_NON_FDE = $(PACKER_ROOT)/.packer-output-non-fde$(PROFILE_SUFFIX)
+# Deliberately separate from ARTIFACTS: prepare-packer-inputs archives that
+# directory for guest provisioning. The multi-gigabyte installer ISO must stay
+# outside the archive and is staged as its own Packer material.
 ISO_CACHE   := $(CURDIR)/iso-cache
 # Keep Packer's build/download cache in the existing ignored build cache
 # instead of its default ./.packer_cache, which would make the checkout dirty
@@ -33,8 +39,8 @@ export PACKER_CACHE_DIR
 # output) gets captured, for CI to upload as an artifact on failure -- no
 # VNC/monitor access there to inspect a stuck build interactively.
 BUILD_LOGS  := $(CURDIR)/build-logs
-PKR_FILE_FDE := $(CURDIR)/nke-node-fde.pkr.hcl
-PKR_FILE_NON_FDE := $(CURDIR)/nke-node-non-fde.pkr.hcl
+PACKER_BUILD_FDE := nke-node-fde.qemu.nke-fde
+PACKER_BUILD_NON_FDE := nke-node-non-fde.qemu.nke-non-fde
 SOURCE_ROOT ?= $(abspath ../..)
 QCOW2_DIST_DIR ?=
 EXPECTED_SOURCE_COMMIT ?=
@@ -47,19 +53,15 @@ export NKE_PACKAGE_BUILDER ?= auto
 # stable identifier instead of depending on a partition or device path.
 ROOT_FS_LABEL ?= cloudimg-rootfs
 
-# amd64 or arm64. Drives ISO_URL's default below and, through it,
-# local.arch in nke-node-fde.pkr.hcl / nke-node-non-fde.pkr.hcl (parsed back
-# out of the ISO filename) -- which is what actually picks qemu_binary,
-# machine_type, the AAVMF/OVMF firmware pair, and the NVIDIA kernel flavor.
-# There is deliberately no separate `-var arch=...`: iso_url is the single
-# source of truth, so it can't drift out of sync with what's actually built.
+# amd64 or arm64. Drives the ISO default, source package preparation, and the
+# explicit Packer architecture variable that selects QEMU, firmware, console,
+# and NVIDIA kernel behavior.
 ARCH ?= amd64
 
 # FDE/non-FDE only. Overridable together; prepare-installer-iso.sh
 # downloads ISO_URL, verifies it against ISO_CHECKSUM, and produces a
-# GRUB-timeout-patched sibling before packer build ever runs, so packer's
-# own iso_url/iso_checksum vars just point at the local copy (see the
-# locals block in nke-node-fde.pkr.hcl).
+# GRUB-timeout-patched sibling before Packer starts. prepare-packer-inputs then
+# stages that local copy and its checksum in the explicit material layout.
 #
 # releases.ubuntu.com only mirrors the amd64 Server ISO -- confirmed
 # directly: its SHA256SUMS has no arm64 entry at all, which is why
@@ -77,12 +79,15 @@ else
   ISO_URL      ?= https://releases.ubuntu.com/26.04/ubuntu-26.04.1-live-server-$(ARCH).iso
   ISO_CHECKSUM ?= file:https://releases.ubuntu.com/26.04/SHA256SUMS
 endif
+override UBUNTU_VERSION := $(patsubst ubuntu-%-live-server-$(ARCH).iso,%,$(notdir $(ISO_URL)))
 
 # Leave selection to qemu-arch.sh: native HVF on macOS, native KVM on Linux,
 # otherwise TCG. Explicit ACCELERATOR and CPU_MODEL overrides remain supported.
 ACCELERATOR ?=
 CPU_MODEL ?=
 IMAGE_PROFILE ?= auto
+RESOLVED_IMAGE_PROFILE = $(if $(filter auto,$(IMAGE_PROFILE)),$(if $(filter Darwin,$(shell uname -s)),development,production),$(IMAGE_PROFILE))
+PROFILE_SUFFIX = $(if $(filter development,$(RESOLVED_IMAGE_PROFILE)),-development,)
 
 # Defaults are chosen after acceleration detection: 30m for HVF/KVM and 180m
 # for TCG, where the full autoinstall must finish before SSH is available.
@@ -118,7 +123,7 @@ PACKER_BUILD = ARCH=$(ARCH) ACCELERATOR=$(ACCELERATOR) REQUIRE_ACCELERATION=$(RE
 	-var "efi_firmware_vars=$${OVMF_VARS_TEMPLATE:-$$EFI_VARS_DEFAULT}" "$$@"' \
 	bash $(PACKER)
 
-.PHONY: os-image-fde os-image-non-fde preflight init-fde init-non-fde ssh-key prepare-installer-iso prepare-artifacts clean check-deps check-source collect-qcow2-fde collect-qcow2-non-fde check-acceleration
+.PHONY: os-image-fde os-image-non-fde _os-image-fde _os-image-non-fde preflight init-packer init-fde init-non-fde validate-packer ssh-key prepare-installer-iso prepare-artifacts prepare-packer-inputs clean clean-packer-scratch clean-fde-output clean-non-fde-output check-deps check-source collect-qcow2-fde collect-qcow2-non-fde check-acceleration
 
 ssh-key: preflight $(SSH_DIR)/id_ed25519
 
@@ -143,24 +148,33 @@ check-source:
 
 preflight: check-source check-deps check-acceleration
 
-init-fde: preflight
-	$(PACKER) init $(PKR_FILE_FDE)
+init-packer: preflight
+	$(PACKER) init $(PACKER_PROJECT)
 
-init-non-fde: preflight
-	$(PACKER) init $(PKR_FILE_NON_FDE)
+init-fde init-non-fde: init-packer
+
+validate-packer:
+	@command -v "$(PACKER)" >/dev/null 2>&1 || { echo "Packer is required to validate the directory project" >&2; exit 1; }
+	@command -v "$(PYTHON)" >/dev/null 2>&1 || { echo "Python is required to validate the material contract" >&2; exit 1; }
+	@command -v ssh-keygen >/dev/null 2>&1 || { echo "ssh-keygen is required to create validation state" >&2; exit 1; }
+	@command -v tar >/dev/null 2>&1 || { echo "tar is required to create validation materials" >&2; exit 1; }
+	PACKER="$(PACKER)" PYTHON="$(PYTHON)" ./scripts/validate-packer-project.sh
 
 # FDE/non-FDE only. See prepare-installer-iso.sh's header for why this
 # exists: widening the installer ISO's own GRUB timeout to 300s means
 # boot_command's blind VNC keystrokes just need to land sometime in a wide
 # window, not a narrow, unpredictable one, under slow/tcg boots.
 prepare-installer-iso: preflight
+	@case "$(notdir $(ISO_URL))" in \
+		ubuntu-*-live-server-$(ARCH).iso) ;; \
+		*) echo "ISO_URL does not identify an $(ARCH) Ubuntu installer: $(ISO_URL)" >&2; exit 1 ;; \
+	esac
 	mkdir -p $(ISO_CACHE)
 	ISO_URL=$(ISO_URL) ISO_CHECKSUM=$(ISO_CHECKSUM) OUT_DIR=$(ISO_CACHE) ./scripts/prepare-installer-iso.sh
 
 # Image profiles select a compatible kernel and accelerator.
-# ISO_URL carries the architecture that nke-node-*.pkr.hcl parses into
-# local.arch, so a hand-passed ISO_URL disagreeing with ARCH would build the
-# wrong image under the right QEMU.
+# Make writes ARCH into the material manifest, so require the acquired ISO
+# filename to agree with the architecture Packer will read from that manifest.
 check-acceleration:
 	@ARCH=$(ARCH) ISO_URL=$(ISO_URL) bash -ec '\
 		if [[ "$$ISO_URL" =~ ubuntu-[0-9.]+-live-server-(amd64|arm64)\.iso$$ ]]; then \
@@ -230,6 +244,33 @@ prepare-artifacts: preflight
 	fi; \
 	trap - 0 1 2 15
 
+# Adapt Make's current networked preparation into the same material
+# layout used by direct Packer callers. The manifest is only an input-root
+# anchor in this compatibility path; external runners provide their own
+# authenticated manifest and exact material bytes.
+prepare-packer-inputs: prepare-installer-iso prepare-artifacts
+	@set -eu; \
+	input_root="$(PACKER_INPUT_ROOT)"; \
+	stage="$$(mktemp -d "$(PACKER_ROOT)/.packer-inputs.tmp.XXXXXX")"; \
+	cleanup() { rm -rf -- "$$stage"; }; \
+	trap cleanup 0 1 2 15; \
+	mkdir -p "$$stage/materials"; \
+	ln -s "$(ISO_CACHE)/$(notdir $(ISO_URL)).patched.iso" "$$stage/materials/installer-iso"; \
+	tar -C "$(ARTIFACTS)" -cf "$$stage/materials/image-inputs" .; \
+	iso_sha="$$(sha256sum "$(ISO_CACHE)/$(notdir $(ISO_URL)).patched.iso")"; \
+	iso_sha="$${iso_sha%% *}"; \
+	inputs_sha="$$(sha256sum "$$stage/materials/image-inputs")"; \
+	inputs_sha="$${inputs_sha%% *}"; \
+	printf '%s' '{"schemaVersion":"nke.dev/os-image-materials/v1","materials":[' > "$$stage/material-manifest.json"; \
+	printf '{"binding":"image-inputs","component":"nke-image-inputs","kind":"archive","architecture":"%s","digest":"sha256:%s","path":"materials/image-inputs"},' \
+		"$(ARCH)" "$$inputs_sha" >> "$$stage/material-manifest.json"; \
+	printf '{"binding":"installer-iso","component":"ubuntu-installer","kind":"disk-image","architecture":"%s","digest":"sha256:%s","path":"materials/installer-iso"}]}\n' \
+		"$(ARCH)" "$$iso_sha" >> "$$stage/material-manifest.json"; \
+	rm -rf -- "$$input_root"; \
+	mv -- "$$stage" "$$input_root"; \
+	stage=""; \
+	trap - 0 1 2 15
+
 check-deps:
 	@ARCH=$(ARCH) bash ./scripts/package-builder.sh --check
 	@command -v $(PYTHON) >/dev/null 2>&1 || { \
@@ -242,6 +283,14 @@ check-deps:
 	}
 	@command -v qemu-img >/dev/null 2>&1 || { \
 		echo "qemu-img is required to build and compress the QCOW2" >&2; \
+		exit 1; \
+	}
+	@command -v tar >/dev/null 2>&1 || { \
+		echo "tar is required to package prepared image inputs" >&2; \
+		exit 1; \
+	}
+	@command -v sha256sum >/dev/null 2>&1 || { \
+		echo "sha256sum is required to describe prepared image inputs" >&2; \
 		exit 1; \
 	}
 
@@ -332,27 +381,83 @@ collect-qcow2-non-fde:
 # an LVM-on-LUKS layout via autoinstall, then provisions nke-agent/spire-agent,
 # plus TPM2 binding scaffolding deferred to first boot. See
 # ../docs/full-disk-encryption.md.
-os-image-fde: ssh-key init-fde prepare-installer-iso prepare-artifacts
-	mkdir -p $(BUILD_LOGS)
-	PKR_VAR_luks_passphrase=$(LUKS_PASSPHRASE) $(PACKER_BUILD) \
+os-image-fde:
+	@if [ -e "$(CURDIR)/output-fde$(PROFILE_SUFFIX)" ] || [ -L "$(CURDIR)/output-fde$(PROFILE_SUFFIX)" ]; then \
+		echo "output-fde already exists; run make clean-fde-output before rebuilding" >&2; \
+		exit 1; \
+	fi
+	@if [ -e "$(PACKER_OUTPUT_DIRECTORY_FDE)" ] || [ -L "$(PACKER_OUTPUT_DIRECTORY_FDE)" ]; then \
+		echo "Packer output scratch already exists; run make clean-fde-output before rebuilding" >&2; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory --file "$(PACKER_MAKEFILE)" _os-image-fde
+
+_os-image-fde: ssh-key init-fde prepare-packer-inputs
+	mkdir -p "$(BUILD_LOGS)" "$(PACKER_OUTPUT_DIRECTORY_FDE)"
+	@if [ "$(ACCELERATOR)" = "tcg" ]; then \
+		echo "no usable /dev/kvm: building with software emulation, which is far slower"; \
+	fi
+	PKR_VAR_luks_passphrase=$(LUKS_PASSPHRASE) \
+	$(PACKER_BUILD) \
+		-only=$(PACKER_BUILD_FDE) \
+		-var material_manifest=$(MATERIAL_MANIFEST) \
+		-var output_directory=$(PACKER_OUTPUT_DIRECTORY_FDE) \
+		-var build_log_directory=$(BUILD_LOGS) \
+		-var ssh_private_key_file=$(SSH_DIR)/id_ed25519 \
+		-var ssh_public_key_file=$(SSH_DIR)/id_ed25519.pub \
 		-var cpus=$(CPUS) \
-		-var iso_url=$(ISO_URL) \
-		-var iso_checksum=$(ISO_CHECKSUM) \
 		-var root_fs_label=$(ROOT_FS_LABEL) \
-		-var artifacts_dir=$(ARTIFACTS) \
-		$(PKR_FILE_FDE)
+		$(PACKER_PROJECT)
+	mkdir "$(CURDIR)/output-fde$(PROFILE_SUFFIX)"
+	mv "$(PACKER_OUTPUT_DIRECTORY_FDE)/fde$(PROFILE_SUFFIX)/nke-node.qcow2" \
+		"$(CURDIR)/output-fde$(PROFILE_SUFFIX)/nke-node-fde$(PROFILE_SUFFIX)-ubuntu-$(UBUNTU_VERSION)-$(ARCH).qcow2"
+	rm -rf -- "$(PACKER_OUTPUT_DIRECTORY_FDE)"
 
 # Non-FDE variant: LVM-backed ext4 without LUKS. See
 # nke-node-non-fde.pkr.hcl.
-os-image-non-fde: ssh-key init-non-fde prepare-installer-iso prepare-artifacts
-	mkdir -p $(BUILD_LOGS)
-	$(PACKER_BUILD) \
-		-var cpus=$(CPUS) \
-		-var iso_url=$(ISO_URL) \
-		-var iso_checksum=$(ISO_CHECKSUM) \
-		-var root_fs_label=$(ROOT_FS_LABEL) \
-		-var artifacts_dir=$(ARTIFACTS) \
-		$(PKR_FILE_NON_FDE)
+os-image-non-fde:
+	@if [ -e "$(CURDIR)/output-non-fde$(PROFILE_SUFFIX)" ] || [ -L "$(CURDIR)/output-non-fde$(PROFILE_SUFFIX)" ]; then \
+		echo "output-non-fde already exists; run make clean-non-fde-output before rebuilding" >&2; \
+		exit 1; \
+	fi
+	@if [ -e "$(PACKER_OUTPUT_DIRECTORY_NON_FDE)" ] || [ -L "$(PACKER_OUTPUT_DIRECTORY_NON_FDE)" ]; then \
+		echo "Packer output scratch already exists; run make clean-non-fde-output before rebuilding" >&2; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory --file "$(PACKER_MAKEFILE)" _os-image-non-fde
 
-clean:
-	rm -rf $(CURDIR)/output-fde $(CURDIR)/output-non-fde $(ARTIFACTS) $(ISO_CACHE) $(BUILD_LOGS)
+_os-image-non-fde: ssh-key init-non-fde prepare-packer-inputs
+	mkdir -p "$(BUILD_LOGS)" "$(PACKER_OUTPUT_DIRECTORY_NON_FDE)"
+	@if [ "$(ACCELERATOR)" = "tcg" ]; then \
+		echo "no usable /dev/kvm: building with software emulation, which is far slower"; \
+	fi
+	$(PACKER_BUILD) \
+		-only=$(PACKER_BUILD_NON_FDE) \
+		-var material_manifest=$(MATERIAL_MANIFEST) \
+		-var output_directory=$(PACKER_OUTPUT_DIRECTORY_NON_FDE) \
+		-var build_log_directory=$(BUILD_LOGS) \
+		-var ssh_private_key_file=$(SSH_DIR)/id_ed25519 \
+		-var ssh_public_key_file=$(SSH_DIR)/id_ed25519.pub \
+		-var cpus=$(CPUS) \
+		-var root_fs_label=$(ROOT_FS_LABEL) \
+		$(PACKER_PROJECT)
+	mkdir "$(CURDIR)/output-non-fde$(PROFILE_SUFFIX)"
+	mv "$(PACKER_OUTPUT_DIRECTORY_NON_FDE)/non-fde$(PROFILE_SUFFIX)/nke-node.qcow2" \
+		"$(CURDIR)/output-non-fde$(PROFILE_SUFFIX)/nke-node-non-fde$(PROFILE_SUFFIX)-ubuntu-$(UBUNTU_VERSION)-$(ARCH).qcow2"
+	rm -rf -- "$(PACKER_OUTPUT_DIRECTORY_NON_FDE)"
+
+clean-packer-scratch:
+	rm -rf -- "$(PACKER_INPUT_ROOT)" "$(PACKER_ROOT)/.packer-output" \
+		"$(PACKER_ROOT)/.packer-output-fde" "$(PACKER_ROOT)/.packer-output-non-fde" \
+		"$(PACKER_ROOT)/.packer-output-fde-development" "$(PACKER_ROOT)/.packer-output-non-fde-development"
+
+clean-fde-output:
+	rm -rf -- "$(CURDIR)/output-fde$(PROFILE_SUFFIX)" "$(PACKER_OUTPUT_DIRECTORY_FDE)"
+
+clean-non-fde-output:
+	rm -rf -- "$(CURDIR)/output-non-fde$(PROFILE_SUFFIX)" "$(PACKER_OUTPUT_DIRECTORY_NON_FDE)"
+
+clean: clean-packer-scratch
+	rm -rf -- "$(CURDIR)/output-fde" "$(CURDIR)/output-non-fde" \
+		"$(CURDIR)/output-fde-development" "$(CURDIR)/output-non-fde-development" \
+		"$(ARTIFACTS)" "$(ISO_CACHE)" "$(BUILD_LOGS)"

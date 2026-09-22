@@ -5,6 +5,7 @@
 import fcntl
 import json
 import os
+import signal
 from pathlib import Path
 import subprocess
 import tempfile
@@ -116,6 +117,35 @@ with open(os.environ['TEST_EVENTS'], 'a') as f: f.write(json.dumps(['packages', 
         )
         events = [json.loads(line) for line in self.events.read_text().splitlines()] if self.events.exists() else []
         return result, events
+
+    def test_missing_client_public_key_is_reconstructed(self):
+        state = Path(self.env["NKE_BUILDER_STATE_DIR"]) / "bootstrap"
+        state.mkdir(parents=True)
+        key = state / "client-key"
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
+        key.with_suffix(".pub").unlink()
+        result, _ = self.run_build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(key.with_suffix(".pub").is_file())
+
+    def test_signal_after_launch_reaps_bootstrap(self):
+        script = self.root / "interrupted-bootstrap.sh"
+        script.write_text(SCRIPT.read_text().replace(
+            "\n  vm_pid=$!\n",
+            '\n  printf "%s" "$!" >"$TEST_ROOT/launched-pid"\n  kill -TERM "$$"\n  vm_pid=$!\n',
+        ))
+        result = subprocess.run(["bash", str(script), "--check"], env=self.env,
+                                capture_output=True, text=True, timeout=15)
+        pid = int((self.root / "launched-pid").read_text())
+        try:
+            self.assertEqual(result.returncode, 143, result.stderr)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
+        finally:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
     def test_cached_outputs_skip_bootstrap(self):
         result, events = self.run_build(CACHED="1")

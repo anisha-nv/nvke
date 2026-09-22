@@ -5,6 +5,7 @@
 import json
 import os
 import shutil
+import signal
 from pathlib import Path
 import subprocess
 import tempfile
@@ -17,7 +18,11 @@ class BuildEntrypointTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
+        self.packer_dir = self.root / "os-image/packer"
+        self.packer_dir.mkdir(parents=True)
+        shutil.copy(PACKER_DIR / "Makefile", self.packer_dir)
+        shutil.copytree(PACKER_DIR / "scripts", self.packer_dir / "scripts")
         self.env = os.environ.copy()
         self.env.update(
             PATH=f"{self.root}:{self.env['PATH']}",
@@ -36,6 +41,12 @@ class BuildEntrypointTest(unittest.TestCase):
 import json, os, sys
 from pathlib import Path
 Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
+values = dict(arg.split('=', 1) for arg in sys.argv[1:] if '=' in arg)
+variant = 'non-fde' if 'non-fde' in values['-only'] else 'fde'
+suffix = '-development' if values.get('image_profile') == 'development' else ''
+output = Path(values['output_directory']) / (variant + suffix)
+output.mkdir(parents=True, exist_ok=True)
+(output / 'nke-node.qcow2').touch()
 ''')
 
     def script(self, name, text):
@@ -43,10 +54,14 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
         p.write_text(text)
         p.chmod(0o755)
 
-    def make(self, target, *extra, skip_build_setup=False, directory=PACKER_DIR):
-        args = [os.environ.get("MAKE", "make"), "--no-print-directory", "-C", str(directory)]
+    def make(self, target, *extra, skip_build_setup=False, directory=None):
+        args = [os.environ.get("MAKE", "make"), "--no-print-directory", "-C", str(directory or self.packer_dir)]
         if skip_build_setup:
-            args += ["-o", "check-deps", "-o", "ssh-key", "-o", "init-fde", "-o", "init-non-fde", "-o", "prepare-installer-iso", "-o", "prepare-artifacts"]
+            # Each invocation represents a fresh build in this test-owned project.
+            for output in self.packer_dir.glob("output-*"):
+                shutil.rmtree(output)
+            args += ["-o", "ssh-key", "-o", "init-fde", "-o", "init-non-fde", "-o", "prepare-installer-iso", "-o", "prepare-artifacts", "-o", "prepare-packer-inputs"]
+            target = "_" + target if target.startswith("os-image-") else target
         args += [target, "ARCH=arm64", f"PACKER={self.root / 'packer'}",
                  f"ARTIFACTS_DIR={self.root / 'artifacts'}", f"BUILD_LOGS={self.root / 'logs'}", *extra]
         return subprocess.run(args, env=self.env, text=True, capture_output=True, check=False)
@@ -77,9 +92,9 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 args = json.loads(Path(self.env['PACKER_ARGS']).read_text())
                 self.assertEqual(args[0], "build")
-                self.assertEqual(args[-1], str(PACKER_DIR / f"nke-node-{variant}.pkr.hcl"))
+                self.assertEqual(args[-1], str(self.packer_dir))
                 for value in ("accelerator=tcg", "cpu_model=max,pauth-impdef=on", "ssh_timeout=180m",
-                              "root_fs_label=cloudimg-rootfs", f"artifacts_dir={PACKER_DIR / 'artifacts'}",
+                              "root_fs_label=cloudimg-rootfs", f"material_manifest={self.packer_dir / '.packer-inputs/material-manifest.json'}",
                               f"efi_firmware_code={self.env['OVMF_CODE']}",
                               f"efi_firmware_vars={self.env['OVMF_VARS_TEMPLATE']}"):
                     self.assertIn(value, args)
@@ -146,7 +161,13 @@ Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
         self.script("uname", '#!/bin/sh\ncase "$1" in -m) echo arm64;; -s) echo Darwin;; esac\n')
         self.script("sysctl", '#!/bin/sh\necho 1\n')
         self.script("qemu-system-aarch64", '#!/bin/sh\nif [ "$1" = -accel ]; then printf "hvf\\ntcg\\n"; fi\n')
-        result = self.make("image-native", skip_build_setup=True, directory=PACKER_DIR.parent)
+        recipe = subprocess.run(
+            [os.environ.get("MAKE", "make"), "--dry-run", "-C", str(PACKER_DIR.parent),
+             "image-native", "MAKE=echo"],
+            env=self.env, text=True, capture_output=True, check=True,
+        )
+        self.assertIn("ACCELERATOR=kvm REQUIRE_ACCELERATION=1", recipe.stdout)
+        result = self.make("check-acceleration", "ACCELERATOR=kvm", "REQUIRE_ACCELERATION=1")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("requested accelerator kvm is unavailable", result.stderr)
         self.assertFalse(Path(self.env['PACKER_ARGS']).exists())
@@ -204,8 +225,8 @@ sys.exit(1 if sys.argv[1] in ("build", "run") else 0)
 ''')
         # macOS defers to the entrypoint, which can bootstrap a Linux builder.
         cases = (
-            ("Linux", ["build", "--no-link", f"{PACKER_DIR.parent}#builder-arm64"]),
-            ("Darwin", ["run", f"{PACKER_DIR.parent}#build-packages-arm64", "--", "--check"]),
+            ("Linux", ["build", "--no-link", f"{self.packer_dir.parent}#builder-arm64"]),
+            ("Darwin", ["run", f"{self.packer_dir.parent}#build-packages-arm64", "--", "--check"]),
         )
         for system, expected in cases:
             with self.subTest(system=system):
@@ -244,6 +265,19 @@ class BuildPackagesTest(unittest.TestCase):
     """Drive nix/build-packages.sh with the VM, SSH and rsync transport stubbed out."""
 
     def test_artifact_sync_replaces_debs_and_keeps_unrelated_output(self):
+        self.run_builder()
+
+    @unittest.skipUnless(Path("/bin/bash").exists(), "requires system Bash")
+    def test_system_bash_completes_artifact_sync(self):
+        self.run_builder(shell="/bin/bash")
+
+    def test_missing_client_public_key_is_reconstructed(self):
+        self.run_builder(missing_public_key=True)
+
+    def test_signal_after_launch_reaps_builder(self):
+        self.run_builder(signal_after_launch=True)
+
+    def run_builder(self, shell="bash", missing_public_key=False, signal_after_launch=False):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
@@ -251,6 +285,13 @@ class BuildPackagesTest(unittest.TestCase):
                                             ("guest", "out", "bin", "state", "repo"))
         for d in (guest / "debs", out / "debs", bin_dir, state, repo):
             d.mkdir(parents=True)
+        real_rsync = shutil.which("rsync")
+        if real_rsync is None:
+            self.skipTest("rsync is required for the artifact sync test")
+        if missing_public_key:
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "",
+                            "-f", str(state / "client-key")], check=True)
+            (state / "client-key.pub").unlink()
         (guest / "nke-agent.deb").write_text("agent")
         (guest / "debs" / "Packages").write_text("index")
         (out / "keep-me.txt").write_text("caller's file")
@@ -264,7 +305,7 @@ class BuildPackagesTest(unittest.TestCase):
 
         script("flock", "#!/bin/sh\nexit 0\n")
         script("timeout", '#!/bin/sh\nshift\nexec "$@"\n')
-        script("launcher", '#!/bin/sh\nwhile [ ! -e "$NKE_BUILDER_STATE_DIR/down" ]; '
+        script("launcher", '#!/bin/sh\ntest -s "$NKE_BUILDER_SSH_KEY" || exit 1\nwhile [ ! -e "$NKE_BUILDER_STATE_DIR/down" ]; '
                            'do sleep 0.2; done\n')
         script("nke-builder-ssh", '#!/bin/sh\nset -eu\n'
                                   'test -s "$NKE_BUILDER_HOST_KEY"\n'
@@ -288,18 +329,35 @@ sys.exit(0 if any("root@" in a for a in args)
          else subprocess.call([os.environ["REAL_RSYNC"], *args]))
 ''')
         driver = root / "build-packages"
+        source = (PACKER_DIR.parent / "nix/build-packages.sh").read_text()
+        if signal_after_launch:
+            # Interrupt exactly between starting the launcher and storing $!.
+            source = source.replace("\nvm_pid=$!\n", '\nprintf "%s" "$!" >"$NKE_BUILDER_STATE_DIR/launched-pid"\nkill -TERM "$$"\nvm_pid=$!\n')
         driver.write_text(f"arch=arm64\nlauncher={bin_dir / 'launcher'}\n"
                           f"guest_script={PACKER_DIR.parent / 'nix/build-guest.sh'}\n"
-                          + (PACKER_DIR.parent / "nix/build-packages.sh").read_text())
+                          + source)
         result = subprocess.run(
-            ["bash", str(driver), "--source", str(repo), "--output", str(out)],
+            [shell, str(driver), "--source", str(repo), "--output", str(out)],
             env=os.environ | {"PATH": f"{bin_dir}:{os.environ['PATH']}",
                               "NKE_BUILDER_STATE_DIR": str(state), "VERSION": "agent/v0.0.0",
                               "NKE_BUILDER_BOOT_TIMEOUT": "10",
-                              "REAL_RSYNC": shutil.which("rsync"), "FAKE_GUEST": str(guest)},
+                              "REAL_RSYNC": real_rsync, "FAKE_GUEST": str(guest)},
             stdin=subprocess.DEVNULL, text=True, capture_output=True,
         )
+        if signal_after_launch:
+            pid = int((state / "launched-pid").read_text())
+            try:
+                self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+            finally:
+                try:
+                    os.killpg(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            return
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((state / "client-key.pub").is_file())
         self.assertTrue((out / "keep-me.txt").exists())
         self.assertTrue((out / "nke-agent.deb").exists())
         self.assertTrue((out / "debs/Packages").exists())

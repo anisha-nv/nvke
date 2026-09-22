@@ -1,168 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Non-FDE variant: the same installer+autoinstall+LVM flow as
-# nke-node-fde.pkr.hcl, minus LUKS/Clevis/TPM entirely. It keeps layout and
-# first-boot storage-growth parity with the encrypted image.
-
-packer {
-  required_version = ">= 1.10.0"
-  required_plugins {
-    qemu = {
-      source  = "github.com/hashicorp/qemu"
-      version = "~> 1.1"
-    }
-  }
-}
-
-variable "image_profile" {
-  type        = string
-  default     = "production"
-  description = "production uses the NVIDIA kernel; development uses a generic kernel for local VMs."
-  validation {
-    condition     = contains(["production", "development"], var.image_profile)
-    error_message = "Image profile must be production or development."
-  }
-}
-
-variable "iso_url" {
-  type        = string
-  default     = "https://releases.ubuntu.com/26.04/ubuntu-26.04.1-live-server-amd64.iso"
-  description = "Ubuntu 26.04 Server installer ISO (autoinstall needs the installer, not the cloud image)."
-}
-
-variable "iso_checksum" {
-  type        = string
-  default     = "file:https://releases.ubuntu.com/26.04/SHA256SUMS"
-  description = "Checksum file or hash for iso_url."
-}
-
-variable "disk_size" {
-  type        = string
-  default     = "12G"
-  description = "Build-time disk size, matching the FDE variant for comparability (see its comment about sizing-policy). The real deploy disk is grown to full size on first boot."
-}
-
-variable "root_fs_label" {
-  type        = string
-  default     = "cloudimg-rootfs"
-  description = "Filesystem label applied to the root volume for cloud-image discovery."
-
-  validation {
-    condition     = length(var.root_fs_label) > 0 && length(var.root_fs_label) <= 16
-    error_message = "The root_fs_label value must contain 1 to 16 characters for ext4."
-  }
-}
-
-# See the same variable in nke-node-fde.pkr.hcl.
-variable "accelerator" {
-  type        = string
-  default     = "kvm"
-  description = "QEMU accelerator: kvm (Linux), hvf (macOS development), or tcg (software emulation)."
-}
-
-variable "cpu_model" {
-  type        = string
-  default     = "host"
-  description = "QEMU CPU model. Use 'host' with KVM/HVF, 'max' with TCG emulation."
-}
-
-variable "cpus" {
-  type        = number
-  default     = 4
-  description = "Guest vCPUs. packer/Makefile raises it under TCG emulation."
-}
-
-variable "ssh_timeout" {
-  type        = string
-  default     = "60m"
-  description = "How long Packer waits for SSH after the autoinstall reboot (installer + LVM setup is much slower than booting a prebuilt cloud image)."
-}
-
-# See the same variable in nke-node-fde.pkr.hcl.
-variable "boot_wait" {
-  type        = string
-  default     = "5s"
-  description = "Delay before boot_command starts typing into GRUB. Comfortably under 300s (the patched GRUB timeout) but past however long BIOS+GRUB take to reach the menu; raise under tcg."
-}
-
-variable "artifacts_dir" {
-  type        = string
-  default     = ""
-  description = "Host directory containing prepared build artifacts."
-}
-
-# No default: packer/Makefile resolves the firmware pair through
-# scripts/qemu-arch.sh and always passes both. A default here would let a
-# missing -var silently boot the wrong firmware instead of failing.
-variable "efi_firmware_code" {
-  type        = string
-  description = "UEFI firmware code blob."
-}
-
-variable "efi_firmware_vars" {
-  type        = string
-  description = "UEFI firmware writable variables template."
-}
-
-locals {
-  artifacts = coalesce(var.artifacts_dir, "${path.root}/artifacts/${local.arch}")
-  ssh_dir   = "${path.root}/.ssh"
-  # See the same locals block in nke-node-fde.pkr.hcl: this must stay out of
-  # local.artifacts, which the "file" provisioner uploads to the guest
-  # wholesale — a multi-gigabyte ISO doesn't belong in that upload.
-  iso_cache = "${path.root}/iso-cache"
-  iso_path  = "${local.iso_cache}/${basename(var.iso_url)}.patched.iso"
-  # See the same local in nke-node-fde.pkr.hcl.
-  build_logs = "${path.root}/build-logs"
-  # See the same locals in nke-node-fde.pkr.hcl: derived from iso_url so the
-  # output filename can't drift out of sync with the ISO actually being built.
-  iso_name_parts = regex("ubuntu-([0-9.]+)-live-server-(amd64|arm64)\\.iso$", var.iso_url)
-  ubuntu_version = local.iso_name_parts[0]
-  arch           = local.iso_name_parts[1]
-  # Production names and kernels stay stable. Development images are distinct
-  # and use the generic kernel that can boot under Apple Silicon HVF.
-  kernel_package   = var.image_profile == "development" ? "linux-generic" : (local.arch == "arm64" ? "linux-nvidia-64k" : "linux-nvidia")
-  profile_suffix   = var.image_profile == "development" ? "-development" : ""
-  image_name       = "nke-node-non-fde${local.profile_suffix}-ubuntu-${local.ubuntu_version}-${local.arch}.qcow2"
-  output_directory = "${path.root}/output-non-fde${local.profile_suffix}"
-
-  # QEMU on this host only ever runs the guest arch matching its own binary
-  # (qemu-system-x86_64 vs qemu-system-aarch64) -- there's no single binary
-  # that does both. "virt" is QEMU's generic ARM platform (q35/i440fx are
-  # x86 chipsets, meaningless on arm64). The matching UEFI firmware pair comes
-  # from packer/Makefile via scripts/qemu-arch.sh.
-  qemu_binary  = local.arch == "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64"
-  machine_type = local.arch == "arm64" ? "virt" : "q35"
-
-  # arm64's virt machine has no BIOS-era fixed (cd0) device alias the way
-  # x86 does -- search --file finds the CD-ROM by content instead of
-  # assuming a device name, which node-images' own arm64 LVM variant already
-  # validated works. It also has no ttyS0 (x86's legacy 16550 UART); its
-  # serial console is ttyAMA0 (PL011).
-  boot_command = local.arch == "arm64" ? [
-    "<wait5>",
-    "c<wait>",
-    "search --set=root --file /casper/vmlinuz<enter><wait>",
-    "linux /casper/vmlinuz autoinstall console=ttyAMA0 ds=nocloud-net\\;s=http://{{ .HTTPIP }}:{{ .HTTPPort }}/ ---<enter><wait>",
-    "initrd /casper/initrd<enter><wait>",
-    "boot<enter>"
-    ] : [
-    "<wait3>",
-    "c<wait>",
-    "set root=(cd0)<enter><wait>",
-    "linux /casper/vmlinuz autoinstall console=ttyS0,115200 ds=nocloud-net\\;s=http://{{ .HTTPIP }}:{{ .HTTPPort }}/ ---<enter><wait>",
-    "initrd /casper/initrd<enter><wait>",
-    "boot<enter>"
-  ]
-}
+# Non-FDE image variant. Shared input, architecture, and QEMU configuration is
+# declared once in variables.pkr.hcl and locals.pkr.hcl.
 
 source "qemu" "nke-non-fde" {
-  iso_url = local.iso_path
-  # See the comment on this in nke-node-fde.pkr.hcl.
-  iso_checksum = "none"
+  iso_url = local.installer_iso
+  # Recheck the staged ISO against the digest in the authenticated manifest.
+  iso_checksum = local.installer_checksum
 
-  # Use q35 for amd64 UEFI and virt for arm64; cpu_model selects the CPU.
   qemu_binary    = local.qemu_binary
   machine_type   = local.machine_type
   cpu_model      = var.cpu_model
@@ -170,77 +16,50 @@ source "qemu" "nke-non-fde" {
   disk_interface = "virtio"
   format         = "qcow2"
   accelerator    = var.accelerator
-  # See the same setting in nke-node-fde.pkr.hcl: required for provision.sh's
-  # fstrim to actually shrink the output qcow2.
+  # Propagate guest TRIM so provision.sh's fstrim can release unused QCOW2
+  # clusters; without unmap the guest reports success but the image stays large.
   disk_discard = "unmap"
-  # Build VMs are throwaway: skip the guest's flushes (dpkg fsyncs every file)
-  # instead of paying for each one on the runner disk. Packer halts the guest
-  # cleanly, so the exported qcow2 is complete.
+  # This is a throwaway build VM that Packer shuts down cleanly. Avoid paying
+  # the runner-storage cost of every package-install fsync.
   disk_cache = "unsafe"
 
   efi_firmware_code = var.efi_firmware_code
   efi_firmware_vars = var.efi_firmware_vars
-  efi_boot          = true
+  # The per-build variable store is execution state, not a published artifact.
+  efi_drop_efivars = true
+  efi_boot         = true
+
+  # The source-owned compressor below is the only final QCOW2 conversion.
+  skip_compaction  = true
+  disk_compression = false
 
   http_content = {
-    "/user-data" = templatefile("${path.root}/cidata/autoinstall-lvm.pkrtpl", {
-      ssh_public_key  = file("${local.ssh_dir}/id_ed25519.pub")
+    "/user-data" = templatefile("${local.project_root}/cidata/autoinstall-lvm.pkrtpl", {
+      ssh_public_key  = local.ssh_public_key
       luks_enabled    = false
       luks_passphrase = ""
       kernel_package  = local.kernel_package
-      serial_console  = local.arch == "arm64" ? "ttyAMA0" : "ttyS0"
+      serial_console  = local.serial_console
     })
     "/meta-data" = "instance-id: nke-packer-non-fde\nlocal-hostname: nke-packer-non-fde\n"
   }
 
   boot_wait    = var.boot_wait
   boot_command = local.boot_command
-
-  # See the same block in nke-node-fde.pkr.hcl.
-  # Additive (see the -serial comment below). On arm64:
-  #   -vga none -device virtio-gpu-pci: overrides the builder's default
-  #     -vga, a legacy PCI graphics card that doesn't exist as a concept on
-  #     -machine virt.
-  #   -device qemu-xhci -device usb-kbd: -machine virt has no default
-  #     keyboard controller the way x86's pc/q35 has a built-in PS/2 one.
-  #     Without an explicit guest-side keyboard device, VNC keystrokes have
-  #     nowhere to land -- confirmed by reproducing it twice, with and
-  #     without the GPU device alone: boot_command's typed boot line landed
-  #     in the QEMU monitor instead ("unknown command: linux"), not GRUB, so
-  #     autoinstall never started either time. node-images' own arm64 LVM
-  #     variant (ubuntu-lvm-arm64-ansible.pkr.hcl) hit and fixed the same
-  #     issue the same way.
-  #   -boot strict=off: drops the qemu builder's own default -boot once=d,
-  #     which arm64 doesn't support.
-  qemuargs = concat(
-    local.arch == "arm64" ? [
-      ["-vga", "none"],
-      ["-device", "virtio-gpu-pci"],
-      ["-device", "qemu-xhci"],
-      ["-device", "usb-kbd"],
-      ["-boot", "strict=off"],
-    ] : [],
-    [
-      # Captures the live installer's boot/autoinstall console output, which
-      # the console= kernel param in local.boot_command routes here instead
-      # of the VGA framebuffer. Read on a stuck/failed build; harmless noise
-      # otherwise.
-      ["-serial", "file:${local.build_logs}/non-fde${local.profile_suffix}-install-console.log"],
-    ]
-  )
+  qemuargs = concat(local.architecture_qemuargs, [
+    ["-serial", "file:${local.build_log_directory}/non-fde${local.profile_suffix}-install-console.log"],
+  ])
 
   ssh_username         = "ubuntu"
-  ssh_private_key_file = "${local.ssh_dir}/id_ed25519"
+  ssh_private_key_file = var.ssh_private_key_file
   ssh_timeout          = var.ssh_timeout
-  # The live installer runs its own sshd, so every attempt at ubuntu@ before
-  # the reboot is an authentication failure and each one counts here. Under
-  # tcg the install outlasts 1000 of them (~8 s apiece); ssh_timeout is the
-  # wall clock, this must not be.
+  # The live installer may accept and drop many probes before its final reboot;
+  # do not let those expected attempts exhaust Packer's handshake counter.
   ssh_handshake_attempts = 10000
 
   shutdown_command = "sudo shutdown -P now"
-  vm_name          = local.image_name
-  output_directory = local.output_directory
+  vm_name          = "nke-node.qcow2"
+  output_directory = local.variant_output_directories.non_fde
   headless         = true
   memory           = 8192
   cpus             = var.cpus
@@ -257,34 +76,58 @@ build {
     script           = "${path.root}/scripts/configure-image-kernel.sh"
   }
 
+  provisioner "shell-local" {
+    environment_vars = [
+      "MODE=stage",
+      "MATERIAL_PATH=${local.image_inputs}",
+      "EXPECTED_DIGEST=${local.image_inputs_digest}",
+      "STAGING_DIRECTORY=${local.staged_image_inputs.non_fde}",
+    ]
+    script = "${local.project_root}/scripts/prepare-image-inputs.sh"
+  }
+
+  error-cleanup-provisioner "shell-local" {
+    environment_vars = [
+      "MODE=clean",
+      "STAGING_DIRECTORY=${local.staged_image_inputs.non_fde}",
+    ]
+    script = "${local.project_root}/scripts/prepare-image-inputs.sh"
+  }
+
   provisioner "shell" {
     inline = ["mkdir -p /var/tmp/nke-image/lvm"]
   }
 
   provisioner "file" {
-    source      = "${local.artifacts}/"
+    source      = "${local.staged_image_inputs.non_fde}/"
     destination = "/var/tmp/nke-image/"
+    generated   = true
+  }
+
+  provisioner "shell-local" {
+    environment_vars = [
+      "MODE=clean",
+      "STAGING_DIRECTORY=${local.staged_image_inputs.non_fde}",
+    ]
+    script = "${local.project_root}/scripts/prepare-image-inputs.sh"
   }
 
   provisioner "file" {
-    source      = "${path.root}/../files/lvm/"
+    source      = "${local.project_root}/../files/lvm/"
     destination = "/var/tmp/nke-image/lvm/"
   }
 
   provisioner "shell" {
-    script = "${path.root}/scripts/configure-lvm-growth.sh"
+    script = "${local.project_root}/scripts/configure-lvm-growth.sh"
   }
 
   provisioner "shell" {
     environment_vars = ["ROOT_FS_LABEL=${var.root_fs_label}"]
-    script           = "${path.root}/scripts/provision.sh"
+    script           = "${local.project_root}/scripts/provision.sh"
   }
 
-  # See scripts/compress-qcow2.sh's header: the qemu builder's own
-  # disk_compression option is broken on the pinned plugin version, so
-  # compression happens here instead, after the builder has already written
-  # the uncompressed qcow2 to output_directory.
   post-processor "shell-local" {
-    inline = ["${path.root}/scripts/compress-qcow2.sh ${local.output_directory}/${local.image_name}"]
+    # Keep one source-owned final conversion for Make and direct callers.
+    inline = ["${local.project_root}/scripts/compress-qcow2.sh ${local.variant_output_directories.non_fde}/nke-node.qcow2"]
   }
 }
