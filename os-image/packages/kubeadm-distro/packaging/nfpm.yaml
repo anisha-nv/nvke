@@ -204,4 +204,6 @@ contents:
     expand: true
 
 deb:
+  # Compared with bare zstd, level 3 produced similarly sized packages with
+  # faster compression in local testing. Keep that build-speed tradeoff explicit.
   compression: zstd:3
