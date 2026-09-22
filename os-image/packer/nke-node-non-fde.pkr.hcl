@@ -23,8 +23,8 @@ source "qemu" "nke-non-fde" {
   # the runner-storage cost of every package-install fsync.
   disk_cache = "unsafe"
 
-  efi_firmware_code = local.efi_firmware_code
-  efi_firmware_vars = local.efi_firmware_vars
+  efi_firmware_code = var.efi_firmware_code
+  efi_firmware_vars = var.efi_firmware_vars
   # The per-build variable store is execution state, not a published artifact.
   efi_drop_efivars = true
   efi_boot         = true

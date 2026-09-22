@@ -154,21 +154,23 @@ variable "luks_passphrase" {
   description = "FDE-only bootstrap passphrase used during encrypted image construction; ignored by the non-FDE build."
 }
 
-# Make supplies the discovered pair. Direct Packer callers may keep the
-# architecture-specific distro defaults or override both paths together.
+# Make supplies the discovered pair. Direct Packer callers provide both paths.
 variable "efi_firmware_code" {
   type        = string
-  default     = ""
-  description = "UEFI code path; set together with efi_firmware_vars."
+  description = "UEFI firmware code blob."
 
   validation {
-    condition     = (var.efi_firmware_code == "") == (var.efi_firmware_vars == "")
-    error_message = "efi_firmware_code and efi_firmware_vars must be set together."
+    condition     = length(var.efi_firmware_code) > 0
+    error_message = "The firmware code path must not be empty."
   }
 }
 
 variable "efi_firmware_vars" {
   type        = string
-  default     = ""
-  description = "UEFI variables template; set together with efi_firmware_code."
+  description = "Matching UEFI firmware variables template."
+
+  validation {
+    condition     = length(var.efi_firmware_vars) > 0
+    error_message = "The firmware variables path must not be empty."
+  }
 }

@@ -155,6 +155,8 @@ packer build \
   -var output_directory=/run/nke-image/output \
   -var ssh_private_key_file=/run/nke-image/state/id_ed25519 \
   -var ssh_public_key_file=/run/nke-image/state/id_ed25519.pub \
+  -var efi_firmware_code=/usr/share/OVMF/OVMF_CODE_4M.fd \
+  -var efi_firmware_vars=/usr/share/OVMF/OVMF_VARS_4M.fd \
   .
 ```
 
@@ -162,7 +164,9 @@ The `-only` selector is required. Omitting it is unsupported because Packer
 runs both directory-project builds, including the FDE build, by default.
 
 Both builds require the `material_manifest`, `output_directory`,
-`ssh_private_key_file`, and `ssh_public_key_file` variables. The manifest must
+`ssh_private_key_file`, `ssh_public_key_file`, `efi_firmware_code`, and
+`efi_firmware_vars` variables. Supply a matching firmware pair for the material
+architecture (OVMF for amd64, AAVMF for arm64). The manifest must
 be an absolute file path. It is the authenticated source of the target
 architecture, so there is no separate architecture variable that can drift
 from the staged ISO or package archive. Its sibling `materials/` directory must
