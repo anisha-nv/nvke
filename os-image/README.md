@@ -50,8 +50,9 @@ make -C os-image image-native ARCH=amd64 VARIANT=non-fde
 make -C os-image boot-smoke REQUIRE_ACCELERATION=1
 ```
 
-Use `ARCH=arm64` on an arm64 Linux host, or `VARIANT=fde` for the encrypted
-image. Image baking uses the existing package Make targets.
+Use `ARCH=arm64` for an arm64 image on a matching Linux KVM host (`image-native`
+always needs one, regardless of which host builds the packages), or `VARIANT=fde`
+for the encrypted image. Image baking uses the existing package Make targets.
 `NKE_PACKAGE_BUILDER=auto|host|nix` picks the package builder: `auto` builds on
 a matching Linux host and otherwise uses the
 [NixOS package-builder VM](nix/README.md), which returns the packages to the

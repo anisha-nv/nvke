@@ -33,10 +33,6 @@ in
   system.stateVersion = "26.05";
   networking.hostName = "nke-package-builder";
   networking.useDHCP = true;
-  nix.settings.experimental-features = [
-    "nix-command"
-    "flakes"
-  ];
 
   virtualisation = {
     diskSize = 32768;
@@ -90,30 +86,17 @@ in
   # build-guest.sh points CC at this wrapper, which Go honors for cgo builds.
   environment.systemPackages = with pkgs; [
     ubuntuCC
-    nfpm
     checkUbuntuElf
-    bash
     binutils
     cacert
-    coreutils
-    curl
-    diffutils
     dpkg
     file
-    findutils
-    gcc
     git
     gnumake
-    gnugrep
     gnupg
-    gnused
-    gnutar
     go_1_26
-    gzip
     jq
     openssh
     rsync
-    xz
-    zstd
   ];
 }
