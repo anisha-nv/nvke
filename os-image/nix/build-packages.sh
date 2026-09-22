@@ -27,6 +27,7 @@ exec 9>"$state/build.lock"
 flock -n 9 || { echo "Builder state is already in use: $state" >&2; exit 1; }
 key=$state/client-key
 [[ -e "$key" ]] || ssh-keygen -q -t ed25519 -N '' -f "$key"
+[[ -s "$key.pub" ]] || ssh-keygen -y -f "$key" > "$key.pub"
 export NKE_BUILDER_STATE_DIR=$state NKE_BUILDER_SSH_KEY=$key.pub
 export NKE_BUILDER_HOST_KEY=$state/host-key
 [[ -e "$NKE_BUILDER_HOST_KEY" ]] || ssh-keygen -q -t ed25519 -N '' -f "$NKE_BUILDER_HOST_KEY"
@@ -45,6 +46,8 @@ vm_pid=
 cleanup() {
   status=$?
   trap '' INT TERM  # a second signal must not orphan the VM mid-cleanup
+  # A signal can arrive after launch but before vm_pid=$! records the only job.
+  vm_pid=${vm_pid:-$(jobs -pr)}
   if [[ -n "$vm_pid" ]]; then
     if [[ "$ready" == 1 ]]; then
       timeout 15 nke-builder-ssh root@127.0.0.1 poweroff >/dev/null 2>&1 || true
@@ -90,7 +93,7 @@ version=${VERSION:-$(git -C "$repo" describe --match 'agent/v*' --tags --always 
   printf 'export ARCH=%q ARTIFACTS_DIR=%q REPO_ROOT=%q VERSION=%q\n' \
     "$arch" "$work/artifacts" "$work/src" "${version#agent/}"
   for name in K8S_VERSIONS CALICO_VERSIONS OVN_STREAMS NGC_API_KEY SPIRE_VERSION TPM_PLUGIN_VERSION; do
-    if [[ -v "$name" ]]; then printf 'export %s=%q\n' "$name" "${!name}"; fi
+    if [[ -n "${!name+x}" ]]; then printf 'export %s=%q\n' "$name" "${!name}"; fi
   done
   cat "$guest_script"
 } | nke-builder-ssh root@127.0.0.1 'bash -s'

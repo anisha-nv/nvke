@@ -67,7 +67,7 @@
             )}
             accel=''${ACCELERATOR:-$accel}
             case "$accel" in
-              tcg) cpu=max ;;
+              tcg) cpu=${if arch == "arm64" then "max,pauth-impdef=on" else "max"} ;;
               kvm|hvf) cpu=host ;;
               *) echo "ACCELERATOR must be kvm, hvf, or tcg" >&2; exit 1 ;;
             esac
