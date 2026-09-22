@@ -123,14 +123,18 @@ jobs:
         run: |
           set -euo pipefail
           amd64='{"arch":"amd64","runner":"linux-amd64-gpu-l4-latest-1","timeout_minutes":180,"build_fde":true}'
-          # Scale set on the self-hosted fleet; the name is the size,
-          # 16 vCPU and 64 GiB. linux-arm64-cpu16 has no /dev/kvm.
+          # Scale set on the RelEng EKS fleet: 16 vCPU, 64 GiB and 200 GiB of
+          # ephemeral storage on the same c7g.metal, so /dev/kvm is real
+          # hardware. linux-arm64-cpu16 has no /dev/kvm at all.
           #
-          # Back off the arc-arm64-kvm class #838 moved this to, with
-          # kubeadm-bringup-e2e, whose every run there fails at `virsh define`
-          # for want of EFI firmware. Move both back together: one bake on the
-          # old fleet and one on the new would compare two variables at once.
-          arm64='{"arch":"arm64","runner":"nke-arm64-16c64g","timeout_minutes":180,"build_fde":true}'
+          # Back on arc-arm64-kvm after #863 backed it off. The only thing
+          # that failed there was the udev block above, which cannot work in
+          # a container; this leg never needed libvirt, because Packer drives
+          # its own QEMU. kubeadm-bringup-e2e stays on the self-hosted fleet
+          # until the libvirt side of #863 is solved — it is a different
+          # failure, so moving them separately isolates the variable rather
+          # than confusing it.
+          arm64='{"arch":"arm64","runner":"arc-arm64-kvm","timeout_minutes":180,"build_fde":true}'
           case "${WANT:-both}" in
             amd64) legs="[${amd64}]" ;;
             arm64) legs="[${arm64}]" ;;
@@ -139,8 +143,54 @@ jobs:
           echo "legs=${legs}" >> "$GITHUB_OUTPUT"
           echo "building: ${legs}"
 
+  validate-packer:
+    needs: changes
+    if: github.repository == 'dsx-ai-factory/nke' && needs.changes.outputs.run_e2e == 'true'
+    name: Validate Packer project
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read pinned Packer version
+        id: versions
+        run: |
+          {
+            echo "packer_version=$(make --no-print-directory print-PACKER_VERSION)"
+            echo "packer_sha256=$(make --no-print-directory print-PACKER_SHA256_AMD64)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Packer
+        env:
+          PACKER_VERSION: ${{ steps.versions.outputs.packer_version }}
+          PACKER_SHA256: ${{ steps.versions.outputs.packer_sha256 }}
+        run: |
+          set -euo pipefail
+          zip="packer_${PACKER_VERSION}_linux_amd64.zip"
+          tmp="$(mktemp -d)"
+          curl -fsSL -o "${tmp}/${zip}" \
+            "https://releases.hashicorp.com/packer/${PACKER_VERSION}/${zip}"
+          actual="$(sha256sum "${tmp}/${zip}" | awk '{print $1}')"
+          if [[ "${actual}" != "${PACKER_SHA256}" ]]; then
+            echo "::error::checksum mismatch for ${zip}: got ${actual}, expected ${PACKER_SHA256}"
+            exit 1
+          fi
+          unzip -d "${tmp}" "${tmp}/${zip}" packer
+          sudo install -m 0755 "${tmp}/packer" /usr/local/bin/packer
+          packer version
+
+      - name: Validate the Packer directory project
+        env:
+          PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: make -C os-image/packer validate-packer
+
   publish:
-    needs: matrix
+    needs: [matrix, validate-packer]
     if: github.repository == 'dsx-ai-factory/nke'
     name: Build and verify (${{ matrix.arch }})
     # Both legs need /dev/kvm; the "matrix" job picks them. The arm64 leg
@@ -167,6 +217,12 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      # Crane does not use the runner's Docker daemon mirror configuration.
+      # Route Docker Hub reads through a public pull-through mirror reachable
+      # from both runner architectures; locks and installed names remain
+      # docker.io identities.
+      CNI_DOCKERHUB_MIRROR: mirror.gcr.io
     steps:
       # GitHub's own timeout-minutes has no grace period: it kills the whole
       # job process tree at once, so nothing started beforehand (a
@@ -294,10 +350,25 @@ jobs:
             ls -la /dev
             exit 1
           fi
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --settle --name-match=kvm
+          # The rule only works on a VM runner. A container has no udev:
+          # nothing creates /etc/udev/rules.d for the rule to land in, and no
+          # udevd exists for udevadm to reach, so under set -e this block
+          # ended the job before the bake started (#863).
+          #
+          # The device still has to be widened there. It is bind-mounted from
+          # the host as crw-rw---- root:kvm and the runner user is not in that
+          # group, so without this the open test below fails with EACCES. A
+          # direct chmod is what the rule would have achieved, and is what
+          # kubeadm-bringup-e2e already does on the same hardware.
+          if [[ -d /run/udev ]] && command -v udevadm >/dev/null; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+              | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --settle --name-match=kvm
+          else
+            echo "::notice::no udev on this runner; widening /dev/kvm directly"
+            sudo chmod 666 /dev/kvm
+          fi
           ls -l /dev/kvm
           exec 3<>/dev/kvm
           exec 3>&-
