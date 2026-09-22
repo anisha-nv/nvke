@@ -50,6 +50,22 @@ func matchProvider(cluster db.Cluster, mode db.APIProvider) error {
 	return nil
 }
 
+// validateLaunchLayerSpireAttestationMethod rejects tpm in addition to the
+// generic CAPI attestation check. tpm attestation depends on a TPM
+// endorsement key hash that only CAPNICo's controller reports on
+// NicoMachine.Status; CAPLL reports no such value, so a LaunchLayer node
+// requesting tpm would never receive its SPIRE registration entry and would
+// hang rather than fail.
+func validateLaunchLayerSpireAttestationMethod(method, path string) error {
+	if err := validateCAPISpireAttestationMethod(method); err != nil {
+		return fmt.Errorf("%s.spireAttestationMethod must be tpm or joinToken", path)
+	}
+	if method == string(db.SpireAttestationMethodTPM) {
+		return fmt.Errorf("%s.spireAttestationMethod: tpm is not supported for launchlayer, only joinToken", path)
+	}
+	return nil
+}
+
 func validateLaunchLayerNodeProvider(p *api.LaunchLayerNodePoolProvider, path string) error {
 	if p == nil {
 		return fmt.Errorf("%s is required", path)
@@ -57,8 +73,8 @@ func validateLaunchLayerNodeProvider(p *api.LaunchLayerNodePoolProvider, path st
 	if err := validation.LaunchLayerMachineSpec(launchLayerMachineSpec(p.Machine), path+".machine"); err != nil {
 		return err
 	}
-	if err := validateCAPISpireAttestationMethod(string(p.SpireAttestationMethod)); err != nil {
-		return fmt.Errorf("%s.spireAttestationMethod must be tpm or joinToken", path)
+	if err := validateLaunchLayerSpireAttestationMethod(string(p.SpireAttestationMethod), path); err != nil {
+		return err
 	}
 	if err := validateCloudInitFiles(sliceValue(p.BootstrapFiles)); err != nil {
 		return fmt.Errorf("%s.bootstrapFiles contains invalid or controller-managed file paths", path)
@@ -75,8 +91,10 @@ func validateLaunchLayerNodePatch(p *api.LaunchLayerNodePoolProviderUpdate, path
 			return err
 		}
 	}
-	if p.SpireAttestationMethod != nil && validateCAPISpireAttestationMethod(string(*p.SpireAttestationMethod)) != nil {
-		return fmt.Errorf("%s.spireAttestationMethod must be tpm or joinToken", path)
+	if p.SpireAttestationMethod != nil {
+		if err := validateLaunchLayerSpireAttestationMethod(string(*p.SpireAttestationMethod), path); err != nil {
+			return err
+		}
 	}
 	if err := validateCloudInitFiles(sliceValue(p.BootstrapFiles)); err != nil {
 		return fmt.Errorf("%s.bootstrapFiles contains invalid or controller-managed file paths", path)

@@ -26,7 +26,6 @@ import (
 	"github.com/dsx-ai-factory/nke/controller/internal/constants"
 	"github.com/dsx-ai-factory/nke/controller/internal/db"
 	"github.com/dsx-ai-factory/nke/controller/internal/nodes"
-	"github.com/dsx-ai-factory/nke/controller/internal/spiffe"
 )
 
 type CreateCAPIInfraMachineForNodeInput struct {
@@ -185,7 +184,7 @@ func (a *Activities) createCAPISpireJoinToken(ctx context.Context, createCtx *ca
 	// which we can safely pass around without exposing the join token.
 	spireAgentAlternateIDPath := constants.JoinTokenAlternateSpireAgentPath + createCtx.node.ID.String()
 	spireAgentAlternateID := fmt.Sprintf("spiffe://%s%s", a.trustDomain, spireAgentAlternateIDPath)
-	spireJoinToken, err := spiffe.CreateJoinToken(ctx, a.cfg, spireAgentAlternateID)
+	spireJoinToken, err := a.createJoinToken(ctx, a.cfg, spireAgentAlternateID)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create SPIRE server join token: %w", err)
 	}

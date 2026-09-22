@@ -47,7 +47,10 @@ func TestTypedLaunchLayerHTTPPersistenceThroughProductionRendering(t *testing.T)
 		t.Run(fmt.Sprintf("controller=%t", controllerMode), func(t *testing.T) {
 			body := launchLayerCreateRequest(controllerMode, false)
 			customize := func(p *api.LaunchLayerNodePoolProvider) {
-				p.SpireAttestationMethod = "tpm"
+				// spireAttestationMethod is not varied here: joinToken is the
+				// only value LaunchLayer accepts (tpm is rejected, see
+				// validateLaunchLayerSpireAttestationMethod), so there is no
+				// second legal value left to prove an override takes effect.
 				p.BootstrapFiles = &[]api.CloudInitFile{{Path: "/etc/example", Content: "example-content"}}
 				p.PreKubeadmCommands = &[]string{"echo example-command"}
 			}
@@ -104,7 +107,19 @@ func TestTypedLaunchLayerHTTPPersistenceThroughProductionRendering(t *testing.T)
 					queries.On("GetNode", mock.Anything, node.ID).Return(node, nil)
 					queries.On("GetCluster", mock.Anything, cluster.ID).Return(cluster, nil)
 					applied := &typedLaunchLayerApplyRecorder{}
-					activity := activities.NewActivities(config.Config{SpiffeEnabled: false}, queries, applied, nil, "", nil)
+					// joinToken is the only attestation method LaunchLayer accepts, and
+					// minting a real one needs a live SPIRE server. SpiffeEnabled is on
+					// so the production code path renders bootstrap files at all;
+					// WithTrustDomainBundleGetter/WithJoinTokenCreator stand in for the
+					// live SPIRE calls the same way an in-package test would set those
+					// unexported fields directly.
+					activity := activities.NewActivities(config.Config{SpiffeEnabled: true}, queries, applied, nil, "example.trust.domain", nil).
+						WithTrustDomainBundleGetter(func(context.Context, config.Config) (string, string, error) {
+							return "example.trust.domain", "example-trust-bundle", nil
+						}).
+						WithJoinTokenCreator(func(context.Context, config.Config, string) (string, error) {
+							return "example-join-token", nil
+						})
 					require.NoError(t, activity.CreateCAPIInfraMachineForNode(t.Context(), activities.CreateCAPIInfraMachineForNodeInput{NodeID: node.ID}))
 					require.Len(t, applied.objects, 3)
 					machine := applied.objects[0].(*unstructured.Unstructured)
