@@ -114,7 +114,7 @@ nke_qemu_env amd64
 [[ "${TPM_DEVICE}" == tpm-tis ]]
 
 uname() { case "$1" in -m) printf '%s\n' x86_64 ;; -s) printf '%s\n' Linux ;; esac; }
-OVMF_CODE=/firmware/code OVMF_VARS_TEMPLATE=/firmware/vars
+OVMF_CODE="${workdir}/firmware/edk2-aarch64-code.fd" OVMF_VARS_TEMPLATE="${workdir}/firmware/edk2-arm-vars.fd"
 nke_qemu_env arm64
 [[ "${ACCEL_ARGS[*]}" == '-accel tcg' ]]
 [[ "${NKE_ACCELERATED}" == 0 ]]
@@ -142,6 +142,15 @@ fi
     exit 1
   fi
   grep -Fq 'no UEFI firmware found' "${workdir}/missing-firmware.log"
+)
+# Explicit overrides must name files that exist.
+(
+  OVMF_CODE=/nonexistent/code.fd
+  if nke_qemu_env arm64 >"${workdir}/missing-override.log" 2>&1; then
+    echo 'missing firmware override unexpectedly accepted' >&2
+    exit 1
+  fi
+  grep -Fq 'no UEFI firmware found' "${workdir}/missing-override.log"
 )
 
 uname() { case "$1" in -m) printf '%s\n' ppc64le ;; -s) printf '%s\n' Linux ;; esac; }

@@ -9,9 +9,7 @@ Nix prepares a Linux VM with the tools needed to build NKE's Debian packages.
 Use this on Apple Silicon macOS or when your Linux host differs from the target
 architecture. Matching Linux hosts use the existing direct package build by default.
 
-## Build and run
-
-### 1. Install Nix
+## Install Nix
 
 Follow the [official Nix installation instructions](https://nixos.org/download/)
 for your OS. For macOS or Linux with systemd, the multi-user installer is:
@@ -39,7 +37,7 @@ On a nix-darwin Mac, `nix.linux-builder` is one way to get a matching
 aarch64-linux builder without a separate machine. QEMU's software emulation
 applies when running the prepared VM.
 
-### 2. Build packages
+## Build packages
 
 Run from the repository root:
 
@@ -53,56 +51,18 @@ directory, and shuts down the VM. The first build takes longer; later builds
 reuse a persistent disk containing the Nix store and compiler/download caches.
 The builder copies top-level artifacts, replacing same-named files such as
 `nke-agent.deb`, and synchronizes `debs/` with deletion of stale packages.
-Unrelated files outside `debs/` are preserved.
-
-To check the prerequisites without building anything:
-
-```bash
-make -C os-image/packer check-deps ARCH=arm64
-```
-
-In Nix mode this realizes the VM runner (`nix build --no-link
-./os-image#builder-<arch>`), which may download the guest closure. Without a
-matching Linux builder and without a cache hit it fails right there, with Nix's
-own error, rather than part-way through an image bake.
-
-### 3. Build the OS image
-
-With the [Packer and image prerequisites](../README.md#build-the-os-image) installed:
-
-```bash
-make -C os-image image ARCH=arm64 VARIANT=non-fde
-```
-
-This command handles package building automatically; you do not need to run
-step 2 first. On a matching Linux host, add `NKE_PACKAGE_BUILDER=nix` to use
-the VM explicitly. Use `VARIANT=fde` for an encrypted image.
-
-## Where Nix fits
-
-```mermaid
-flowchart LR
-    source[Source checkout] --> builder[NixOS package-builder VM]
-    builder --> artifacts[Packages on host]
-    artifacts --> packer[Ubuntu Packer VM]
-    packer --> image[Final NKE image]
-```
-
-Nix supplies the builder's tools and starts small shell applications to manage
-the VM. The existing Make, Bash, and nfpm package recipes still build the Debian
-packages. Packer then installs them into a separate Ubuntu VM to produce the
-final image. Neither VM runs another VM.
+Unrelated files outside `debs/` are preserved. See the [module README](../README.md)
+for how this fits into an OS image build and for `check-deps`.
 
 `os-image/flake.nix` is the Nix configuration; `flake.lock` pins its dependencies.
-The builder uses hardware acceleration where available and falls back to QEMU
-software emulation. Its compiler produces binaries compatible with Ubuntu.
 
 The persistent disk grows as needed up to 32 GiB and is reused per architecture.
 Set `NKE_BUILDER_STATE_DIR` to choose where the disk, keys, and logs live;
-the default is `~/.cache/nke/builders/<arch>` (or under `XDG_CACHE_HOME`).
-The guest's SSH port is forwarded on `127.0.0.1:5422` for arm64 and `5423` for
-amd64, clear of the ports `run-vm.sh`, `boot-smoke.sh` and Packer use. Set
-`SSH_PORT` to run another instance.
+the default is `~/.cache/nke/builders/<arch>` (or under `XDG_CACHE_HOME`). Remove
+that directory to reset a builder back to a fresh disk. The guest's SSH port is
+forwarded on `127.0.0.1:5422` for arm64 and `5423` for amd64, clear of the ports
+`run-vm.sh`, `boot-smoke.sh` and Packer use. Set `NKE_BUILDER_SSH_PORT` to run
+another instance.
 
 The runner generates a private SSH host key in that state directory and pins
 its public key before connecting. QEMU supplies the private key to the guest

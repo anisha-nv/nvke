@@ -70,7 +70,9 @@ repository's `bin/`, and `make version-check` runs it with `--version`.
 - Keep the generic image target's TCG development path. `image-native` requires
   usable native KVM; CI uses matching Linux KVM runners for both architectures.
   Package builds execute Linux kubeadm; matching Linux hosts build locally,
-  while other hosts use the separate NixOS package-builder VM. The shared QEMU helper also supports HVF for boot tools on macOS.
+  while Linux and Apple Silicon macOS hosts otherwise use the separate NixOS
+  package-builder VM (`package-builder.sh` rejects Intel macOS). The shared
+  QEMU helper also supports HVF for boot tools on macOS.
 - Keep image profiles explicit: Make defaults to development on macOS and
   production on Linux; direct Packer defaults to production. Development uses
   `linux-generic` with distinct output names and `/etc/nke/image-profile`.
