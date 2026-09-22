@@ -256,6 +256,10 @@ fi
             tools / f"qemu-system-{host_arch}",
             '#!/bin/sh\nif [ "$1" = -accel ]; then echo tcg; fi\n',
         )
+        firmware_code = tools / "code.fd"
+        firmware_vars = tools / "vars.fd"
+        firmware_code.touch()
+        firmware_vars.touch()
         if preexisting_output:
             variant = "fde" if target == "os-image-fde" else "non-fde"
             output = workspace / f"output-{variant}"
@@ -285,8 +289,8 @@ fi
             f"SOURCE_ROOT={source}",
             f"ARCH={arch}",
             "ACCELERATOR=tcg",
-            "OVMF_CODE=/firmware/code.fd",
-            "OVMF_VARS_TEMPLATE=/firmware/vars.fd",
+            f"OVMF_CODE={firmware_code}",
+            f"OVMF_VARS_TEMPLATE={firmware_vars}",
             "UBUNTU_VERSION=not-the-iso-version",
         ]
         if not material_inputs_from_environment:
