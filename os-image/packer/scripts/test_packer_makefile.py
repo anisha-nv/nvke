@@ -1103,7 +1103,7 @@ exec "${REAL_MV:?}" "$@"
             r"architecture\s*=\s*local\.installer_record\.architecture",
         )
 
-        self.assertRegex(project, r'required_version\s*=\s*"= 1\.14\.2"')
+        self.assertRegex(project, r'required_version\s*=\s*"= 1\.15\.4"')
         self.assertRegex(project, r'version\s*=\s*"= 1\.1\.6"')
         self.assertIn(
             "abspath(var.output_directory) == var.output_directory", project
