@@ -38,6 +38,9 @@ class BootstrapTest(unittest.TestCase):
             "NKE_BUILDER_BOOT_TIMEOUT": "5",
         }
         self.script("nix-store", '#!/bin/sh\nprintf "%s\\n" "$2"\n')
+        # SSH is mocked and returns immediately; exercise shutdown ordering
+        # without depending on the host's GNU coreutils installation.
+        self.script("timeout", '#!/bin/sh\nshift\nexec "$@"\n')
         self.script("flock", '''#!/usr/bin/env python3
 import fcntl, sys
 fcntl.flock(int(sys.argv[-1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
