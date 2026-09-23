@@ -1,0 +1,560 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: launchlayerclusters.infrastructure.cluster.x-k8s.io
+spec:
+  group: infrastructure.cluster.x-k8s.io
+  names:
+    categories:
+    - cluster-api
+    kind: LaunchLayerCluster
+    listKind: LaunchLayerClusterList
+    plural: launchlayerclusters
+    shortNames:
+    - llc
+    singular: launchlayercluster
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: Current cluster infrastructure availability
+      jsonPath: .status.conditions[?(@.type=='Available')].status
+      name: Available
+      type: string
+    - description: Cluster infrastructure reconciled
+      jsonPath: .status.conditions[?(@.type=='Synced')].status
+      name: Synced
+      type: string
+    - description: Initial cluster infrastructure provisioning completed
+      jsonPath: .status.initialization.provisioned
+      name: Provisioned
+      type: string
+    - description: LaunchLayer VPC
+      jsonPath: .status.vpc.id
+      name: VPC
+      type: string
+    - description: Observed VPC status
+      jsonPath: .status.vpc.status
+      name: VPCStatus
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: LaunchLayerCluster is the Schema for the launchlayerclusters
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: LaunchLayerClusterSpec defines the desired state of LaunchLayerCluster.
+            properties:
+              cloudProviderEnabled:
+                description: |-
+                  CloudProviderEnabled reports whether a cloud controller manager runs in
+                  this cluster. Setting Node.spec.providerID is a CCM's job, and LaunchLayer
+                  has none, so CAPLL does it — but a deployment that does run one would have
+                  the two racing to write the same immutable field. Leave it unset or false
+                  and CAPLL writes the provider ID; set it true and the CCM owns it and
+                  CAPLL stays out.
+
+                  Immutable, because Node.spec.providerID is: ownership cannot change hands
+                  once a Node is bound.
+                type: boolean
+              orgID:
+                description: |-
+                  OrgID is the LaunchLayer organization in which CAPLL creates a
+                  bare-metal VPC when VPCID is omitted.
+                minLength: 1
+                type: string
+              owner:
+                description: |-
+                  Owner identifies who CAPLL provisions on behalf of. The Compute API
+                  requires an owner on every request and uses it for VPC ownership and
+                  tenant quota, but a controller is not a person, so the identity is
+                  configured here rather than derived. The organisation is not part of it:
+                  that comes from the VPC, which the API validates the owner against.
+                properties:
+                  userID:
+                    description: UserID is the LaunchLayer user ID.
+                    maxLength: 253
+                    type: string
+                  username:
+                    description: Username is the LaunchLayer username.
+                    maxLength: 253
+                    type: string
+                type: object
+              securityGroups:
+                description: |-
+                  SecurityGroups are groups CAPLL creates in this cluster's organization and
+                  deletes with it, attached by a LaunchLayerMachine through
+                  spec.securityGroupRefs. They are declared per cluster because one group
+                  serves every machine referencing it and its lifetime is the cluster's.
+
+                  Rules are supplied here, never defaulted. A provider that owns the load
+                  balancer and installs Kubernetes knows which ports a role needs and can
+                  ship a rule set per role; CAPLL does neither, so choosing one would be
+                  guessing at one deployment's policy.
+                items:
+                  description: |-
+                    ManagedSecurityGroup is a security group CAPLL creates with the cluster and
+                    deletes with it.
+                  properties:
+                    description:
+                      description: Description is carried through to LaunchLayer.
+                      maxLength: 255
+                      type: string
+                    name:
+                      description: |-
+                        Name identifies the group within this cluster and is what a
+                        LaunchLayerMachine refers to. It is not the name LaunchLayer sees: a
+                        bare-metal group is scoped to the organization rather than to the VPC, so
+                        the name sent is derived per cluster to keep two clusters apart.
+                      maxLength: 24
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    rules:
+                      description: |-
+                        Rules is the whole desired rule set: editing it replaces what LaunchLayer
+                        holds rather than adding to it. A direction with no rules denies it.
+                      properties:
+                        egress:
+                          description: Egress rules match on Destination.
+                          items:
+                            description: SecurityGroupRule permits one class of traffic.
+                            properties:
+                              destination:
+                                description: Destination is where egress traffic goes.
+                                items:
+                                  description: SecurityGroupTarget is one end of a
+                                    rule.
+                                  properties:
+                                    except:
+                                      description: Except carves ranges back out of
+                                        Value.
+                                      items:
+                                        maxLength: 100
+                                        type: string
+                                      maxItems: 8
+                                      type: array
+                                    type:
+                                      description: |-
+                                        Type selects how Value is read. Only CIDR is accepted: naming another
+                                        group is reserved for virtualized groups, and CAPLL creates none.
+                                      enum:
+                                      - CIDR
+                                      type: string
+                                    value:
+                                      description: Value is the CIDR block this end
+                                        of the rule matches.
+                                      maxLength: 100
+                                      type: string
+                                      x-kubernetes-validations:
+                                      - message: value must be a CIDR block
+                                        rule: isCIDR(self)
+                                  required:
+                                  - type
+                                  - value
+                                  type: object
+                                maxItems: 16
+                                type: array
+                              name:
+                                description: Name labels the rule for an operator
+                                  reading it back.
+                                maxLength: 63
+                                type: string
+                              protocolConfig:
+                                description: ProtocolConfig narrows the rule to one
+                                  protocol. Omitted matches any.
+                                properties:
+                                  ports:
+                                    description: |-
+                                      Ports is a comma-separated list of ports and ranges, "80,443,1000-1010".
+                                      Only tcp and udp read it.
+                                    maxLength: 100
+                                    type: string
+                                  protocol:
+                                    enum:
+                                    - tcp
+                                    - udp
+                                    - icmp
+                                    - any
+                                    type: string
+                                required:
+                                - protocol
+                                type: object
+                                x-kubernetes-validations:
+                                - message: tcp and udp require ports; icmp and any
+                                    must not set them
+                                  rule: '(self.protocol == ''tcp'' || self.protocol
+                                    == ''udp'') ? (has(self.ports) && size(self.ports)
+                                    > 0) : (!has(self.ports) || size(self.ports) ==
+                                    0)'
+                              source:
+                                description: Source is where ingress traffic comes
+                                  from.
+                                items:
+                                  description: SecurityGroupTarget is one end of a
+                                    rule.
+                                  properties:
+                                    except:
+                                      description: Except carves ranges back out of
+                                        Value.
+                                      items:
+                                        maxLength: 100
+                                        type: string
+                                      maxItems: 8
+                                      type: array
+                                    type:
+                                      description: |-
+                                        Type selects how Value is read. Only CIDR is accepted: naming another
+                                        group is reserved for virtualized groups, and CAPLL creates none.
+                                      enum:
+                                      - CIDR
+                                      type: string
+                                    value:
+                                      description: Value is the CIDR block this end
+                                        of the rule matches.
+                                      maxLength: 100
+                                      type: string
+                                      x-kubernetes-validations:
+                                      - message: value must be a CIDR block
+                                        rule: isCIDR(self)
+                                  required:
+                                  - type
+                                  - value
+                                  type: object
+                                maxItems: 16
+                                type: array
+                            type: object
+                          maxItems: 32
+                          type: array
+                        ingress:
+                          description: Ingress rules match on Source.
+                          items:
+                            description: SecurityGroupRule permits one class of traffic.
+                            properties:
+                              destination:
+                                description: Destination is where egress traffic goes.
+                                items:
+                                  description: SecurityGroupTarget is one end of a
+                                    rule.
+                                  properties:
+                                    except:
+                                      description: Except carves ranges back out of
+                                        Value.
+                                      items:
+                                        maxLength: 100
+                                        type: string
+                                      maxItems: 8
+                                      type: array
+                                    type:
+                                      description: |-
+                                        Type selects how Value is read. Only CIDR is accepted: naming another
+                                        group is reserved for virtualized groups, and CAPLL creates none.
+                                      enum:
+                                      - CIDR
+                                      type: string
+                                    value:
+                                      description: Value is the CIDR block this end
+                                        of the rule matches.
+                                      maxLength: 100
+                                      type: string
+                                      x-kubernetes-validations:
+                                      - message: value must be a CIDR block
+                                        rule: isCIDR(self)
+                                  required:
+                                  - type
+                                  - value
+                                  type: object
+                                maxItems: 16
+                                type: array
+                              name:
+                                description: Name labels the rule for an operator
+                                  reading it back.
+                                maxLength: 63
+                                type: string
+                              protocolConfig:
+                                description: ProtocolConfig narrows the rule to one
+                                  protocol. Omitted matches any.
+                                properties:
+                                  ports:
+                                    description: |-
+                                      Ports is a comma-separated list of ports and ranges, "80,443,1000-1010".
+                                      Only tcp and udp read it.
+                                    maxLength: 100
+                                    type: string
+                                  protocol:
+                                    enum:
+                                    - tcp
+                                    - udp
+                                    - icmp
+                                    - any
+                                    type: string
+                                required:
+                                - protocol
+                                type: object
+                                x-kubernetes-validations:
+                                - message: tcp and udp require ports; icmp and any
+                                    must not set them
+                                  rule: '(self.protocol == ''tcp'' || self.protocol
+                                    == ''udp'') ? (has(self.ports) && size(self.ports)
+                                    > 0) : (!has(self.ports) || size(self.ports) ==
+                                    0)'
+                              source:
+                                description: Source is where ingress traffic comes
+                                  from.
+                                items:
+                                  description: SecurityGroupTarget is one end of a
+                                    rule.
+                                  properties:
+                                    except:
+                                      description: Except carves ranges back out of
+                                        Value.
+                                      items:
+                                        maxLength: 100
+                                        type: string
+                                      maxItems: 8
+                                      type: array
+                                    type:
+                                      description: |-
+                                        Type selects how Value is read. Only CIDR is accepted: naming another
+                                        group is reserved for virtualized groups, and CAPLL creates none.
+                                      enum:
+                                      - CIDR
+                                      type: string
+                                    value:
+                                      description: Value is the CIDR block this end
+                                        of the rule matches.
+                                      maxLength: 100
+                                      type: string
+                                      x-kubernetes-validations:
+                                      - message: value must be a CIDR block
+                                        rule: isCIDR(self)
+                                  required:
+                                  - type
+                                  - value
+                                  type: object
+                                maxItems: 16
+                                type: array
+                            type: object
+                          maxItems: 32
+                          type: array
+                      type: object
+                    stateless:
+                      description: Stateless drops connection tracking, so a reply
+                        needs a rule of its own.
+                      type: boolean
+                  required:
+                  - name
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              siteID:
+                description: SiteID names the LaunchLayer datahall this cluster's
+                  machines come from.
+                type: string
+              vpcID:
+                description: |-
+                  VPCID is an existing LaunchLayer VPC that backs this cluster. CAPLL
+                  observes it but does not manage its lifecycle.
+                minLength: 1
+                type: string
+            type: object
+            x-kubernetes-validations:
+            - message: exactly one of vpcID or orgID must be set
+              rule: has(self.vpcID) != has(self.orgID)
+            - message: vpcID is immutable
+              rule: has(self.vpcID) == has(oldSelf.vpcID) && (!has(self.vpcID) ||
+                self.vpcID == oldSelf.vpcID)
+            - message: orgID is immutable
+              rule: has(self.orgID) == has(oldSelf.orgID) && (!has(self.orgID) ||
+                self.orgID == oldSelf.orgID)
+            - message: cloudProviderEnabled is immutable
+              rule: has(self.cloudProviderEnabled) == has(oldSelf.cloudProviderEnabled)
+                && (!has(self.cloudProviderEnabled) || self.cloudProviderEnabled ==
+                oldSelf.cloudProviderEnabled)
+          status:
+            description: LaunchLayerClusterStatus defines the observed state of LaunchLayerCluster.
+            properties:
+              conditions:
+                description: Conditions describes the current cluster state.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                maxItems: 32
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              initialization:
+                description: Initialization provides observations of initial VPC validation.
+                minProperties: 1
+                properties:
+                  provisioned:
+                    description: Provisioned is true once the VPC has been validated.
+                    type: boolean
+                type: object
+              securityGroups:
+                description: SecurityGroups records the managed groups, one per spec
+                  entry.
+                items:
+                  description: |-
+                    SecurityGroupStatus records one managed security group. Its ID is recorded as
+                    soon as creation returns; status follows from a later read.
+                  properties:
+                    appliedRules:
+                      description: |-
+                        AppliedRules fingerprints the definition LaunchLayer last accepted, so an
+                        edited group is pushed once and an unchanged one is left alone.
+                      type: string
+                    id:
+                      description: ID is the LaunchLayer identifier machines attach
+                        and CAPLL deletes.
+                      type: string
+                    name:
+                      description: Name is the spec.securityGroups entry this backs.
+                      type: string
+                    status:
+                      description: Status is the lifecycle state reported by the security
+                        group read.
+                      enum:
+                      - PENDING
+                      - READY
+                      - ERROR
+                      - FAILED
+                      - DELETING
+                      - DELETED
+                      type: string
+                  required:
+                  - id
+                  - name
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              siteID:
+                description: SiteID is the site resolved for this cluster.
+                type: string
+              vpc:
+                description: |-
+                  VPC records the network resolved from the spec. For a managed VPC, its ID
+                  can be present before status and owner are populated by a validated read.
+                properties:
+                  id:
+                    description: |-
+                      ID is the LaunchLayer identifier used to recover the VPC and, once its
+                      identity is validated, in Compute requests.
+                    type: string
+                  orgID:
+                    description: |-
+                      OrgID is the owning organisation reported by the VPC read.
+                      Compute requests carry it so the API can validate VPC ownership.
+                    type: string
+                  status:
+                    description: Status is the lifecycle state reported by the VPC
+                      read.
+                    enum:
+                    - PENDING
+                    - READY
+                    - ERROR
+                    - FAILED
+                    - DELETING
+                    - DELETED
+                    type: string
+                required:
+                - id
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: spec.siteID is immutable after a VPC is bound
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.vpc) || (has(self.spec.siteID)
+            == has(oldSelf.spec.siteID) && (!has(self.spec.siteID) || self.spec.siteID
+            == oldSelf.spec.siteID))'
+        - message: spec.owner is immutable after a VPC is bound
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.vpc) || (has(self.spec.owner)
+            == has(oldSelf.spec.owner) && (!has(self.spec.owner) || self.spec.owner
+            == oldSelf.spec.owner))'
+    served: true
+    storage: true
+    subresources:
+      status: {}
