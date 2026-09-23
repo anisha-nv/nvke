@@ -35,6 +35,13 @@ const (
 	DiskSelectionStrategyCreateSmallest DiskSelectionStrategyCreate = "smallest"
 )
 
+// Defines values for LaunchLayerMachineFulfillmentStrategy.
+const (
+	LaunchLayerMachineFulfillmentStrategyALLORNOTHING    LaunchLayerMachineFulfillmentStrategy = "ALL_OR_NOTHING"
+	LaunchLayerMachineFulfillmentStrategyBESTEFFORT      LaunchLayerMachineFulfillmentStrategy = "BEST_EFFORT"
+	LaunchLayerMachineFulfillmentStrategyWAITFORRESOURCE LaunchLayerMachineFulfillmentStrategy = "WAIT_FOR_RESOURCE"
+)
+
 // Defines values for UpdateInProgressType.
 const (
 	UpdateInProgressTypeCpNodesRecycling UpdateInProgressType = "cp_nodes_recycling"
@@ -87,20 +94,25 @@ type Cluster struct {
 	// TeleportEnabled Whether Teleport SSH enrollment is enabled for nodes in this cluster.
 	TeleportEnabled *bool `json:"teleportEnabled,omitempty"`
 
+	// CreatedAt When the cluster was created
+	CreatedAt time.Time `json:"createdAt"`
+
 	// Conditions Conditions representing various aspects of the Cluster's state
 	Conditions ClusterConditions `json:"conditions"`
 
 	// ControlPlaneConfig Cluster-level control plane configuration.
 	ControlPlaneConfig *ControlPlaneConfig `json:"controlPlaneConfig,omitempty"`
 
-	// CreatedAt When the cluster was created
-	CreatedAt time.Time `json:"createdAt"`
-
 	// Infra CAPI infrastructure fields for a cluster: the caller supplies the CAPI manifests
 	// directly. Not to be used merely because a cluster is provisioned through CAPI —
 	// `nico` clusters may be too. Mutually exclusive with `nico`.
-	Infra   *InfraClusterProvider `json:"infra,omitempty"`
-	Network ClusterNetwork        `json:"network"`
+	Infra *InfraClusterProvider `json:"infra,omitempty"`
+
+	// Launchlayer Immutable LaunchLayer cluster intent. Select an existing VPC with vpcID,
+	// or request a CAPLL-managed VPC with orgID, never both. Credentials and
+	// backend authorization are deployment/reconciliation concerns.
+	Launchlayer *LaunchLayerClusterProvider `json:"launchlayer,omitempty"`
+	Network     ClusterNetwork              `json:"network"`
 
 	// Nico Nico identity fields for a cluster. Mutually exclusive with `infra`.
 	Nico *NicoClusterProvider `json:"nico,omitempty"`
@@ -183,6 +195,11 @@ type ControlPlaneConfig struct {
 
 	// Infra Infra provider fields for cluster-level control plane configuration. Mutually exclusive with `nico`.
 	Infra *InfraControlPlaneProvider `json:"infra,omitempty"`
+
+	// Launchlayer Read-only control-plane snapshot. All stored preferences are shown; the
+	// current controller-mode node context selects the first, not a fallback.
+	// Write one machine through controlPlaneConfig.launchlayer.machine.
+	Launchlayer *LaunchLayerControlPlaneProvider `json:"launchlayer,omitempty"`
 
 	// MaxSurge Cluster-level surge capacity for control plane nodes during upgrades.
 	MaxSurge *int `json:"maxSurge,omitempty"`
@@ -322,14 +339,15 @@ type ControlPlaneStatus struct {
 }
 
 // CreateClusterControlPlaneConfig Writable cluster-level control plane configuration supplied at cluster creation.
-// Exactly one provider payload is required: supply either `nico` or `infra`.
-// A request carrying both, or neither, is rejected with 400.
+// Exactly one provider payload is required: supply one of `nico`, `launchlayer`, or `infra`.
+// A request carrying multiple payloads, or none, is rejected with 400.
 type CreateClusterControlPlaneConfig struct {
 	// DesiredCount The desired number of cluster-level control plane nodes. Must be at least 1.
 	DesiredCount int `json:"desiredCount"`
 
 	// Infra Infra provider fields for cluster-level control plane configuration. Mutually exclusive with `nico`.
-	Infra *InfraControlPlaneProvider `json:"infra,omitempty"`
+	Infra       *InfraControlPlaneProvider             `json:"infra,omitempty"`
+	Launchlayer *LaunchLayerControlPlaneProviderCreate `json:"launchlayer,omitempty"`
 
 	// MaxSurge Cluster-level surge capacity for control plane nodes during upgrades (max 1).
 	MaxSurge *int `json:"maxSurge,omitempty"`
@@ -350,8 +368,8 @@ type CreateClusterControlPlaneConfig struct {
 	TeleportEnabled *bool `json:"teleportEnabled,omitempty"`
 }
 
-// CreateClusterRequest Exactly one provider payload is required: supply either `nico` or `infra`.
-// A request carrying both, or neither, is rejected with 400.
+// CreateClusterRequest Exactly one provider payload is required: supply one of `nico`, `launchlayer`, or `infra`.
+// A request carrying multiple payloads, or none, is rejected with 400.
 type CreateClusterRequest struct {
 	// Name The name of the cluster. Must be a lowercase DNS label, because CWE derives the names of the cluster's CAPI resources and its node names from it.
 	Name string `json:"name"`
@@ -385,9 +403,12 @@ type CreateClusterRequest struct {
 	// TeleportEnabled Enable Teleport SSH enrollment for nodes in this cluster. When omitted, the server-side default for the site is applied.
 	TeleportEnabled *bool `json:"teleportEnabled,omitempty"`
 
+	// NodePools The initial set of node pools to create for the cluster
+	NodePools *[]NodePoolCreateConfig `json:"nodePools,omitempty"`
+
 	// ControlPlaneConfig Writable cluster-level control plane configuration supplied at cluster creation.
-	// Exactly one provider payload is required: supply either `nico` or `infra`.
-	// A request carrying both, or neither, is rejected with 400.
+	// Exactly one provider payload is required: supply one of `nico`, `launchlayer`, or `infra`.
+	// A request carrying multiple payloads, or none, is rejected with 400.
 	ControlPlaneConfig *CreateClusterControlPlaneConfig `json:"controlPlaneConfig,omitempty"`
 
 	// Infra CAPI infrastructure fields for a cluster: the caller supplies the CAPI manifests
@@ -395,14 +416,16 @@ type CreateClusterRequest struct {
 	// `nico` clusters may be too. Mutually exclusive with `nico`.
 	Infra *InfraClusterProvider `json:"infra,omitempty"`
 
+	// Launchlayer Immutable LaunchLayer cluster intent. Select an existing VPC with vpcID,
+	// or request a CAPLL-managed VPC with orgID, never both. Credentials and
+	// backend authorization are deployment/reconciliation concerns.
+	Launchlayer *LaunchLayerClusterProvider `json:"launchlayer,omitempty"`
+
 	// Network Non-default pod or service CIDRs are supported only with the ovn-kubernetes CNI plugin.
 	Network *ClusterNetworkCreateConfig `json:"network,omitempty"`
 
 	// Nico Nico identity fields for a cluster. Mutually exclusive with `infra`.
 	Nico *NicoClusterProvider `json:"nico,omitempty"`
-
-	// NodePools The initial set of node pools to create for the cluster
-	NodePools *[]NodePoolCreateConfig `json:"nodePools,omitempty"`
 }
 
 // CreateNodePoolRequest defines model for CreateNodePoolRequest.
@@ -434,8 +457,12 @@ type CreateNodePoolRequest struct {
 	// AutoProvisionDisabled Whether the node pool is disabled for auto-provisioning.
 	AutoProvisionDisabled *bool `json:"autoProvisionDisabled,omitempty"`
 
+	// AutoModeDisabled Whether the node pool is disabled for auto-mode (automatic node recycling).
+	AutoModeDisabled *bool `json:"autoModeDisabled,omitempty"`
+
 	// Infra Infra provider fields for a node pool. Mutually exclusive with `nico`.
-	Infra *InfraNodePoolProvider `json:"infra,omitempty"`
+	Infra       *InfraNodePoolProvider       `json:"infra,omitempty"`
+	Launchlayer *LaunchLayerNodePoolProvider `json:"launchlayer,omitempty"`
 
 	// Nico Nico fields for a node pool. Mutually exclusive with `infra`.
 	Nico *NicoNodePoolProvider `json:"nico,omitempty"`
@@ -445,9 +472,6 @@ type CreateNodePoolRequest struct {
 	// Generated names must fit within 63 characters (Kubernetes Node name limit).
 	// Maximum prefix length depends on cluster name length.
 	NodeNamePrefix NodeNamePrefix `json:"nodeNamePrefix"`
-
-	// AutoModeDisabled Whether the node pool is disabled for auto-mode (automatic node recycling).
-	AutoModeDisabled *bool `json:"autoModeDisabled,omitempty"`
 
 	// ProvisioningMonitorDisabled Whether the timeout-based provisioning monitor is paused for this node pool. When true, nodes stuck in provisioning past the configured timeout will not be recycled by the system; an operator must investigate manually.
 	ProvisioningMonitorDisabled *bool `json:"provisioningMonitorDisabled,omitempty"`
@@ -486,7 +510,9 @@ type GenericError struct {
 // directly. Not to be used merely because a cluster is provisioned through CAPI —
 // `nico` clusters may be too. Mutually exclusive with `nico`.
 type InfraClusterProvider struct {
-	// Cluster Arbitrary JSON manifest for the CAPI infrastructure provider Cluster resource
+	// Cluster JSON manifest for the CAPI infrastructure provider Cluster resource.
+	// Generic escape hatch: only envelope and shared rules are checked, even
+	// for LaunchLayer manifests. Use launchlayer for first-class validation.
 	Cluster map[string]interface{} `json:"cluster,omitempty"`
 }
 
@@ -495,7 +521,9 @@ type InfraControlPlaneProvider struct {
 	// BootstrapFiles Cloud-init write_files entries for CAPI-backed control plane nodes
 	BootstrapFiles []CloudInitFile `json:"bootstrapFiles,omitempty"`
 
-	// MachineTemplate Arbitrary JSON manifest for the CAPI infrastructure provider MachineTemplate resource used for control plane nodes
+	// MachineTemplate JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
+	// Generic escape hatch: no concrete module schema is validated here.
+	// Use launchlayer.machine for first-class LaunchLayer validation.
 	MachineTemplate map[string]interface{} `json:"machineTemplate,omitempty"`
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed control plane nodes
@@ -508,7 +536,9 @@ type InfraControlPlaneProviderUpdate struct {
 	// BootstrapFiles Cloud-init write_files entries for CAPI-backed control plane nodes
 	BootstrapFiles []CloudInitFile `json:"bootstrapFiles,omitempty"`
 
-	// MachineTemplate Arbitrary JSON manifest for the CAPI infrastructure provider MachineTemplate resource used for control plane nodes
+	// MachineTemplate JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
+	// Generic escape hatch: no concrete module schema is validated here.
+	// Use launchlayer.machine for first-class LaunchLayer validation.
 	MachineTemplate map[string]interface{} `json:"machineTemplate,omitempty"`
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed control plane nodes
@@ -520,7 +550,9 @@ type InfraNodePoolProvider struct {
 	// BootstrapFiles Cloud-init write_files entries for CAPI-backed nodes
 	BootstrapFiles []CloudInitFile `json:"bootstrapFiles,omitempty"`
 
-	// MachineTemplate Arbitrary JSON manifest for the CAPI infrastructure provider MachineTemplate resource
+	// MachineTemplate JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
+	// Generic escape hatch: no concrete module schema is validated here.
+	// Use launchlayer.machine for first-class LaunchLayer validation.
 	MachineTemplate map[string]interface{} `json:"machineTemplate,omitempty"`
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed nodes
@@ -533,7 +565,9 @@ type InfraNodePoolProviderUpdate struct {
 	// BootstrapFiles Cloud-init write_files entries for CAPI-backed nodes
 	BootstrapFiles []CloudInitFile `json:"bootstrapFiles,omitempty"`
 
-	// MachineTemplate Arbitrary JSON manifest for the CAPI infra provider MachineTemplate resource
+	// MachineTemplate JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
+	// Generic escape hatch: no concrete module schema is validated here.
+	// Use launchlayer.machine for first-class LaunchLayer validation.
 	MachineTemplate map[string]interface{} `json:"machineTemplate,omitempty"`
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed nodes
@@ -545,11 +579,99 @@ type InfraNodeSetProvider struct {
 	// BootstrapFiles Cloud-init write_files entries for CAPI-backed nodes
 	BootstrapFiles []CloudInitFile `json:"bootstrapFiles,omitempty"`
 
-	// MachineTemplate Arbitrary JSON manifest for the CAPI infrastructure provider MachineTemplate resource
+	// MachineTemplate JSON manifest for the CAPI infrastructure provider MachineTemplate resource.
+	// Generic escape hatch: no concrete module schema is validated here.
+	// Use launchlayer.machine for first-class LaunchLayer validation.
 	MachineTemplate map[string]interface{} `json:"machineTemplate,omitempty"`
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed nodes
 	PreKubeadmCommands []string `json:"preKubeadmCommands,omitempty"`
+}
+
+// LaunchLayerClusterProvider Immutable LaunchLayer cluster intent. Select an existing VPC with vpcID,
+// or request a CAPLL-managed VPC with orgID, never both. Credentials and
+// backend authorization are deployment/reconciliation concerns.
+type LaunchLayerClusterProvider struct {
+	// CloudProviderEnabled Whether an independently deployed cloud controller owns Node provider IDs.
+	CloudProviderEnabled *bool            `json:"cloudProviderEnabled,omitempty"`
+	OrgID                *string          `json:"orgID,omitempty"`
+	Owner                LaunchLayerOwner `json:"owner"`
+
+	// SiteID Optional pass-through; not a verified routing or placement key.
+	SiteID *string `json:"siteID,omitempty"`
+	VpcID  *string `json:"vpcID,omitempty"`
+}
+
+// LaunchLayerControlPlaneProvider Read-only control-plane snapshot. All stored preferences are shown; the
+// current controller-mode node context selects the first, not a fallback.
+// Write one machine through controlPlaneConfig.launchlayer.machine.
+type LaunchLayerControlPlaneProvider struct {
+	BootstrapFiles     *[]CloudInitFile     `json:"bootstrapFiles,omitempty"`
+	MachinePreferences []LaunchLayerMachine `json:"machinePreferences"`
+	PreKubeadmCommands *[]string            `json:"preKubeadmCommands,omitempty"`
+}
+
+// LaunchLayerControlPlaneProviderCreate defines model for LaunchLayerControlPlaneProviderCreate.
+type LaunchLayerControlPlaneProviderCreate = LaunchLayerNodePoolProvider
+
+// LaunchLayerControlPlaneProviderUpdate Omitted fields preserve stored intent. A supplied machine fully replaces
+// its spec, including removing omitted optional fields. Empty arrays clear
+// bootstrap lists; null is not accepted.
+type LaunchLayerControlPlaneProviderUpdate = LaunchLayerNodePoolProviderUpdate
+
+// LaunchLayerMachine LaunchLayer allocation intent, not a Kubernetes manifest. Profiles and
+// security-group identifiers are validated structurally, not against a backend.
+// On PATCH the whole machine object replaces the stored intent.
+type LaunchLayerMachine struct {
+	// FulfillmentStrategy Omission leaves the default to CAPLL.
+	FulfillmentStrategy *LaunchLayerMachineFulfillmentStrategy `json:"fulfillmentStrategy,omitempty"`
+	HostOSProfile       *string                                `json:"hostOSProfile,omitempty"`
+	InstanceType        string                                 `json:"instanceType"`
+	SecurityGroups      *LaunchLayerSecurityGroups             `json:"securityGroups,omitempty"`
+	VMProfile           *string                                `json:"vmProfile,omitempty"`
+}
+
+// LaunchLayerMachineFulfillmentStrategy Omission leaves the default to CAPLL.
+type LaunchLayerMachineFulfillmentStrategy string
+
+// LaunchLayerNodePoolProvider defines model for LaunchLayerNodePoolProvider.
+type LaunchLayerNodePoolProvider struct {
+	// BootstrapFiles Bootstrap intent; delivery depends on CAPLL profile argument mapping.
+	BootstrapFiles *[]CloudInitFile `json:"bootstrapFiles,omitempty"`
+
+	// Machine LaunchLayer allocation intent, not a Kubernetes manifest. Profiles and
+	// security-group identifiers are validated structurally, not against a backend.
+	// On PATCH the whole machine object replaces the stored intent.
+	Machine            LaunchLayerMachine `json:"machine"`
+	PreKubeadmCommands *[]string          `json:"preKubeadmCommands,omitempty"`
+}
+
+// LaunchLayerNodePoolProviderUpdate Omitted fields preserve stored intent. A supplied machine fully replaces
+// its spec, including removing omitted optional fields. Empty arrays clear
+// bootstrap lists; null is not accepted.
+type LaunchLayerNodePoolProviderUpdate struct {
+	BootstrapFiles *[]CloudInitFile `json:"bootstrapFiles,omitempty"`
+
+	// Machine LaunchLayer allocation intent, not a Kubernetes manifest. Profiles and
+	// security-group identifiers are validated structurally, not against a backend.
+	// On PATCH the whole machine object replaces the stored intent.
+	Machine            *LaunchLayerMachine `json:"machine,omitempty"`
+	PreKubeadmCommands *[]string           `json:"preKubeadmCommands,omitempty"`
+}
+
+// LaunchLayerNodeSetProvider defines model for LaunchLayerNodeSetProvider.
+type LaunchLayerNodeSetProvider = LaunchLayerNodePoolProvider
+
+// LaunchLayerOwner defines model for LaunchLayerOwner.
+type LaunchLayerOwner struct {
+	UserID   string `json:"userID"`
+	Username string `json:"username"`
+}
+
+// LaunchLayerSecurityGroups defines model for LaunchLayerSecurityGroups.
+type LaunchLayerSecurityGroups struct {
+	GpuNetworkInterface     *[]string `json:"gpuNetworkInterface,omitempty"`
+	PrimaryNetworkInterface *[]string `json:"primaryNetworkInterface,omitempty"`
 }
 
 // ListCNIPluginsResponse defines model for ListCNIPluginsResponse.
@@ -904,14 +1026,18 @@ type NodePool struct {
 	// AutoProvisionDisabled Whether the node pool is disabled for auto-provisioning.
 	AutoProvisionDisabled bool `json:"autoProvisionDisabled"`
 
-	// Conditions Conditions representing various aspects of the node pool's state
-	Conditions NodePoolConditions `json:"conditions"`
-
 	// CurrentNodeSetID The ID of the current node set for the node pool
 	CurrentNodeSetID *openapi_types.UUID `json:"currentNodeSetID"`
 
+	// AutoModeDisabled Whether the node pool is disabled for auto-mode (automatic node recycling).
+	AutoModeDisabled bool `json:"autoModeDisabled"`
+
+	// Conditions Conditions representing various aspects of the node pool's state
+	Conditions NodePoolConditions `json:"conditions"`
+
 	// Infra Infra provider fields for a node pool. Mutually exclusive with `nico`.
-	Infra *InfraNodePoolProvider `json:"infra,omitempty"`
+	Infra       *InfraNodePoolProvider       `json:"infra,omitempty"`
+	Launchlayer *LaunchLayerNodePoolProvider `json:"launchlayer,omitempty"`
 
 	// Nico Nico fields for a node pool. Mutually exclusive with `infra`.
 	Nico *NicoNodePoolProvider `json:"nico,omitempty"`
@@ -921,9 +1047,6 @@ type NodePool struct {
 	// Generated names must fit within 63 characters (Kubernetes Node name limit).
 	// Maximum prefix length depends on cluster name length.
 	NodeNamePrefix NodeNamePrefix `json:"nodeNamePrefix"`
-
-	// AutoModeDisabled Whether the node pool is disabled for auto-mode (automatic node recycling).
-	AutoModeDisabled bool `json:"autoModeDisabled"`
 
 	// ProvisioningMonitorDisabled Whether the timeout-based provisioning monitor is paused for this node pool. When true, nodes stuck in provisioning past the configured timeout will not be recycled by the system; an operator must investigate manually.
 	ProvisioningMonitorDisabled bool `json:"provisioningMonitorDisabled"`
@@ -980,7 +1103,7 @@ type NodePoolConfigHistory struct {
 }
 
 // NodePoolCreateConfig A node pool follows its cluster's provider, so exactly one provider payload is
-// required: supply either `nico` or `infra`. A request carrying both, or neither,
+// required: supply one of `nico`, `launchlayer`, or `infra`. A request carrying multiple payloads, or none,
 // is rejected with 400.
 type NodePoolCreateConfig struct {
 	// Name The name of the node pool (must conform to Kubernetes resource naming standards)
@@ -1004,8 +1127,12 @@ type NodePoolCreateConfig struct {
 	// Description An optional description for the node pool.
 	Description *string `json:"description,omitempty"`
 
+	// AutoProvisionDisabled Whether the node pool is disabled for auto-provisioning.
+	AutoProvisionDisabled *bool `json:"autoProvisionDisabled,omitempty"`
+
 	// Infra Infra provider fields for a node pool. Mutually exclusive with `nico`.
-	Infra *InfraNodePoolProvider `json:"infra,omitempty"`
+	Infra       *InfraNodePoolProvider       `json:"infra,omitempty"`
+	Launchlayer *LaunchLayerNodePoolProvider `json:"launchlayer,omitempty"`
 
 	// Nico Nico fields for a node pool. Mutually exclusive with `infra`.
 	Nico *NicoNodePoolProvider `json:"nico,omitempty"`
@@ -1015,9 +1142,6 @@ type NodePoolCreateConfig struct {
 	// Generated names must fit within 63 characters (Kubernetes Node name limit).
 	// Maximum prefix length depends on cluster name length.
 	NodeNamePrefix NodeNamePrefix `json:"nodeNamePrefix"`
-
-	// AutoProvisionDisabled Whether the node pool is disabled for auto-provisioning.
-	AutoProvisionDisabled *bool `json:"autoProvisionDisabled,omitempty"`
 
 	// AutoModeDisabled Whether the node pool is disabled for auto-mode (automatic node recycling).
 	AutoModeDisabled *bool `json:"autoModeDisabled,omitempty"`
@@ -1047,7 +1171,8 @@ type NodeSet struct {
 	KubeReservedMemory *string `json:"kubeReservedMemory,omitempty"`
 
 	// KubernetesVersion The version of Kubernetes for nodes in the node set
-	KubernetesVersion string `json:"kubernetesVersion"`
+	KubernetesVersion string                      `json:"kubernetesVersion"`
+	Launchlayer       *LaunchLayerNodeSetProvider `json:"launchlayer,omitempty"`
 
 	// Nico Nico fields for a node set (read-only snapshot).
 	Nico *NicoNodeSetProvider `json:"nico,omitempty"`
@@ -1068,8 +1193,8 @@ type OSProfile struct {
 	Name string `json:"name"`
 }
 
-// UpdateClusterControlPlaneConfig `nico` and `infra` are mutually exclusive: supply at most one of them (both
-// may be omitted). A request carrying both is rejected with 400, as is a
+// UpdateClusterControlPlaneConfig `nico`, `launchlayer`, and `infra` are mutually exclusive: supply at most one
+// (all may be omitted). Multiple payloads are rejected with 400, as is a
 // provider payload that does not match the cluster.
 type UpdateClusterControlPlaneConfig struct {
 	// DesiredCount The desired number of cluster-level control plane nodes. Must be at least 1.
@@ -1078,6 +1203,11 @@ type UpdateClusterControlPlaneConfig struct {
 	// Infra The mutable infra provider control plane fields. Every field carries three states: omitted
 	// leaves the stored value alone, a value replaces it, and an empty value clears it.
 	Infra *InfraControlPlaneProviderUpdate `json:"infra,omitempty"`
+
+	// Launchlayer Omitted fields preserve stored intent. A supplied machine fully replaces
+	// its spec, including removing omitted optional fields. Empty arrays clear
+	// bootstrap lists; null is not accepted.
+	Launchlayer *LaunchLayerControlPlaneProviderUpdate `json:"launchlayer,omitempty"`
 
 	// MaxSurge Set cluster-level max surge.
 	MaxSurge *int `json:"maxSurge,omitempty"`
@@ -1103,8 +1233,8 @@ type UpdateClusterControlPlaneConfig struct {
 
 // UpdateClusterRequest defines model for UpdateClusterRequest.
 type UpdateClusterRequest struct {
-	// ControlPlaneConfig `nico` and `infra` are mutually exclusive: supply at most one of them (both
-	// may be omitted). A request carrying both is rejected with 400, as is a
+	// ControlPlaneConfig `nico`, `launchlayer`, and `infra` are mutually exclusive: supply at most one
+	// (all may be omitted). Multiple payloads are rejected with 400, as is a
 	// provider payload that does not match the cluster.
 	ControlPlaneConfig *UpdateClusterControlPlaneConfig `json:"controlPlaneConfig,omitempty"`
 
@@ -1153,8 +1283,8 @@ type UpdateInProgress struct {
 // UpdateInProgressType The kind of long-running cluster mutation in flight.
 type UpdateInProgressType string
 
-// UpdateNodePoolRequest `nico` and `infra` are mutually exclusive: supply at most one of them (both
-// may be omitted). A request carrying both is rejected with 400, as is a
+// UpdateNodePoolRequest `nico`, `launchlayer`, and `infra` are mutually exclusive: supply at most one
+// (all may be omitted). Multiple payloads are rejected with 400, as is a
 // provider payload that does not match the node pool's cluster.
 type UpdateNodePoolRequest struct {
 	// AutoModeDisabled Whether the node pool is disabled for auto-mode (automatic node recycling).
@@ -1181,6 +1311,11 @@ type UpdateNodePoolRequest struct {
 	// Must not include a leading "v".
 	// The pattern is the version-core part of the regex from https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
 	KubernetesVersion *string `json:"kubernetesVersion,omitempty"`
+
+	// Launchlayer Omitted fields preserve stored intent. A supplied machine fully replaces
+	// its spec, including removing omitted optional fields. Empty arrays clear
+	// bootstrap lists; null is not accepted.
+	Launchlayer *LaunchLayerNodePoolProviderUpdate `json:"launchlayer,omitempty"`
 
 	// MaxSurge Controls surge node provisioning during upgrades.
 	// - 0: Sequential upgrade (teardown then provision)

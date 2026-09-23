@@ -26,14 +26,14 @@ var (
 	ErrMissingProviderPayload = errors.New("missing provider payload")
 )
 
-// ProviderType is a DB/API discriminator for who authors the manifests, not for whether CAPI reconciles the cluster.
+// ProviderType selects the persisted execution path, independently of the public API mode.
 type ProviderType string
 
 const (
 	// When ProviderType is Nico, the caller gives OS profile / instance-type preference / subnets / etc/ and CWE generates the infra machine template for each node.
 	ProviderTypeNico ProviderType = "nico"
 
-	// When ProviderType is CAPI, the user specifies the infra machine template and CWE clones it for each node.
+	// CAPI clones templates authored either by the generic caller or by a typed API mapper.
 	ProviderTypeCAPI ProviderType = "capi"
 )
 
@@ -63,6 +63,7 @@ type Cluster struct {
 	NextCertRenewalDue    *time.Time `bun:"type:timestamptz"`
 
 	ProviderType ProviderType         `bun:"provider_type,type:text,notnull"`
+	APIProvider  APIProvider          `bun:"api_provider,type:text,nullzero"`
 	Nico         *NicoClusterProvider `bun:"nico,type:jsonb"`
 	Capi         *CAPIClusterProvider `bun:"capi,type:jsonb"`
 
@@ -521,6 +522,16 @@ func (q *queriesImpl) CreateCluster(ctx context.Context, cluster *Cluster) (Clus
 }
 
 func (q *queriesImpl) UpdateCluster(ctx context.Context, cluster *Cluster) (Cluster, error) {
+	var stored Cluster
+	if err := q.db.NewSelect().Model(&stored).Column("api_provider").Where("id = ?", cluster.ID).Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Cluster{}, ErrNotFound
+		}
+		return Cluster{}, err
+	}
+	if stored.APIProvider != cluster.APIProvider {
+		return Cluster{}, ErrClusterAPIProviderImmutable
+	}
 	cluster.UpdatedAt = time.Now()
 	res, err := q.db.NewUpdate().Model(cluster).WherePK().Exec(ctx)
 	if err != nil {

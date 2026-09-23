@@ -423,6 +423,7 @@ func (s *clusterService) createInitialNodePools(ctx context.Context, tx db.Tx, c
 			TeleportEnabled:             nodePoolConfig.TeleportEnabled,
 			Nico:                        nodePoolConfig.Nico,
 			Infra:                       nodePoolConfig.Infra,
+			Launchlayer:                 nodePoolConfig.Launchlayer,
 		}
 
 		if err := s.nodePoolService.validateCreateNodePoolRequest(cluster, &nodePoolReq); err != nil {
