@@ -1,0 +1,49 @@
+{
+  "name": "ll-validation-example",
+  "controlPlaneKubernetesVersion": "1.35.0",
+  "cniPlugin": "calico",
+  "etcdEncrypted": false,
+  "nodePools": [
+    {
+      "name": "cp",
+      "nodeNamePrefix": "cp",
+      "controlPlane": true,
+      "desiredNodeCount": 1,
+      "launchlayer": {
+        "machine": {
+          "instanceType": "example-control-plane-type",
+          "hostOSProfile": "example-nke-host:1",
+          "fulfillmentStrategy": "BEST_EFFORT"
+        }
+      }
+    },
+    {
+      "name": "workers",
+      "nodeNamePrefix": "worker",
+      "controlPlane": false,
+      "desiredNodeCount": 2,
+      "launchlayer": {
+        "machine": {
+          "instanceType": "example-worker-type",
+          "hostOSProfile": "example-nke-host:1",
+          "securityGroups": {
+            "primaryNetworkInterface": [
+              "example-primary-sg"
+            ],
+            "gpuNetworkInterface": [
+              "example-gpu-sg"
+            ]
+          },
+          "vmProfile": "example-nke-vm:1"
+        }
+      }
+    }
+  ],
+  "launchlayer": {
+    "vpcID": "example-vpc",
+    "owner": {
+      "userID": "example-user-id",
+      "username": "example-operator"
+    }
+  }
+}

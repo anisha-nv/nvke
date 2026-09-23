@@ -234,7 +234,7 @@ func TestDbClusterFromAPI_CNIVersion(t *testing.T) {
 }
 
 func TestAPIClusterFromDB_CNIVersionDefaultsOldRows(t *testing.T) {
-	got := APIClusterFromDB(&db.Cluster{
+	got, mappingErr := APIClusterFromDB(&db.Cluster{
 		ID:                uuid.New(),
 		Name:              "test",
 		CniPlugin:         db.CNICalico,
@@ -245,6 +245,7 @@ func TestAPIClusterFromDB_CNIVersionDefaultsOldRows(t *testing.T) {
 			VpcID:  uuid.New(),
 		},
 	})
+	require.NoError(t, mappingErr)
 
 	assert.Equal(t, db.DefaultCalicoCNIVersion, got.CniVersion)
 }
@@ -252,13 +253,14 @@ func TestAPIClusterFromDB_CNIVersionDefaultsOldRows(t *testing.T) {
 func TestAPIClusterFromDB_CreatedAt(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 29, 6, 20, 6, 0, time.UTC)
 
-	got := APIClusterFromDB(&db.Cluster{
+	got, mappingErr := APIClusterFromDB(&db.Cluster{
 		ID:                uuid.New(),
 		Name:              "test",
 		CniPlugin:         db.CNICalico,
 		KubernetesVersion: "1.30.0",
 		CreatedAt:         createdAt,
 	})
+	require.NoError(t, mappingErr)
 
 	assert.Equal(t, createdAt, got.CreatedAt)
 }

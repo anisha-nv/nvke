@@ -69,8 +69,12 @@ func (s *clusterService) GetClusterControlPlane(
 		Rollout:                  controlPlaneRolloutSummary(dbCluster, cpNodes, rolloutByNode),
 	}
 
+	out, err := APIClusterFromDB(&dbCluster)
+	if err != nil {
+		return nil, err
+	}
 	return api.GetClusterControlPlane200JSONResponse(api.ClusterControlPlane{
-		Config: *apiControlPlaneConfigFromDB(dbCluster.ControlPlaneConfig),
+		Config: *out.ControlPlaneConfig,
 		Status: status,
 	}), nil
 }
@@ -161,8 +165,20 @@ func validateCreateClusterLevelControlPlane(
 
 	switch providerType {
 	case db.ProviderTypeCAPI:
+		if req.Launchlayer != nil {
+			if ccpc.Nico != nil || ccpc.Infra != nil {
+				return fmt.Errorf("controlPlaneConfig must use launchlayer for this cluster")
+			}
+			return validateLaunchLayerNodeProvider(ccpc.Launchlayer, "controlPlaneConfig.launchlayer")
+		}
+		if ccpc.Launchlayer != nil {
+			return fmt.Errorf("controlPlaneConfig.launchlayer does not match cluster API mode")
+		}
 		return validateCreateCAPIControlPlaneConfig(ccpc)
 	case db.ProviderTypeNico:
+		if ccpc.Launchlayer != nil {
+			return fmt.Errorf("controlPlaneConfig.launchlayer does not match cluster API mode")
+		}
 		return validateCreateForgeControlPlaneConfigFields(ccpc)
 	default:
 		return fmt.Errorf("unsupported cluster provider")
@@ -277,6 +293,12 @@ func controlPlaneConfigSpecFromCreateAPI(
 	teleportDefault bool,
 	providerType db.ProviderType,
 ) db.ControlPlaneConfigSpec {
+	if c.Launchlayer != nil {
+		copyConfig := *c
+		copyConfig.Infra = infraControlPlaneCreate(c.Launchlayer)
+		copyConfig.Launchlayer = nil
+		c = &copyConfig
+	}
 	teleportEnabled := teleportDefault
 	if c.TeleportEnabled != nil {
 		teleportEnabled = *c.TeleportEnabled

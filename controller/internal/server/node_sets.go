@@ -73,8 +73,28 @@ func apiNodeSetFromDB(dbNodeSet *db.NodeSet) (api.NodeSet, error) {
 	if dbNodeSet == nil {
 		return api.NodeSet{}, nil
 	}
+	var launchlayer *api.LaunchLayerNodeSetProvider
+	if dbNodeSet.ClusterAPIProvider != "" {
+		providerType := db.ProviderTypeCAPI
+		if dbNodeSet.Nico != nil {
+			providerType = db.ProviderTypeNico
+		}
+		mode, err := (db.Cluster{APIProvider: dbNodeSet.ClusterAPIProvider, ProviderType: providerType}).ResolveAPIProvider()
+		if err != nil {
+			return api.NodeSet{}, err
+		}
+		if mode == db.APIProviderLaunchLayer {
+			launchlayer, err = apiLaunchLayerNodeProvider(dbNodeSet.Capi)
+			if err != nil {
+				return api.NodeSet{}, err
+			}
+		}
+	}
 	if dbNodeSet.Capi != nil {
 		if _, err := objectFromRawManifest(dbNodeSet.Capi.InfraMachineTemplate); err != nil {
+			if dbNodeSet.ClusterAPIProvider == db.APIProviderLaunchLayer {
+				return api.NodeSet{}, errStoredLaunchLayerIntent
+			}
 			return api.NodeSet{}, fmt.Errorf(
 				"objectFromRawManifest failed for infra.machineTemplate on node set %s (nodePoolID=%s, preview=%q): %w",
 				dbNodeSet.ID,
@@ -89,7 +109,7 @@ func apiNodeSetFromDB(dbNodeSet *db.NodeSet) (api.NodeSet, error) {
 		kubeReservedMemory = &dbNodeSet.KubeReservedMemory
 	}
 
-	return api.NodeSet{
+	out := api.NodeSet{
 		ID:                   dbNodeSet.ID,
 		NodePoolID:           dbNodeSet.NodePoolID,
 		DesiredCount:         dbNodeSet.DesiredCount,
@@ -99,7 +119,12 @@ func apiNodeSetFromDB(dbNodeSet *db.NodeSet) (api.NodeSet, error) {
 		TeleportEnabled:      &dbNodeSet.TeleportEnabled,
 		Nico:                 apiNicoNodeSetProviderFromDB(dbNodeSet.Nico),
 		Infra:                apiInfraNodeSetProviderFromDB(dbNodeSet.Capi),
-	}, nil
+	}
+	if launchlayer != nil {
+		out.Launchlayer = launchlayer
+		out.Infra = nil
+	}
+	return out, nil
 }
 
 func apiInfraNodeSetProviderFromDB(capiNodeSetProvider *db.CAPINodePoolProvider) *api.InfraNodeSetProvider {

@@ -199,7 +199,8 @@ func TestDbNodePoolFromAPI_EveryNestedNicoFieldReachesTheStoredPool(t *testing.T
 	assert.Equal(t, "cfg", nico.ConfigProfile)
 	assert.Equal(t, db.DiskSelectionStrategy(api.DiskSelectionStrategyCreateLargest), nico.DiskSelectionStrategy)
 
-	got := apiNodePoolFromDB(&pool)
+	got, mappingErr := apiNodePoolFromDB(&pool)
+	require.NoError(t, mappingErr)
 	require.NotNil(t, got.Nico)
 	assert.Equal(t, "os", got.Nico.OSProfile)
 	assert.Nil(t, got.Infra)
@@ -228,7 +229,8 @@ func TestDbNodePoolFromAPI_EveryNestedCapiFieldReachesTheStoredPool(t *testing.T
 	assert.Equal(t, []string{"echo hi"}, pool.Capi.PreKubeadmCommands)
 	assert.Equal(t, []db.CloudInitFile{{Path: "/tmp/a", Content: "x"}}, pool.Capi.BootstrapFiles)
 
-	got := apiNodePoolFromDB(&pool)
+	got, mappingErr := apiNodePoolFromDB(&pool)
+	require.NoError(t, mappingErr)
 	require.NotNil(t, got.Infra)
 	assert.Equal(t, "DockerMachineTemplate", got.Infra.MachineTemplate["kind"])
 	assert.Equal(t, files, got.Infra.BootstrapFiles)
@@ -274,7 +276,8 @@ func TestApplyUpdateNodePoolRequest_NestedNicoPatch(t *testing.T) {
 		assert.Equal(t, []uuid.UUID{subnetB}, pool.Nico.SubnetIDs)
 		assert.Equal(t, "os-v2", pool.Nico.OSProfile)
 
-		got := apiNodePoolFromDB(pool)
+		got, mappingErr := apiNodePoolFromDB(pool)
+		require.NoError(t, mappingErr)
 		require.NotNil(t, got.Nico)
 		assert.Equal(t, []uuid.UUID{subnetB}, got.Nico.SubnetIDs)
 		assert.Equal(t, "os-v2", got.Nico.OSProfile)
@@ -325,7 +328,8 @@ func TestApiNodePoolFromDB_EmitsNestedWhenPayloadPresent(t *testing.T) {
 		},
 	}
 
-	got := apiNodePoolFromDB(pool)
+	got, mappingErr := apiNodePoolFromDB(pool)
+	require.NoError(t, mappingErr)
 	require.NotNil(t, got.Nico)
 	assert.Equal(t, "os", got.Nico.OSProfile)
 	assert.Nil(t, got.Infra)
@@ -354,7 +358,8 @@ func TestNodePoolGetThenPatchNestedMutableOnly(t *testing.T) {
 		ConfigProfile:         "cfg",
 		DiskSelectionStrategy: db.DiskSelectionStrategySmallest,
 	})
-	got := apiNodePoolFromDB(pool)
+	got, mappingErr := apiNodePoolFromDB(pool)
+	require.NoError(t, mappingErr)
 	require.NotNil(t, got.Nico)
 
 	assert.NotEqual(t, uuid.Nil, got.Nico.InstanceTypeID)
