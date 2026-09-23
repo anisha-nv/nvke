@@ -18,9 +18,9 @@
 # /api/osProfiles and /api/configProfiles endpoints; nkectl has no command for
 # them yet.
 #
-# A node pool carries either `nico` or `infra`, never both, and a pool with
-# neither is rejected. This path uses `nico`; the local mock uses `infra` — see
-# nico-mock-cluster.yaml.
+# This path uses the `nico` payload; the local mock uses `infra` — see
+# nico-mock-cluster.yaml. The control plane is set at the cluster level via
+# controlPlaneConfig; node pools carry workers only.
 
 name: my-cluster
 controlPlaneKubernetesVersion: 1.34.2
@@ -32,21 +32,21 @@ nico:
   siteID: 00000000-0000-0000-0000-000000000000
   vpcID: 00000000-0000-0000-0000-000000000000
 
-nodePools:
-  - name: control-plane
-    nodeNamePrefix: cp
-    desiredNodeCount: 3
-    controlPlane: true
-    systemReservedMemory: "1Gi"
-    nico:
-      instanceTypeID: 00000000-0000-0000-0000-000000000000
-      vpcPrefixIDs:
-        - 00000000-0000-0000-0000-000000000000
-      sshKeyGroupIDs:
-        - 00000000-0000-0000-0000-000000000000
-      osProfile: nke-260625-24.04-x86-fde
-      configProfile: default-cp
+controlPlaneConfig:
+  desiredCount: 3
+  maxSurge: 1
+  systemReservedMemory: "1Gi"
+  nico:
+    instanceTypePreference:
+      - 00000000-0000-0000-0000-000000000000
+    vpcPrefixIDs:
+      - 00000000-0000-0000-0000-000000000000
+    sshKeyGroupIDs:
+      - 00000000-0000-0000-0000-000000000000
+    osProfile: nke-260625-24.04-x86-fde
+    configProfile: default-cp
 
+nodePools:
   - name: worker
     nodeNamePrefix: w
     desiredNodeCount: 2

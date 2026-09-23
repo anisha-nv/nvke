@@ -420,6 +420,38 @@ teardown cannot be helped along through the API.
 - The site controller does not manage itself: no upgrade, node cycling or
   scaling.
 
+## Control plane configuration
+
+A cluster's control plane is defined at the **cluster level** with
+`controlPlaneConfig`, owned by the control-plane controller: it provisions hosts
+in parallel but joins and deletes control-plane nodes one at a time, refuses a
+delete that would drop etcd below quorum, and rolls the Kubernetes version by
+recycling nodes.
+
+A create request carries `controlPlaneConfig` alongside a `nodePools` list that
+holds workers only:
+
+```yaml
+controlPlaneConfig:
+  desiredCount: 3            # >= 1; keep it odd so etcd holds a quorum
+  maxSurge: 1                # 0 or 1 (capped at 1): 1 replaces before removing, 0 removes first
+  systemReservedMemory: "16Gi"
+  nico:
+    instanceTypePreference:  # ordered UUIDs; index 0 is tried first, the rest are fallback
+      - 00000000-0000-0000-0000-000000000000
+    vpcPrefixIDs:
+      - 00000000-0000-0000-0000-000000000000
+    sshKeyGroupIDs:
+      - 00000000-0000-0000-0000-000000000000
+    osProfile: nke-260625-24.04-x86-fde
+    configProfile: default-cp
+```
+
+`controlPlaneConfig` takes exactly one provider payload — `nico` or `infra`,
+matching the cluster's own. Both
+[`nico-cluster.yaml`](../cli/examples/nico-cluster.yaml) and
+[`nico-mock-cluster.yaml`](../cli/examples/nico-mock-cluster.yaml) use it.
+
 ## See also
 
 - [getting-started.md](getting-started.md) — building and testing the modules
