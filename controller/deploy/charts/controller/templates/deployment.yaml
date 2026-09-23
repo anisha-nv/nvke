@@ -7,9 +7,9 @@
 {{- end }}
 {{/* Interim guard against a CAPLL-side gap, not a permanent design choice: CAPLL never reports a
      TPM endorsement key hash, so a LaunchLayer node under tpm hangs instead of failing cleanly.
-     Tracked in NKX-17005; remove once CAPLL can report a TPM identity. */}}
+     Remove once CAPLL can report a TPM identity. */}}
 {{- if and (has "launchlayer" (splitList "," .Values.supportedInfraProviders)) (eq $spireAttestationMethod "tpm") }}
-{{- fail "nodeAgent.spireAttestationMethod must be joinToken when launchlayer is in supportedInfraProviders: CAPLL reports no TPM endorsement key hash, so a LaunchLayer node can never attest under tpm (tracked in NKX-17005)" }}
+{{- fail "nodeAgent.spireAttestationMethod must be joinToken when launchlayer is in supportedInfraProviders: CAPLL reports no TPM endorsement key hash, so a LaunchLayer node can never attest under tpm" }}
 {{- end }}
 {{- include "controller.apiAuth.validate" . }}
 apiVersion: apps/v1
