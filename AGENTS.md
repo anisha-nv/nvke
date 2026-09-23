@@ -146,8 +146,10 @@ build pass. Removing those dependencies is tracked work with its own design.
   `FIXME:` with a tracking link, which is the established convention. A
   tracking link means a GitHub issue on this repository, not an internal
   tracker.
-- **Do not commit build output** — `bin/`, `release/`, `agent/build/deb_*`, or
+- **Do not commit build output** — `bin/`, `agent/build/deb_*`, or
   `controller/.local/`. All of it is already in `.gitignore`; keep it that way.
+  The root `release/` is not build output: it is the release tooling module,
+  and `.gitignore` negates the `**/release/` rule for it deliberately.
 - **Do not change the release or CI workflows** in `.github/workflows/` as part
   of an unrelated change. They gate every merge.
 - Do not add a new dependency without saying why in the pull request.
