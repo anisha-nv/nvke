@@ -284,11 +284,9 @@ type Config struct {
 	LocalDevForceDockerMachineBootstrap bool `env:"LOCAL_DEV_FORCE_DOCKER_MACHINE_BOOTSTRAP" default:"false"`
 
 	// ProvisionControlPlaneWithControlPlaneController routes control-plane node
-	// provisioning through the control-plane controller, which creates no-nodepool
-	// control-plane nodes. When enabled, the node set controller stops creating
-	// pending nodes for control-plane node pools so the two controllers never both
-	// create control-plane nodes. When false, control-plane nodes continue to be
-	// created by the node set controller from their node pool.
+	// provisioning through the control-plane controller, which owns the cluster's
+	// control plane end to end: it provisions the control-plane hosts and joins
+	// and deletes control-plane nodes one at a time.
 	ProvisionControlPlaneWithControlPlaneController bool `env:"PROVISION_CONTROL_PLANE_WITH_CONTROL_PLANE_CONTROLLER" default:"true"`
 
 	// InstallCNIAfterInit installs CNI after kubeadm init, from a Debian package
