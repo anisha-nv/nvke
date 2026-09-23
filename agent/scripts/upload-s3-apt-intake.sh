@@ -40,6 +40,11 @@ ASSETS_DIR="${ASSETS_DIR:-bin}"
 
 INTAKE_BASE="${APT_INTAKE_S3_URI%/}/${APT_INTAKE_PROJECT}"
 RELEASE_BASE="${INTAKE_BASE}/releases/${APT_INTAKE_RELEASE}"
+# Keep commit builds and their index outside the release intake.
+if [[ "${APT_INTAKE_RELEASE}" =~ ^[0-9a-f]{40}$ ]]; then
+  INTAKE_BASE="${INTAKE_BASE}/dev/${APT_INTAKE_RELEASE}"
+  RELEASE_BASE="${INTAKE_BASE}"
+fi
 
 shopt -s nullglob
 debs=("${ASSETS_DIR}"/*.deb)
