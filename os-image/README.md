@@ -262,6 +262,28 @@ project also checks the `image-inputs` archive against its manifest digest
 before extracting it into transient host-side state and uploading the expanded
 contents. The archive itself is not copied into the guest disk.
 
+External build systems that model those inputs as separate components use the
+source-owned adapters rather than patching this checkout:
+
+```bash
+python3 packer/scripts/compose-image-inputs.py \
+  --materials-dir /run/nke-image/materials \
+  --source-files-dir files \
+  --output /run/nke-image/image-inputs.tar \
+  --source-date-epoch "$SOURCE_DATE_EPOCH"
+
+packer/scripts/patch-installer-iso.sh \
+  /run/nke-image/materials/ubuntu-installer.iso \
+  /run/nke-image/installer.iso
+```
+
+`compose-image-inputs.py` requires the bindings `agent`, `calico`,
+`kubeadm-distro`, `ovn`, and `spire-agent`. It rejects links, special archive
+members, nested package paths, empty package archives, and duplicate Debian
+package filenames before generating the local `Packages` index. The ISO adapter
+accepts an already acquired and authenticated Ubuntu ISO; it performs no
+network access. Both commands write only to their caller-selected output path.
+
 The SSH files are caller-owned attempt state. The direct caller generates the
 pair before invoking Packer and supplies both absolute paths. Packer uses the
 private key while autoinstall injects the matching public key. Packer's generated
