@@ -22,6 +22,9 @@ rules:
   - apiGroups:
       - infrastructure.cluster.x-k8s.io
     resources:
+      - launchlayerclusters
+      - launchlayermachines
+      - launchlayermachinetemplates
       - nicoclusters
       - nicomachines
       - provisionedclusters
@@ -40,6 +43,9 @@ rules:
     resources:
       - customresourcedefinitions
     resourceNames:
+      - launchlayerclusters.infrastructure.cluster.x-k8s.io
+      - launchlayermachines.infrastructure.cluster.x-k8s.io
+      - launchlayermachinetemplates.infrastructure.cluster.x-k8s.io
       - nicoclusters.infrastructure.cluster.x-k8s.io
       - nicomachines.infrastructure.cluster.x-k8s.io
       - provisionedclusters.infrastructure.cluster.x-k8s.io

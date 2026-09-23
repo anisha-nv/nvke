@@ -58,6 +58,7 @@ func isNotConfigured(err error) bool {
 type fakeCWE struct {
 	mu       sync.Mutex
 	clusters []api.Cluster
+	posted   []api.CreateClusterJSONRequestBody
 	requests []string
 	server   *httptest.Server
 
@@ -189,10 +190,14 @@ func (f *fakeCWE) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var cniVersion string
+	f.posted = append(f.posted, req)
 	if req.CniVersion != nil {
 		cniVersion = *req.CniVersion
 	}
 	cl := api.Cluster{
+		Launchlayer:                   req.Launchlayer,
+		Nico:                          req.Nico,
+		Infra:                         req.Infra,
 		ID:                            uuid.New(),
 		Name:                          req.Name,
 		ControlPlaneKubernetesVersion: req.ControlPlaneKubernetesVersion,

@@ -32,6 +32,12 @@ echo "supportedInfraProviders opt-in:"
 out="$(render --set-string 'supportedInfraProviders=nico\,infra')"
 pair "renders both providers when requested" "SUPPORTED_INFRA_PROVIDERS" "nico,infra" "${out}"
 
+out="$(render --set-string 'supportedInfraProviders=launchlayer' --set-string nodeAgent.spireAttestationMethod=joinToken --set spiffe.enabled=true)"
+pair "typed LaunchLayer does not enable generic infra" "SUPPORTED_INFRA_PROVIDERS" "launchlayer" "${out}"
+
+out="$(render --set-string 'supportedInfraProviders=nico\,launchlayer\,infra' --set-string nodeAgent.spireAttestationMethod=joinToken --set spiffe.enabled=true)"
+pair "renders all three independent API modes" "SUPPORTED_INFRA_PROVIDERS" "nico,launchlayer,infra" "${out}"
+
 if [[ "${failures}" -ne 0 ]]; then
   echo "${failures} chart provider assertion(s) failed" >&2
   exit 1

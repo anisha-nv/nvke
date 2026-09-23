@@ -118,7 +118,7 @@ A Helm chart to deploy the NKE controller service
 | spiffe.spire.serverPort | string | `"30440"` |  |
 | spiffe.spire.tpmPubhashesConfigMapName | string | `"tpm-pubhashes"` |  |
 | spiffe.trustDomain | string | `""` | SPIRE trust domain. When set, the chart renders ConfigMap nke-rbac. Required when nkeOIDCAuth.enabled is true: builds the nkeOIDCAuth.tenantRbacName SPIFFE subject ID in that ConfigMap. Must equal the SPIRE server's trust domain (the spire chart's global.spire.trustDomain) so the RBAC principals match issued identities. |
-| supportedInfraProviders | string | `"nico"` | Comma-separated API provider blocks accepted by mutating cluster and node-pool requests. The chart defaults deployed CWE to Nico only; set to "nico,infra" only for deployments that should accept generic CAPI-backed provider payloads. |
+| supportedInfraProviders | string | `"nico"` | Comma-separated API modes: nico, launchlayer, infra. Defaults to nico; opt into launchlayer only after migrating the database and upgrading every CWE writer. The infra mode independently enables generic CAPI input, including raw CAPLL manifests, without typed LaunchLayer validation. |
 | teleport.enabled | bool | `false` | Enable Teleport identity for CWE to manage Teleport resources (tokens, nodes) |
 | teleport.environment | string | `"non-prod"` | Teleport environment label: "prod" or "non-prod" (default: "non-prod") |
 | teleport.identityFile | string | `"/var/run/teleport/identity"` | Path where the tbot identity file is mounted |

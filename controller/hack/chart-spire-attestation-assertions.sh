@@ -54,6 +54,14 @@ wantfail \
   'nodeAgent.spireAttestationMethod must be one of tpm or joinToken' \
   --set-string nodeAgent.spireAttestationMethod=unsupported
 
+wantfail \
+  "rejects tpm when launchlayer is enabled" \
+  'nodeAgent.spireAttestationMethod must be joinToken when launchlayer is in supportedInfraProviders' \
+  --set-string 'supportedInfraProviders=nico\,launchlayer'
+
+output="$(render --set-string 'supportedInfraProviders=nico\,launchlayer' --set-string nodeAgent.spireAttestationMethod=joinToken --set spiffe.enabled=true)"
+pair "allows launchlayer with join token" "NODE_AGENT_SPIRE_ATTESTATION_METHOD" "joinToken" "${output}"
+
 if [[ "${failures}" -ne 0 ]]; then
   echo "${failures} chart SPIRE attestation assertion(s) failed" >&2
   exit 1
