@@ -150,9 +150,9 @@ dropping the upstream binaries in by hand, so a node ends up with the same
 artifact whichever path installed it. The build also installs the Calico
 manifests package that the agent uses during offline bootstrap.
 
-Both variants install Ubuntu's NVIDIA-tuned kernel (`kernel.package` in
-`cidata/autoinstall-lvm.pkrtpl`), so the generic kernel never lands on disk in
-the first place — no post-install kernel swap or reboot.
+Production images install Ubuntu's NVIDIA-tuned kernel (`kernel.package` in
+`cidata/autoinstall-lvm.pkrtpl`), so there is no post-install kernel swap or
+reboot. Development images install `linux-generic` instead.
 
 `ARCH=arm64` builds the arm64 image instead (`ARCH=amd64` is the default):
 
