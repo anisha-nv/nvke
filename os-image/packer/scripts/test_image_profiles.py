@@ -68,6 +68,13 @@ class PackerProfileTest(unittest.TestCase):
     def test_kernel_and_artifact_directories(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
+            # Evaluate the profile expressions without versions.pkr.hcl, so
+            # the pin (asserted in test_packer_makefile.py) does not reject
+            # whatever Packer the runner image ships.
+            project = root / "project"
+            project.mkdir()
+            for name in ("variables.pkr.hcl", "locals.pkr.hcl"):
+                shutil.copy(PACKER_DIR / name, project)
             key = root / "key"
             key.touch()
             manifest = root / "material-manifest.json"
@@ -94,7 +101,7 @@ class PackerProfileTest(unittest.TestCase):
                                  "-var", f"ssh_public_key_file={key}",
                                  "-var", f"efi_firmware_code={key}",
                                  "-var", f"efi_firmware_vars={key}",
-                                 str(PACKER_DIR)],
+                                 str(project)],
                                 input=f"jsonencode([local.kernel_package, local.variant_output_directories.{variant.replace('-', '_')}])\n",
                                 text=True, capture_output=True,
                             )
