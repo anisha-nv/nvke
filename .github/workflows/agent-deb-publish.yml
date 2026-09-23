@@ -199,8 +199,6 @@ jobs:
   publish:
     name: Upload to apt intake
     needs: [build]
-    # Same tag gate as build: never ingest from a branch (including
-    # workflow_dispatch on main). Re-run from the agent/v* tag only.
     if: >-
       github.repository == 'dsx-ai-factory/nke' &&
       startsWith(inputs.ref || github.ref_name, 'agent/v')
