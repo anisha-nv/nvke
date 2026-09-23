@@ -151,9 +151,9 @@ dropping the upstream binaries in by hand, so a node ends up with the same
 artifact whichever path installed it. The build also installs the Calico
 manifests package that the agent uses during offline bootstrap.
 
-Both variants install Ubuntu's NVIDIA-tuned kernel (`kernel.package` in
-`cidata/autoinstall-lvm.pkrtpl`), so the generic kernel never lands on disk in
-the first place — no post-install kernel swap or reboot.
+Production images install Ubuntu's NVIDIA-tuned kernel (`kernel.package` in
+`cidata/autoinstall-lvm.pkrtpl`), so there is no post-install kernel swap or
+reboot. Development images install `linux-generic` instead.
 
 `ARCH=arm64` builds the arm64 image instead (`ARCH=amd64` is the default):
 
@@ -443,7 +443,7 @@ full FDE bake took 1h39m under `tcg` vs a few minutes locally under real
 KVM). The job's "Enable KVM access" step fails immediately if that
 assumption turns out wrong, rather than silently falling back to the
 ~10x-slower emulated path. The arm64 leg runs natively on
-`nke-arm64-16c64g`, also with `/dev/kvm`; the workflow fails immediately if
+`arc-arm64-kvm`, also with `/dev/kvm`; the workflow fails immediately if
 that device is absent or unusable. The Makefile still retains its portable
 same-architecture KVM probe and TCG fallback for local builds.
 
@@ -503,3 +503,17 @@ The process needs a SPIFFE workload API with an SVID whose path starts with
 Override with `--spiffe-socket`. This is the same shape as the controller
 dialer; it is not a SPIRE server. For a local SPIRE, see
 `controller/scripts/dev-env-spire.sh`.
+
+If the node runs `nke-agent --grpc-auth-mode=tls-jwt`, pass `--tls-jwt`:
+
+```bash
+nke-os-image-check --endpoint 192.0.2.10:15005 --tls-jwt
+```
+
+That agent writes an `NKEAuth` record after the TLS handshake and before the
+HTTP/2 preface, so a probe that does not expect it reads the record as a
+corrupt preface and reports an opaque transport failure. With the flag, the
+checker consumes the record and logs the token's `sub` claim as
+`unverified_auth_subject` — useful when a node's identity does not match the
+UUID the controller dialled. The checker does not verify the signature; only
+the controller validates the token.
