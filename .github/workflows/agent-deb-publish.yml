@@ -42,9 +42,9 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Agent tag or full commit SHA to build (defaults to the workflow ref)
+        description: Agent tag or full commit SHA to build
         type: string
-        required: false
+        required: true
 
 permissions: {}
 
@@ -62,6 +62,7 @@ concurrency:
 
 jobs:
   build:
+    cache-mode: read
     name: Build the ${{ matrix.arch }} package
     runs-on: ${{ matrix.runner }}
     # Tag-only: a branch workflow_dispatch must not produce packages that the
