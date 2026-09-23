@@ -58,7 +58,7 @@ What distinguishes it from a generic CAPI distribution:
 | `os-image/` | Reference Ubuntu node OS image (spec + Packer) and `nke-os-image-check`. |
 | `nktp/` | NVIDIA Kubernetes Telemetry Pipeline (NKTP): a Helm chart that deploys an OpenTelemetry pipeline for cluster metrics, logs and traces. Versioned and released on its own. |
 
-**Eleven Go modules**, tied together by a workspace at the repository root, each
+**Twelve Go modules**, tied together by a workspace at the repository root, each
 independently buildable. `make build` links six binaries: `agent`, `updater`,
 `controller`, `nkectl`, `capd-reboot-controller` and
 `nke-os-image-check`.
