@@ -90,6 +90,10 @@ jobs:
             echo "::error::ref must be an agent release tag or a full lowercase commit SHA"
             exit 1
           fi
+          if [[ "${SOURCE_REF}" == agent/v* && "${GITHUB_REF}" != "refs/tags/${SOURCE_REF}" ]]; then
+            echo "::error::Release builds must run from their source tag; select it with --ref"
+            exit 1
+          fi
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -197,7 +201,9 @@ jobs:
     needs: [build]
     # Same tag gate as build: never ingest from a branch (including
     # workflow_dispatch on main). Re-run from the agent/v* tag only.
-    if: github.repository == 'dsx-ai-factory/nke'
+    if: >-
+      github.repository == 'dsx-ai-factory/nke' &&
+      startsWith(inputs.ref || github.ref_name, 'agent/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: apt-intake
@@ -239,9 +245,6 @@ jobs:
           project="${APT_INTAKE_PROJECT:-nke-agent}"
           region="${APT_INTAKE_AWS_REGION:-us-west-2}"
 
-          # Tag refs are agent/vX.Y.Z; the intake release key and apt-publisher
-          # expect the unprefixed form (vX.Y.Z), matching DEB_VERSION's source.
-          # Job-level if already requires refs/tags/agent/v*; no branch/sha path.
           release="${SOURCE_REF#agent/}"
 
           {
@@ -269,6 +272,60 @@ jobs:
           APT_INTAKE_S3_URI: ${{ steps.meta.outputs.s3_uri }}
           APT_INTAKE_PROJECT: ${{ steps.meta.outputs.project }}
           APT_INTAKE_RELEASE: ${{ steps.meta.outputs.release }}
+          PUBLISH_INDEX_JSON: "true"
+          ASSETS_DIR: bin
+        run: ./scripts/upload-s3-apt-intake.sh
+
+  publish-dev:
+    name: Upload dev packages to S3
+    needs: [build]
+    if: >-
+      github.repository == 'dsx-ai-factory/nke' &&
+      github.ref == 'refs/heads/main' &&
+      !startsWith(inputs.ref || github.ref_name, 'agent/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      APT_INTAKE_S3_URI: ${{ vars.AGENT_DEV_S3_URI }}
+      APT_INTAKE_PROJECT: nke-agent
+      APT_INTAKE_RELEASE: ${{ needs.build.outputs.sha }}
+      DEV_AWS_ROLE_ARN: ${{ vars.AGENT_DEV_AWS_ROLE_ARN }}
+    steps:
+      - name: Validate dev publication
+        run: |
+          : "${APT_INTAKE_S3_URI:?Set the AGENT_DEV_S3_URI repository variable}"
+          : "${DEV_AWS_ROLE_ARN:?Set the AGENT_DEV_AWS_ROLE_ARN repository variable}"
+          if [[ ! "${APT_INTAKE_RELEASE}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Dev publication requires the full built commit SHA"
+            exit 1
+          fi
+
+      - name: Checkout uploader
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: agent-deb-*
+          merge-multiple: true
+          path: agent/bin
+
+      - name: Configure dev AWS credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.DEV_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AGENT_DEV_AWS_REGION || 'us-west-2' }}
+
+      - name: Upload dev packages
+        working-directory: agent
+        env:
+          PUBLISH_INDEX_JSON: "false"
           ASSETS_DIR: bin
         run: ./scripts/upload-s3-apt-intake.sh
 
