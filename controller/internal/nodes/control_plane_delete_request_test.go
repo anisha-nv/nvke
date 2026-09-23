@@ -261,6 +261,44 @@ func TestControlPlaneDeleteRecordsIntentWithoutStartingTeardown(t *testing.T) {
 	mockTx.AssertExpectations(t)
 }
 
+// TestUnhealthyControlPlaneDeleteRecordsForceUnreachable pairs the floor
+// exemption with the teardown it hands off to: the node the floor waived as
+// unhealthy must be torn down as unreachable, or the accepted delete stalls on a
+// drain that can never finish.
+func TestUnhealthyControlPlaneDeleteRecordsForceUnreachable(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	ids := cpNodeIDs(3)
+	cpNodes := []db.Node{unreachableCPNode(ids[0]), joinedCPNode(ids[1]), joinedCPNode(ids[2])}
+	target := cpNodes[0]
+
+	mockTx := &testutil.MockTx{}
+	mockTx.On("GetNodeForUpdate", mock.Anything, target.ID).Return(target, nil)
+	expectControlPlaneCensus(mockTx, cpNodes)
+
+	var written db.Node
+	mockTx.On("UpdateNode", mock.Anything, mock.MatchedBy(func(updated *db.Node) bool {
+		written = *updated
+		return updated.ID == target.ID
+	})).Return(target, nil)
+
+	require.NoError(t, nodes.DeleteWithTx(ctx, mockTx, target.ID,
+		nodes.WithSkipLiveDeleteGuard(),
+		nodes.WithControlPlaneControllerDelete(true),
+		nodes.WithReason("API"),
+		nodes.WithAllowCPNode(true),
+	))
+
+	var recorded struct {
+		ForceUnreachable bool `json:"forceUnreachable"`
+	}
+	require.NoError(t, json.Unmarshal(written.DeleteRequest, &recorded))
+	require.True(t, recorded.ForceUnreachable,
+		"a delete the floor waived as unhealthy must tear the node down as unreachable")
+	mockTx.AssertExpectations(t)
+}
+
 // TestWorkerDeleteIgnoresControlPlaneControllerFlag guards the "worker deletes
 // are unchanged" acceptance criterion.
 func TestWorkerDeleteIgnoresControlPlaneControllerFlag(t *testing.T) {
@@ -441,7 +479,19 @@ func TestStartRequestedTeardown(t *testing.T) {
 
 	require.True(t, nodes.IsDeleting(written), "the node should now be Deleting")
 	require.False(t, nodes.IsDeleteRequested(written), "the request should be cleared once started")
-	require.Nil(t, written.DeleteRequest, "the recorded payload should be cleared once replayed")
+
+	// The payload stays on the row while the teardown runs. The workflow's start
+	// event is the only other copy and a closed run cannot be replayed, so a
+	// restart of a failed teardown reads the intent back from here. It goes away
+	// with the row, not before. IsDeleteRequested reads the condition, not this,
+	// so a retained payload cannot look like a second queued delete.
+	var replayed struct {
+		Reason           string `json:"reason"`
+		ForceUnreachable bool   `json:"forceUnreachable"`
+	}
+	require.NoError(t, json.Unmarshal(written.DeleteRequest, &replayed))
+	require.Equal(t, "API", replayed.Reason, "the recorded reason should survive for a restart")
+	require.True(t, replayed.ForceUnreachable, "the force verdict should survive for a restart")
 	mockTx.AssertExpectations(t)
 }
 
