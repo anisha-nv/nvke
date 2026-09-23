@@ -250,10 +250,13 @@ and directories; links and special entries are rejected before host-side
 extraction.
 
 The direct defaults assume a same-architecture, KVM-capable host:
-`accelerator=kvm` and `cpu_model=host`. A caller without usable KVM must set
-`accelerator=tcg`, select the architecture-appropriate CPU model (`max` for
-amd64 or `max,pauth-impdef=on` for arm64), and provide longer `ssh_timeout` and
-`boot_wait` values. The Make targets detect KVM and supply those four settings
+`accelerator=kvm`, `cpu_model=host`, and `guest_memory_mib=8192`. A caller
+without usable KVM must set `accelerator=tcg`, select the
+architecture-appropriate CPU model (`max` for amd64 or
+`max,pauth-impdef=on` for arm64), and provide longer `ssh_timeout` and
+`boot_wait` values. A constrained development runner may lower
+`guest_memory_mib`, but values below 1024 are rejected. The Make targets detect
+KVM and supply the acceleration, CPU, timeout, and boot-wait settings
 automatically.
 
 The manifest's `installer-iso` entry carries the ISO's `sha256:` digest. Packer
