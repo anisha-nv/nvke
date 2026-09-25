@@ -75,6 +75,20 @@ func (c ControlPlaneConfigSpec) CAPIProvider() (CAPIControlPlaneProvider, error)
 	return *cloneCAPIControlPlaneProvider(c.Capi), nil
 }
 
+// activeProvider returns the single provider set on the spec as an opaque
+// value, or nil when none is set. SetNico/SetCapi keep exactly one non-nil, so
+// this is the one place that has to know the provider union; capability
+// accessors such as ScaleDownRanker type-assert against it and stay agnostic.
+func (c ControlPlaneConfigSpec) activeProvider() any {
+	switch {
+	case c.Nico != nil:
+		return *c.Nico
+	case c.Capi != nil:
+		return *c.Capi
+	}
+	return nil
+}
+
 // ControlPlaneConfig is the cluster control plane configuration shape used by
 // API and controller logic. It contains cluster-level fields (configuration ID,
 // desired count, max surge) plus the current snapshot spec loaded from
