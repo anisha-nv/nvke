@@ -387,6 +387,82 @@ func TestTenantRESTConfigRelaysTheSPIREEndpoint(t *testing.T) {
 	}
 }
 
+func TestRelayedAdminKubeconfigRewritesTheServerAndPinsTheServerName(t *testing.T) {
+	// The whole point of the relayed form: helm and kubectl read a file and
+	// have no way to be handed a dialer, so both substitutions have to be in
+	// the bytes. Without tls-server-name the tunnel connects and then fails
+	// verification, because the tenant's certificate covers its own address
+	// and not the loopback the tunnel listens on.
+	factory := newTestTenantClientFactory(t, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: tenantKubeconfigNamespace, Name: "tenant-a-kubeconfig"},
+		Data:       map[string][]byte{tenantKubeconfigKey: testAdminKubeconfig(t)},
+	})
+	factory.relay = func(_ context.Context, hostPort string) (string, error) {
+		if hostPort != "tenant.example:6443" {
+			t.Errorf("relay asked for %q, want the published host and port", hostPort)
+		}
+		return "127.0.0.1:40000", nil
+	}
+
+	rendered, err := factory.RelayedAdminKubeconfig(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("RelayedAdminKubeconfig() error = %v", err)
+	}
+	config := requireLoad(t, rendered)
+	cluster := requireSoleCluster(t, config)
+	if cluster.Server != "https://127.0.0.1:40000" {
+		t.Errorf("Server = %q, want the relayed address", cluster.Server)
+	}
+	if cluster.TLSServerName != "tenant.example" {
+		t.Errorf("TLSServerName = %q, want the published host", cluster.TLSServerName)
+	}
+	if string(cluster.CertificateAuthorityData) != "tenant-ca" {
+		t.Errorf("CertificateAuthorityData = %q, want the published tenant CA", cluster.CertificateAuthorityData)
+	}
+}
+
+func TestRelayedAdminKubeconfigWithoutARelayKeepsThePublishedAddress(t *testing.T) {
+	// A lane that shares a network with its cluster configures no relay, and
+	// must not have its kubeconfig rewritten to a loopback address nothing is
+	// listening on.
+	factory := newTestTenantClientFactory(t, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: tenantKubeconfigNamespace, Name: "tenant-a-kubeconfig"},
+		Data:       map[string][]byte{tenantKubeconfigKey: testAdminKubeconfig(t)},
+	})
+
+	rendered, err := factory.RelayedAdminKubeconfig(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("RelayedAdminKubeconfig() error = %v", err)
+	}
+	cluster := requireSoleCluster(t, requireLoad(t, rendered))
+	if cluster.Server != "https://tenant.example:6443" {
+		t.Errorf("Server = %q, want the published address", cluster.Server)
+	}
+	if cluster.TLSServerName != "" {
+		t.Errorf("TLSServerName = %q, want it left unset", cluster.TLSServerName)
+	}
+}
+
+func requireLoad(t *testing.T, kubeconfig []byte) *clientcmdapi.Config {
+	t.Helper()
+	config, err := clientcmd.Load(kubeconfig)
+	if err != nil {
+		t.Fatalf("clientcmd.Load() error = %v", err)
+	}
+	return config
+}
+
+func requireSoleCluster(t *testing.T, config *clientcmdapi.Config) *clientcmdapi.Cluster {
+	t.Helper()
+	if len(config.Clusters) != 1 {
+		t.Fatalf("kubeconfig names %d clusters, want exactly one", len(config.Clusters))
+	}
+	for _, cluster := range config.Clusters {
+		return cluster
+	}
+	return nil
+}
+
 func TestTenantRESTConfigExchangesSPIREJWTCredentials(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	sourceToken := testJWT(now.Add(time.Hour), "source")

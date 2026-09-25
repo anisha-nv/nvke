@@ -150,7 +150,7 @@ jobs:
     # is sized against the cleanup nodes' NodeTimeouts -- see the note on the
     # three nested timeouts at the run step. This bound is only ever reached
     # by a run that has already gone wrong; a healthy `full` is about an hour.
-    timeout-minutes: 235
+    timeout-minutes: 280
     permissions:
       contents: read
       # Both GHCR pulls: the runner's, and the node's through the
@@ -270,6 +270,38 @@ jobs:
           cache-dependency-path: |
             go.work.sum
             **/go.sum
+
+      # helm and python3 are what build/use-nke-sbom.sh runs on. The tenant
+      # GPU runtime is installed from this runner, because the runner is where
+      # a relayed tenant kubeconfig resolves; the site install needs neither
+      # here, since it runs the same script over SSH on the node itself.
+      - name: Resolve the Helm version
+        id: versions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "helm_version=$(make --no-print-directory print-HELM_VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ steps.versions.outputs.helm_version }}
+
+      # Checked here so a missing interpreter, or a deploy path that cannot
+      # install, fails in the first minute rather than after forty minutes of
+      # provisioning with a tenant already up.
+      #
+      # --online, unlike the merge gate's run of the same script: this lane is
+      # about to depend on those chart repositories for real, so resolving and
+      # rendering each chart first turns "the registry moved the version we
+      # pin" into a thirty-second failure instead of a mid-run one.
+      - name: Verify the tenant runtime install prerequisites
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          helm version --short
+          python3 --version
+          ./hack/deploy-path-check.sh --online
 
       # tsh is the relay: `teleport.Dialer` shells out to it to open a byte
       # stream to the node's sshd through the jump host. Pinned, and checked,
@@ -711,13 +743,35 @@ jobs:
       # Three nested timeouts, shortest first, because only the shortest one
       # tears the node down:
       #
-      #   -ginkgo.timeout 150m  fails the suite and runs its cleanup, which
+      #   -ginkgo.timeout 195m  fails the suite and runs its cleanup, which
       #                         is what releases the Forge instance.
-      #   -timeout        220m  go's own backstop. It panics rather than
+      #   -timeout        265m  go's own backstop. It panics rather than
       #                         unwinding, so deferred teardown does NOT run
       #                         and the instance leaks -- reaching this means
       #                         Ginkgo itself is wedged.
-      #   timeout-minutes 235   the runner is killed. Same leak, no log.
+      #   timeout-minutes 280   the runner is killed. Same leak, no log.
+      #
+      # The Ginkgo bound covers the GPU runtime. It is still an estimate:
+      # nothing has compiled a driver on this hardware, so the first green run
+      # is what turns these into measurements. Built from run 36147423536,
+      # which reached a validated tenant 38 minutes in:
+      #
+      #   38  provision, bootstrap, tenant create and validate
+      #  +12  a GPU pool is slower to boot and POST than one himem CPU node
+      #  +15  helm: fetching the chart, the operator rollout, ClusterPolicy
+      #  +30  driver compile against the running kernel, then the device
+      #       plugin registering nvidia.com/gpu
+      #   +5  a CUDA workload
+      #  +45  tenant delete, worst case, which is its whole budget
+      #  +30  site sweep and release
+      #  ---
+      # 175  under 195, with twenty minutes of slack
+      #
+      # The three GPU specs cap themselves above their own estimates (25, 45
+      # and 15 minutes) so a slow stage fails as itself and says which stage
+      # it was, instead of as whichever spec happened to be running when the
+      # suite clock ran out. Those caps can sum past this budget on purpose:
+      # -ginkgo.timeout is the real bound, and it is the one that unwinds.
       #
       # The 70 minutes between the first two is cleanup's, and it is sized
       # against cleanup rather than picked. A cleanup node entered after the
@@ -726,7 +780,8 @@ jobs:
       # AfterAll's 15 minutes and the site AfterAll's 45, which is 60, plus
       # ten for the unwind itself. Shorten this gap below that sum and the
       # backstop starts firing during a teardown that was going to succeed --
-      # which is the one failure that leaks the instance.
+      # which is the one failure that leaks the instance. The GPU specs add no
+      # cleanup node of their own, so that sum is unchanged.
       #
       # There is no fourth clock. The bot certificate expires in an hour, but
       # tbot rewrites it every twenty minutes for as long as the job runs --
@@ -782,9 +837,9 @@ jobs:
           #                  output, which on this lane is remote command
           #                  output, so it stays on the runner for a
           #                  summarise step to reduce to an outcome.
-          go test -v -timeout 220m . -args \
+          go test -v -timeout 265m . -args \
             -ginkgo.label-filter=site-controller \
-            -ginkgo.timeout=150m \
+            -ginkgo.timeout=195m \
             -ginkgo.v \
             -ginkgo.fail-on-empty \
             -ginkgo.no-color \

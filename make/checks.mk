@@ -50,6 +50,14 @@ docs-check: ## Check the documented facts against the repository. (run by the me
 internal-config-check: ## Check the tree names no internal infrastructure. (run by the merge gate)
 	@./hack/internal-config-check.sh
 
+# The tenant GPU runtime deploy path, held to what any version of it must be
+# true of whoever wrote it: public charts pinned exactly, nothing internal-only
+# in the tree, every namespace created before the chart that needs it. Offline,
+# so it needs no egress and no credential; the Forge lane runs the same script
+# with --online, which also resolves and renders each chart for real.
+deploy-path-check: ## Check the tenant runtime deploy path is installable and self-contained. (run by the merge gate)
+	@./hack/deploy-path-check.sh
+
 # helm lint and helm template both pass on a manifest Kubernetes would reject, so
 # kubeconform parses what was rendered. A chart that renders nothing also passes
 # helm template silently, hence the count.
@@ -224,6 +232,7 @@ gate: ## Run the merge-gate checks that work on a laptop.
 	@$(MAKE) --no-print-directory lint-shell
 	@$(MAKE) --no-print-directory docs-check
 	@$(MAKE) --no-print-directory internal-config-check
+	@$(MAKE) --no-print-directory deploy-path-check
 	@$(MAKE) --no-print-directory chart-check
 	@$(MAKE) --no-print-directory nktp-chart-check
 	@$(MAKE) --no-print-directory -C controller generate-check

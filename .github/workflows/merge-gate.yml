@@ -167,6 +167,14 @@ jobs:
     permissions:
       contents: read
 
+  # The tenant GPU runtime deploy path. Its only consumer is a lane that runs
+  # by hand on real hardware, so without a member here a change that breaks it
+  # is found forty minutes into a Forge run rather than on the pull request.
+  deploy-path-check:
+    uses: ./.github/workflows/deploy-path-check.yml
+    permissions:
+      contents: read
+
   lint:
     uses: ./.github/workflows/lint.yml
     permissions:
@@ -222,6 +230,7 @@ jobs:
       - shellcheck
       - docs-check
       - internal-config-check
+      - deploy-path-check
       - lint
       - gofail
       - notices

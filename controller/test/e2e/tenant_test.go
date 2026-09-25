@@ -419,6 +419,17 @@ func nicoForgeTenant() testSpec {
 		shape: clusterShape{
 			controlPlanePools: []nke.NodePoolSpec{{DesiredNodeCount: 1}},
 			workerPools:       []nke.NodePoolSpec{{DesiredNodeCount: 1}},
+			// The worker has to be a GPU machine, because the thing this lane
+			// qualifies is that NKE hands back a node a GPU workload can run
+			// on. Asking for {machineType: gpu} rather than for the L40S by
+			// name keeps the entry portable: a site whose GPU is something
+			// else still answers, and a site with no GPU at all fails saying
+			// so.
+			//
+			// One worker, not the fleet's two. Two proves nothing here that
+			// one does not -- the assertion is that a GPU node works, not
+			// that several do -- and each is eight L40S.
+			workerCapabilities: map[string]string{"machineType": "gpu", "arch": "amd64"},
 		},
 		// Generous next to the simulator lanes: these timeouts cover a bare
 		// machine booting an OS image over the network and installing
@@ -430,7 +441,7 @@ func nicoForgeTenant() testSpec {
 		// against the 30 minutes this used to be, while the instances were
 		// still reporting Terminating.
 		options:  nke.Options{Provision: 90 * time.Minute, Delete: 45 * time.Minute, Poll: 30 * time.Second},
-		validate: validations{provisioningOnly: true},
+		validate: validations{provisioningOnly: true, gpuRuntime: true},
 	}
 }
 
@@ -497,6 +508,9 @@ func tenantSubtree(resolve managementResolver) func(spec testSpec) {
 				validateOIDCPostCreate(&test)
 			}
 			validateNodeReadinessPostCreate(&test)
+			if spec.validate.gpuRuntime {
+				validateGPURuntimePostCreate(&test)
+			}
 			if spec.validate.openVSwitch {
 				validateOpenVSwitchPostCreate(&test)
 			}
@@ -714,8 +728,18 @@ type clusterShape struct {
 	// shape as a cluster-level controlPlaneConfig (see applyControlPlaneMode).
 	controlPlanePools []nke.NodePoolSpec
 	workerPools       []nke.NodePoolSpec
-	etcdEncrypted     bool
-	controlPlaneVIP   string
+	// workerCapabilities, when set, resolves the worker pools' machine
+	// separately from the control plane's. Empty is a homogeneous cluster,
+	// where both take whatever the run's own capabilities matched.
+	//
+	// This is how an entry asks for GPU workers without pinning an instance
+	// type id: the id belongs to one site, the property belongs to the test.
+	// It is deliberately a capability set rather than a bool, because "needs
+	// a GPU" and "needs a particular GPU" are different requests and a site
+	// with several GPU types can only answer the second.
+	workerCapabilities map[string]string
+	etcdEncrypted      bool
+	controlPlaneVIP    string
 	// controlPlaneConfig provisions the control plane through the cluster-level
 	// control-plane controller. Set it instead of controlPlanePools, never both:
 	// the cp-controller entries use it for controller-only fields, and the
@@ -727,6 +751,11 @@ type validations struct {
 	// provisioningOnly limits the lifecycle to create, node readiness, delete,
 	// and the shared tenant-access cleanup check.
 	provisioningOnly bool
+	// gpuRuntime installs the tenant GPU runtime and proves a CUDA workload
+	// runs on it. Additive to provisioningOnly rather than part of the
+	// deeper suite: it is the point of a GPU lane, and the assertions it
+	// needs are the cheap ones.
+	gpuRuntime bool
 	// postReadyChecks verifies intended cluster state after the initial CAPD
 	// cluster and all desired nodes are Ready.
 	postReadyChecks bool
@@ -1399,6 +1428,16 @@ func nicoForgeSpec(_ config.Config, name string, shape clusterShape) nke.Cluster
 	instanceType, err := site.MatchInstanceType(capabilities)
 	Expect(err).NotTo(HaveOccurred(), "should find an instance type providing the requested capabilities")
 
+	// Workers can need a different machine from the control plane. A GPU lane
+	// wants GPUs under its workloads and has no reason to put one under its
+	// API server -- and at the declared site it is the CPU type that is
+	// scarce, so this asks for less of what is contended rather than more.
+	workerInstanceType := instanceType
+	if len(shape.workerCapabilities) > 0 {
+		workerInstanceType, err = site.MatchInstanceType(shape.workerCapabilities)
+		Expect(err).NotTo(HaveOccurred(), "should find an instance type providing the worker capabilities")
+	}
+
 	kubernetesVersion := cmp.Or(optionalVersion("kube"), shape.kubernetesVersion, forgeDefaultKubernetesVersion)
 
 	// The OS image is the component under qualification, so it is required and
@@ -1439,7 +1478,7 @@ func nicoForgeSpec(_ config.Config, name string, shape clusterShape) nke.Cluster
 			// hosts, and a real site has no equivalent to borrow from.
 			ControlPlaneVIP: shape.controlPlaneVIP,
 		},
-		Workers: forgeNodePoolSpecs(shape.workerPools, "worker", "w", site, instanceType),
+		Workers: forgeNodePoolSpecs(shape.workerPools, "worker", "w", site, workerInstanceType),
 	}
 }
 
