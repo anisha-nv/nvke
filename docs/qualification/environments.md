@@ -37,7 +37,7 @@ infrastructure:          # opaque to the loader; the forge provider decodes it
         - name: cpu.himem.t1
           id: "${FORGE_INSTANCE_TYPE_CPU_ID}"
           provides: {machineType: cpu, arch: amd64}
-        - name: gpu.l40sx8
+        - name: gpu.l40sx8.ovx.t1.ib
           id: "${FORGE_INSTANCE_TYPE_GPU_ID}"
           provides: {machineType: gpu, arch: amd64, gpu: l40}
 ```
@@ -169,9 +169,12 @@ capacity are the prefix-attached ones, so a stream asking for `{gpu: gb200}`
 has nothing to run on until that work is done.
 
 **Enumerating instance types is awkward.** A Forge instance-type list caps at
-twenty rows and ignores every filter, so discovering the rest means reading
-them by id. `forge.yaml` declares only the two types that have actually carried
-a workload, rather than everything the site offers.
+twenty rows and ignores every filter, so at a large site discovering the rest
+means reading them by id. At the declared site that turned out not to matter:
+its Instance Types tab returns exactly two results, and `forge.yaml` declares
+both. Capacity there, as of 2026-09-25, is 8 usable `gpu.l40sx8.ovx.t1.ib` with
+none in use and 2 usable `cpu.himem.t1` of 8 — the GPUs are idle and the CPU
+type is the contended one.
 
 ## Adding a provider
 

@@ -315,9 +315,11 @@ nico-vms, but none are enabled for `nico-forge`.
 is a single node, and the upgrade specs act on a tenant cluster's control-plane
 version through CWE.
 
-**GPUs.** `gpu.l40sx8` is declared in `environments/forge.yaml` and the
-capability match would select it, but three things stand between that and a
-meaningful GPU test:
+**GPUs.** `gpu.l40sx8.ovx.t1.ib` is declared in `environments/forge.yaml` and
+the capability match would select it. Capacity is not the obstacle: the
+declared site has eight of them and, as of 2026-09-25, none in use — it is
+`cpu.himem.t1` that is contended, at two usable of eight. Three other things
+stand between that and a meaningful GPU test:
 
 - The lane passes no `-e2e.capabilities`, so the match is vacuous — every type
   satisfies an empty request and the first declared type always wins. The
