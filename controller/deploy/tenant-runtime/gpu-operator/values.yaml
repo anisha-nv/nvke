@@ -1,0 +1,130 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# GPU Operator values for a qualification tenant.
+#
+# Most of this file is chart defaults restated so they are visible; the few
+# settings that are not defaults each carry the reason they are not, because
+# the reasons cost real debugging time and are not recoverable from the value.
+#
+# WHAT IS DELIBERATELY ABSENT: node affinities. A GPU fleet constrains the
+# operator's controller pods to its system-node group and its DaemonSets to its
+# GPU-node group, using labels a fleet's node provisioner applies. NKE applies
+# no such labels, so carrying those affinities here would leave every pod in
+# this chart Pending with no obvious cause. A qualification tenant is small and
+# homogeneous and has no system/GPU split to honour, so the affinities are
+# dropped rather than translated. Tolerations are kept: they are harmless and
+# they let these pods onto tainted GPU nodes.
+
+# The operator installs the driver itself. This is worth stating because the
+# alternative -- baking the driver into the node image or a provisioning hook --
+# is a reasonable guess and the wrong one: it is not how the operator is tested,
+# and it puts a kernel-coupled artifact in the image.
+driver:
+  enabled: true
+
+  # A FULL version, not a branch, and that choice selects the install mode.
+  #
+  #   580.126.20  -> driver container tag 580.126.20-ubuntu24.04, which builds
+  #                  the kernel modules on the node at startup
+  #   580         -> with driver.usePrecompiled, an image tag that names an
+  #                  exact kernel, e.g. 580-6.8.0-1052-nvidia-ubuntu24.04
+  #
+  # Precompiled is faster and needs no toolchain, but it requires an image for
+  # the kernel actually running. The node image installs Ubuntu's linux-nvidia
+  # meta-package, which is unpinned, so an image rebuild can land on a kernel
+  # that has no precompiled driver published. That failure would appear as an
+  # unrelated image change breaking GPU qualification. Compiling on the node
+  # costs a few minutes and cannot drift that way.
+  #
+  # The cost is a dependency on reaching the Ubuntu archives from the node to
+  # fetch kernel headers, which the lane's egress preflight checks.
+  version: 580.126.20
+
+  rdma:
+    # Off, and this one is not a simplification -- leaving it on breaks the
+    # install on this hardware. With rdma enabled the operator runs an
+    # nvidia-peermem sidecar beside the driver. That sidecar chroots to the
+    # host and modprobes a peermem module which is not there: these nodes have
+    # no host MOFED and take mlx5_ib from the mainline kernel. The modprobe
+    # fails, and because it is a sidecar of the driver pod it crash-loops the
+    # driver along with it, so no node ever gets a driver.
+    enabled: false
+
+  upgradePolicy:
+    autoUpgrade: true
+    maxParallelUpgrades: 5
+    gpuPodDeletion:
+      force: false
+      timeoutSeconds: 300
+      deleteEmptyDir: true
+    drain:
+      enable: true
+      # Required, not cosmetic. Unloading the kernel module needs every holder
+      # of a /dev/nvidia* fd gone. gpuPodDeletion only removes pods that
+      # request nvidia.com/gpu, so DaemonSets that merely open the devices --
+      # logging, monitoring, storage agents -- survive it and hold the module
+      # at EBUSY. The k8s-driver-manager initContainer then crash-loops. Its
+      # own fallback drain does not save you either: that path is gated on an
+      # inverted condition and does not run under autoUpgrade
+      # (NVIDIA/k8s-driver-manager#138).
+      force: true
+      timeoutSeconds: 600
+      deleteEmptyDir: true
+
+# The container runtime hook that makes GPUs visible to containers. Also
+# installed by the operator rather than the node image, same reasoning.
+toolkit:
+  enabled: true
+
+devicePlugin:
+  env:
+    # Qualification wants a node marked unhealthy to stay visible and fail the
+    # assertion, rather than have the plugin quietly withdraw its GPUs and
+    # leave the run looking like a scheduling problem.
+    - name: DP_DISABLE_HEALTHCHECKS
+      value: "all"
+    - name: DEVICE_LIST_STRATEGY
+      value: cdi-annotations,cdi-cri,volume-mounts
+
+# Labels nodes with GPU product, count and driver version. The readiness
+# assertion reads these, so this is load-bearing for the lane and not just
+# telemetry.
+gfd:
+  enabled: true
+
+# Harmless on hardware that does not support MIG, and correct on hardware that
+# does. Left at the fleet's setting so a MIG-capable shape needs no change here.
+mig:
+  strategy: mixed
+
+dcgm:
+  enabled: true
+dcgmExporter:
+  serviceMonitor:
+    # Off because a qualification tenant has no Prometheus Operator, so the
+    # ServiceMonitor kind does not exist and the chart's apply fails outright
+    # with "no matches for kind". A fleet runs this on.
+    enabled: false
+
+# GPUDirect RDMA copy support. Off: it is an optimisation for workloads this
+# lane does not run, the fleet pins an internal build of it, and the public
+# build adds a second kernel module to compile on every node for no signal.
+gdrcopy:
+  enabled: false
+
+operator:
+  upgradeCRD: true
+  resources:
+    limits:
+      cpu: "1"
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+hostPaths:
+  # Stated explicitly because the driver container, the toolkit and the
+  # validator all have to agree on it, and a mismatch shows up as the toolkit
+  # failing to find a driver that installed successfully.
+  driverInstallDir: /run/nvidia/driver

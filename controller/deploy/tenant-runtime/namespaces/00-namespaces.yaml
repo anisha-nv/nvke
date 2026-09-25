@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Namespaces for target "tenant-runtime". The GPU operator chart emits none of
+# its own, and the installer does not pass --create-namespace, so this item
+# creates them.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gpu-operator
+  labels:
+    # The driver, toolkit and device-plugin DaemonSets are privileged: they
+    # load kernel modules, mount host paths under /run/nvidia and use hostPID.
+    # Restricted or baseline enforcement rejects all three, and the rejection
+    # surfaces as pods that never appear rather than pods that fail, which is
+    # a slow thing to diagnose.
+    pod-security.kubernetes.io/enforce: privileged

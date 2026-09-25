@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# The NVIDIA GPU Operator: driver, container toolkit, device plugin, GPU feature
+# discovery and DCGM. One release, one chart.
+#
+# The public NGC repository, unauthenticated -- verified by fetching its
+# index.yaml without credentials. This matters more than it looks: it is what
+# lets a qualification run be reproduced by someone outside NVIDIA, which is
+# the whole reason this path installs a published chart rather than consuming
+# an internal bundle.
+#
+# THE VERSION CARRIES A LEADING v, because the index does: this chart is
+# published as gpu-operator-v26.3.2.tgz with `version: "v26.3.2"`, while the
+# network operator beside it is plain `26.1.0`. Helm's semver matching accepts
+# either form, so "26.3.2" would also resolve -- it is written as published so
+# that grepping the index for what is pinned here finds it.
+#
+# Pinned to a version a GPU fleet has actually run in anger rather than to the
+# newest release. Newer ones exist. A qualification lane's first job is to make
+# failures attributable to NKE, and an unproven operator version is a second
+# variable.
+chart:
+  name: gpu-operator
+  version: "v26.3.2"
+  repository: https://helm.ngc.nvidia.com/nvidia
+release:
+  name: gpu-operator
+  namespace: gpu-operator
+values:
+  - values.yaml

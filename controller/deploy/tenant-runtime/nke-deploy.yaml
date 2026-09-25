@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Deploy path for the GPU runtime on a tenant cluster.
+#
+# This is what turns a tenant whose worker pool happens to sit on GPU hardware
+# into a tenant that can run a CUDA workload. It is installed against the
+# tenant's kubeconfig, not the site's.
+#
+# SCOPE: qualification, not production. The question this path exists to answer
+# is whether an NKE tenant delivers usable GPU nodes -- nvidia.com/gpu
+# allocatable, a CUDA pod completing. It is deliberately the smallest
+# configuration that answers it. A fleet runs considerably more alongside this
+# (RDMA, GPUDirect, DRA, monitoring integrations); none of that is NKE's
+# contract, so none of it is here.
+#
+# AUTHORSHIP IS NOT PART OF THE CONTRACT. Today these files are maintained by
+# hand against the versions a GPU fleet is known to run. They could equally be
+# generated and delivered by an upstream that owns the runtime. The installer
+# reads a directory and cannot tell the difference, which is the point: the
+# directory is the seam. hack/deploy-path-check.sh states what any version of
+# this directory must satisfy, whoever or whatever wrote it.
+#
+# ORDER. The namespace item is first because it has to be: install_helm_item in
+# build/use-nke-sbom.sh passes --namespace but not --create-namespace, so a
+# chart whose namespace does not already exist fails on the first apply.
+items:
+  - {name: namespaces, type: manifest}
+  - {name: gpu-operator, type: helm}
