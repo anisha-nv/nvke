@@ -42,7 +42,7 @@ somewhere no customer runs it.
 
 ## What a run does
 
-Four steps, each built on the one before:
+Five steps, each built on the one before:
 
 1. **Provision** a bare machine from Forge — iPXE boot, the OS image under
    qualification written to disk, reachable over the site's jump host.
@@ -51,8 +51,10 @@ Four steps, each built on the one before:
    answers at the expected version.
 3. **Create a tenant cluster** through that engine's own API — not through
    Forge directly — so the product's front door is part of what is tested.
-4. **Bring up its node pools** on real machines, assert every node reaches
-   Ready, then tear everything down.
+4. **Bring up its node pools** on real machines — a CPU control plane and a
+   GPU worker — and assert every node reaches Ready.
+5. **Install the GPU runtime** into that tenant from public charts and prove a
+   CUDA workload runs on it, then tear everything down.
 
 [hardware-lane.md](hardware-lane.md) explains each step and why the awkward
 parts are the way they are.
@@ -70,7 +72,7 @@ is watching is a run nobody acts on.
 |---|---|---|
 | `provision` | a Forge node, reachable, then released | 20 min |
 | `bootstrap` | vanilla Kubernetes via `nkectl bootstrap site` | 45 min |
-| `full` | the NKE stack, the engine, and a tenant cluster | 80 min |
+| `full` | the NKE stack, the engine, a tenant cluster, and the GPU runtime on it | 140 min |
 
 ## Reading a result
 
@@ -93,14 +95,17 @@ Stated plainly, because a green run should not be read as more assurance than
 it carries.
 
 **Covered.** A site controller built the product way on real hardware at one
-site, and a tenant cluster created through the engine on that site, taken
-through create, node readiness, and delete.
+site; a tenant cluster created through the engine on that site, with a CPU
+control plane and a GPU worker, taken through create and node readiness; the
+GPU runtime installed into that tenant from public charts; and a CUDA workload
+run on it as an ordinary pod, before everything is deleted.
 
 **Not covered:**
 
-- **GPU workloads.** A GPU instance type is declared and has carried a tenant
-  by hand, but nothing installs a GPU driver or device plugin, so a GPU node
-  would come up Ready advertising no GPU. See
+- **GPU breadth.** One GPU type at one site — L40S — with RDMA, MIG and
+  GPUDirect deliberately off, and the operator pinned to a version a GPU
+  fleet has run rather than to the newest published. A green run says the
+  contract holds for that combination, not that it holds generally. See
   [environments.md](environments.md#how-a-machine-gets-chosen).
 - **Deeper tenant node-pool behaviour** — replacement, cascade, manual
   scale-down. These specs exist and the simulator lanes run them; the Forge

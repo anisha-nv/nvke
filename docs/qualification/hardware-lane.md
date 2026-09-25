@@ -282,6 +282,13 @@ The blocked arrow from the runner is why the relay exists at all, and the
 dotted edge is the relay: a local address on the runner whose traffic comes out
 of the site node.
 
+That hook is in-process, which is enough for the Go clients and not enough for
+anything the suite shells out to. Installing the GPU runtime runs helm, which
+reads a kubeconfig file and cannot be handed a dialer, so
+`RelayedAdminKubeconfig` renders one with both substitutions already in it —
+the forwarded address and the `tls-server-name` — into a 0600 file that lives
+only as long as the spec that asked for it.
+
 **Teardown.** `SweepTenants` deletes every tenant cluster CWE knows about
 before the site node is released, so a tenant is never orphaned by the machine
 its control plane ran on going away.
@@ -295,8 +302,18 @@ uses. A pool naming its own `InstanceTypeID` keeps it, which is how a table
 entry asks for a shape the capability match would not have chosen.
 
 The Forge shape today is the smallest that still proves something: one
-control-plane pool and one worker pool, each of one node, with
-`provisioningOnly` — create, both nodes report Ready, delete.
+control-plane pool and one worker pool, each of one node — create, both nodes
+report Ready, the GPU runtime installed and a CUDA workload run, delete.
+
+The two pools do not take the same machine. `clusterShape.workerCapabilities`,
+when set, resolves the worker pools' instance type separately from the control
+plane's, so the Forge entry asks for `{machineType: gpu, arch: amd64}` and the
+environment answers with an id. Asking by property rather than by id is what
+keeps the entry portable: a site whose GPU is something else still answers, and
+a site with none fails saying so instead of quietly booting a CPU machine. At
+this site it also asks for less of what is scarce — the L40S machines sit idle
+while `cpu.himem.t1` is contended — so GPU workers drop the himem draw from
+three machines to two.
 
 Timeouts are much larger than the simulator lanes because they cover a bare
 machine booting an OS image over the network and installing packages. Delete in
@@ -315,23 +332,39 @@ nico-vms, but none are enabled for `nico-forge`.
 is a single node, and the upgrade specs act on a tenant cluster's control-plane
 version through CWE.
 
-**GPUs.** `gpu.l40sx8.ovx.t1.ib` is declared in `environments/forge.yaml` and
-the capability match would select it. Capacity is not the obstacle: the
-declared site has eight of them and, as of 2026-09-25, none in use — it is
-`cpu.himem.t1` that is contended, at two usable of eight. Three other things
-stand between that and a meaningful GPU test:
+**GPU breadth, rather than GPUs.** The lane installs the runtime and runs a
+CUDA workload, so what is left uncovered is the range, not the capability:
 
-- The lane passes no `-e2e.capabilities`, so the match is vacuous — every type
-  satisfies an empty request and the first declared type always wins. The
-  selection machinery has never actually selected anything.
-- One capability set is resolved per run and applied to every pool, so "CPU
-  control plane, GPU workers" cannot be expressed through capabilities. The
-  supported route is pinning `InstanceTypeID` on the worker pool, as the
-  nico-vms entries already do.
-- Nothing in the deploy path installs a GPU operator or device plugin, so a GPU
-  node would come up Ready without advertising `nvidia.com/gpu`. A test written
-  today would prove the machine schedules, not that a GPU workload runs.
+- One GPU type, at one site. The declared site offers only
+  `gpu.l40sx8.ovx.t1.ib`.
+- RDMA, MIG and GPUDirect are off. `driver.rdma.enabled: false` in particular
+  is correct *here* and not in general — these hosts have no MOFED, and
+  leaving it on crash-loops the driver pod — so a green run says nothing about
+  a site where RDMA matters.
+- The operator is pinned to a version a GPU fleet has run rather than to the
+  newest published. See the decisions below.
 
 Site capacity also constrains this: the declared site offers no GB200. The
 sites that have that capacity attach an interface by VPC prefix rather than by
 subnet, and the environment schema has no prefix alternative yet.
+
+## Decisions deferred to the first green run
+
+Two things are deliberately unresolved until this lane has passed once on
+hardware. They are written down rather than left implicit because both decay
+quietly if nobody comes back to them.
+
+**The chart pin.** `controller/deploy/tenant-runtime` pins the GPU operator to
+a version a fleet has actually run, so that a first failure is attributable to
+NKE rather than to an operator release nobody has exercised. The cost is that
+the pin starts behind and falls further: newer releases were already published
+when it was chosen. Once the lane itself is proven, tracking the newest stable
+release is the more sustainable policy for a repository that has to look after
+itself, and the switch belongs at that point rather than now.
+
+**Noticing drift.** Nothing here watches what a fleet moves to. The intended
+signal reads the pins in this repository and raises an issue when they
+diverge, and it has to run on the side that knows what the fleet is running.
+Until it exists the pin only moves when a person looks, and this is the one
+gap that fails silently — a stale runtime yields a green run that means a
+little less each cycle, never a red one.
