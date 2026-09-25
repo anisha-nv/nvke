@@ -102,6 +102,17 @@ func init() {
 // siteReaches is what the node must reach for bootstrap and the deploy path:
 // image registries, chart repositories, and the release downloads cloud-init
 // and the StorageClass fetch.
+//
+// The last four are the GPU runtime's. They are checked here, from the site
+// node, rather than from a tenant node: both sit on the same subnet, so the
+// site proves the path for a fraction of the cost, and it proves it before
+// the run has spent an hour getting a GPU node to the point of needing it.
+//
+// archive.ubuntu.com is http, not https, because that is what apt will really
+// do. The driver container compiles against the running kernel -- there is a
+// precompiled image for `linux-nvidia` on 24.04, but the image pins no kernel
+// version, so nothing guarantees the one it booted is among the seventeen
+// published -- and compiling means fetching headers from the archive.
 var siteReaches = []string{
 	"https://registry-1.docker.io/v2/",
 	"https://ghcr.io/v2/",
@@ -109,6 +120,10 @@ var siteReaches = []string{
 	"https://go.temporal.io/helm-charts/index.yaml",
 	"https://github.com/",
 	"https://raw.githubusercontent.com/",
+	"https://helm.ngc.nvidia.com/nvidia/index.yaml",
+	"https://nvcr.io/v2/",
+	"http://archive.ubuntu.com/ubuntu/",
+	"http://security.ubuntu.com/ubuntu/",
 }
 
 // The lane is serial: one site, built once, holding the tenant specs that run
