@@ -39,7 +39,9 @@ const (
 	// it names the hardware, which is what a qualification report wants.
 	gpuProductLabel = "nvidia.com/gpu.product"
 
-	// cudaSampleImage runs the CUDA vectorAdd sample and prints "Test PASSED".
+	// cudaSampleImage runs the CUDA vectorAdd sample, which adds two vectors on
+	// the GPU, verifies every element on the host, and exits non-zero if the
+	// GPU got any of them wrong.
 	//
 	// Pinned to the multi-architecture index digest, so the tag can move
 	// without this run changing and so either architecture resolves from the
@@ -127,6 +129,10 @@ func validateGPURuntimePostCreate(test *tenantTest) {
 					Resources: corev1.ResourceRequirements{
 						Limits: corev1.ResourceList{gpuResourceName: resource.MustParse("1")},
 					},
+					// The sample writes its result to stdout and nothing to
+					// /dev/termination-log, so without this a failed run
+					// reports an empty message and says nothing about why.
+					TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 				}},
 				Tolerations: []corev1.Toleration{{
 					Key:      string(gpuResourceName),
@@ -136,10 +142,16 @@ func validateGPURuntimePostCreate(test *tenantTest) {
 			},
 		}
 
-		_, logs, err := kube.RunPod(ctx, adminClient, pod, "vectoradd", cudaWorkloadBudget)
-		Expect(err).NotTo(HaveOccurred(), "the CUDA sample should run to completion on a GPU node")
-		Expect(logs).To(ContainSubstring("Test PASSED"),
-			"the CUDA sample ran but did not report success:\n%s", logs)
+		// The sample's exit status is the assertion. It verifies its own
+		// arithmetic and exits non-zero when the GPU disagrees, so a pod that
+		// reaches Succeeded says an ordinary workload was given a GPU and CUDA
+		// computed the right answer -- the same thing its "Test PASSED" line
+		// says, and the only form of it available here. RunPod reports the
+		// container's termination message, not its stdout, so asserting on the
+		// printed text cannot work.
+		_, message, err := kube.RunPod(ctx, adminClient, pod, "vectoradd", cudaWorkloadBudget)
+		Expect(err).NotTo(HaveOccurred(),
+			"the CUDA sample should run to completion on a GPU node; it reported: %s", message)
 	}, Label("readiness", "gpu"), NodeTimeout(cudaWorkloadBudget+5*time.Minute))
 }
 
