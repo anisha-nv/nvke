@@ -150,6 +150,21 @@ cancelled run is exactly when this matters most, and inheriting the
 cancellation would abandon the instance. `Teardown` does the same at the end of
 a successful run.
 
+**A machine can fail to come back, and from the outside it looks like a slow
+release.** The node image roots on LUKS with a single keyslot sealed to that
+machine's own TPM by clevis — no passphrase and no recovery slot, which is what
+makes clearing the TPM between tenants a crypto-erase rather than a policy.
+Firmware on these machines orders the local disk ahead of the network. So a
+machine whose TPM no longer unseals boots the disk, stops in the initramfs at a
+prompt nothing can answer, and never reaches the iPXE path that would reimage
+it. On 2026-09-25 a tenant control plane sat there for four and a half hours
+while its instance reported `Terminating` and the serial console looped on the
+unlock prompt. Instances do clear eventually, which is why this reads as
+latency, but the cause is a machine that cannot finish booting.
+`os-image/docs/full-disk-encryption.md` documents the lockout as an accepted
+tradeoff and says re-imaging is the only remediation; nothing makes the
+re-imaging happen.
+
 ## 2. The site controller
 
 `site.Bootstrap` runs six ordered steps over the single session opened in
@@ -320,6 +335,43 @@ machine booting an OS image over the network and installing packages. Delete in
 particular is generous: Forge takes 20 to 40 minutes to genuinely release a
 machine, and the cluster is not gone until both of its machines are.
 
+That budget still measures a healthy release, but it no longer decides the
+verdict by itself. A backend marked `releaseIsBestEffort` tolerates the wait
+running out, and only that: `WaitForClusterDeleted` wraps
+`ErrClusterDeleteTimeout`, so a deletion CWE reports as failed still fails. What
+the spec asserts is what NKE does — CWE accepts the delete, drives it, and does
+not report it failed — all of which is observable in minutes, unlike a machine
+stuck in the initramfs.
+
+## What a green run looks like
+
+Run 36209850156 passed all ten specs in 4086 seconds on 2026-09-26, the first
+time this lane went green with the GPU path in it. The per-spec times are worth
+keeping as the baseline a slow run gets compared against, since most of them are
+dominated by hardware rather than by anything in the suite:
+
+| Spec | Time |
+|---|---|
+| provisions a node | 860.2s |
+| reaches what bootstrap and the deploy path pull from | 12.5s |
+| bootstraps the site controller | 394.6s |
+| creates the cluster | 1054.0s |
+| brings every desired node to Ready | 9.3s |
+| installs the tenant GPU runtime | 265.1s |
+| advertises an allocatable GPU on a worker node | 1.9s |
+| runs a CUDA workload on a GPU node | 10.5s |
+| deletes the cluster | 1471.3s |
+| garbage-collects the tenant-access admin kubeconfig secret | 7.1s |
+
+The GPU node came back as `NVIDIA-L40S` on driver `580.126.20`, and readiness
+cost 265 seconds of operator install against a budget of 40 minutes, so the
+generous GPU timeout is covering a risk that has not yet materialised.
+
+The delete finished in 1471 seconds, inside the 45-minute budget, so the
+best-effort path described above was not used. The way to tell from a log is
+that the post-deletion garbage-collection spec *ran* rather than skipping:
+those specs only execute when the cluster was confirmed gone.
+
 ## What this lane does not cover
 
 Worth knowing before reading a green run as broader assurance than it is.
@@ -348,11 +400,12 @@ Site capacity also constrains this: the declared site offers no GB200. The
 sites that have that capacity attach an interface by VPC prefix rather than by
 subnet, and the environment schema has no prefix alternative yet.
 
-## Decisions deferred to the first green run
+## Decisions the first green run makes due
 
-Two things are deliberately unresolved until this lane has passed once on
-hardware. They are written down rather than left implicit because both decay
-quietly if nobody comes back to them.
+Two things were deliberately unresolved until this lane had passed once on
+hardware. Run 36209850156 did that, so both are now open rather than deferred.
+They are written down rather than left implicit because both decay quietly if
+nobody comes back to them.
 
 **The chart pin.** `controller/deploy/tenant-runtime` pins the GPU operator to
 a version a fleet has actually run, so that a first failure is attributable to
