@@ -56,6 +56,29 @@ flowchart TB
 Only the bootstrap and tenant branches are usually ours, which is why naming
 the step matters more than the stack trace.
 
+**Locate it by spec name, not by job step.** The entire lane is one step —
+`Run the site controller lane` — so which step failed tells you almost
+nothing. What surrounds it does: the steps before are preparation and the ones
+after are cleanup, so a failure in `Check the run is viable` or `Start the
+Teleport identity daemon` never reached Forge at all. Inside the lane, the
+spec name in `site-e2e.log` is what names the layer:
+
+| Spec | Layer | Usually whose |
+|---|---|---|
+| `provisions a node` | infrastructure | the site's |
+| `reaches what bootstrap and the deploy path pull from` | infrastructure | the site's egress |
+| `bootstraps the site controller` | site controller | ours |
+| `creates the cluster` | tenant | CWE's, or the site's for the nodes |
+| `brings every desired node to Ready` | node pools | either |
+| `installs the tenant GPU runtime` | tenant | ours |
+| `advertises an allocatable GPU on a worker node` | node pools | the operator's, or the machine's |
+| `runs a CUDA workload on a GPU node` | tenant | ours |
+| `deletes the cluster` | infrastructure | the site's |
+
+A spec reported `[SKIPPED]` after a failure is not a second fault. The suite
+skips what depends on a layer that did not come up, which is why one real
+failure can leave most of the run unreported.
+
 ### The run never reached the hardware
 
 Symptoms: failure before any instance id appears in the log; `tbot.log`
@@ -77,6 +100,16 @@ up without an address. Ours to report, not to fix.
 never answered. This is the interesting one, because "Ready" means Forge handed
 the machine over, not that the image was written and booted. The gap covers
 the entire iPXE boot, disk write and first boot.
+
+Read the inner error before blaming the node, though. `ssh: handshake failed:
+EOF` together with `relay: ERROR: cannot relogin in non-interactive session`
+is Teleport declining the bot's certificate rather than a machine that failed
+to boot. Run 36208019553 failed exactly that way against a node Forge had
+already reported `BootCompleted`, and the same commit passed thirty minutes
+later with nothing changed. `tbot.log` settles it: a healthy daemon logs a
+join and then a renewal about every twenty minutes with no errors, so a clean
+tbot log alongside that message means the failure was transient and a re-run
+is the cheapest next step.
 
 **cloud-init did not finish cleanly** — the node booted and answered, but
 `cloud-init status --wait` returned non-zero. The log carries its output. Node
@@ -109,6 +142,48 @@ is gone.
 Reaching the console at all goes through the site's SSH key group, which
 governs Serial-over-LAN and not `authorized_keys`. It gives you a console on a
 node you cannot ssh to, which is exactly the case that matters here.
+
+### The FDE lockout, and how to recognise it
+
+Seen on 2026-09-25: tenant control plane
+`e2e-nico-forge-20260925-212125-cp-5128`, reporting `Terminating` for four and
+a half hours across four delete requests. The signature, again from the
+Serial-over-LAN console, is this looping with nothing after it:
+
+```
+Success: TPM device /dev/tpm0 ready
+Please unlock disk luks-<uuid>:
+Nothing to read on input.
+cryptsetup: ERROR: luks-<uuid>: cryptsetup failed, bad password or options?
+```
+
+The node image roots on LUKS with a single keyslot, sealed to that machine's
+own TPM by clevis. There is no passphrase slot and no recovery slot, and
+`os-image/docs/full-disk-encryption.md` documents that as deliberate: it is
+what makes clearing the TPM between tenants a crypto-erase rather than a
+policy. So once the TPM stops unsealing, **no password exists** and the prompt
+cannot be answered by anyone. Firmware on these machines orders the local disk
+ahead of the network, so the machine never falls through to the iPXE path that
+would reimage it — which is the only remediation that doc names.
+
+Two things make this easy to misread.
+
+The instance boots normally first. The case above reached `BootCompleted` at
+21:26:10 and ran a full tenant cluster; nothing is wrong until teardown. So a
+clean provisioning history is not evidence against this.
+
+And a Forge SOL session follows the **machine**, not the instance. The console
+for the case above reported having been connected for three days, which was
+before the instance existed. Read the boot timeline off the instance's own
+`statusHistory`, not off the console's connection time.
+
+Instances do clear eventually, so this is survivable rather than permanent —
+the one above released after about four and a half hours. "Flag and Delete
+Instance" in the UI is still worth doing: the delete half will not help, but
+the flag puts the machine into maintenance so the next tenant does not land on
+a board that cannot unseal its disk. Note that the flag acts on the machine
+and is not reachable with a tenant service key, which is why it is a UI action
+rather than something the harness can do.
 
 ### The metadata endpoint, which is broken by design right now
 
@@ -157,22 +232,30 @@ was run 36051890151.
 Two places where a healthy run looks stuck:
 
 **Delete takes 20 to 40 minutes.** Forge does not release a machine promptly,
-and a tenant cluster is not gone until both of its machines are. The measured
-figure on the green run was 40.5 minutes against a 45-minute budget. Instances
-reporting `Terminating` are making progress. Run 36051890151 failed its delete
-at exactly 1800.306s against a 30-minute budget that was simply too small.
+and a tenant cluster is not gone until both of its machines are. Two measured
+figures: 40.5 minutes on the first green run against a 45-minute budget, and
+24.5 minutes on 2026-09-26. Run 36051890151 failed its delete at exactly
+1800.306s against a 30-minute budget that was simply too small.
 
-**Provisioning takes most of an hour before anything interesting happens.** The
-green run took 81 minutes end to end. A lane that has been running 20 minutes
-with a quiet log has not failed.
+**Past about 40 minutes, though, stop waiting and go look.** `Terminating` is
+not evidence of progress. It is what the API reports whether the machine is
+releasing normally or is wedged, and the two are indistinguishable from
+outside. On 2026-09-25 two of the site's instances reported `Terminating` for
+hours, one for over five, and the machine under one of them spent that time
+stopped at an initramfs LUKS prompt — see [the FDE lockout](#the-fde-lockout-and-how-to-recognise-it).
+
+**Provisioning takes most of an hour before anything interesting happens.**
+Green runs have taken 81 and 73 minutes end to end. A lane that has been
+running 20 minutes with a quiet log has not failed.
 
 ## Capacity
 
-A `full` run needs three `cpu.himem.t1` machines: one site node, one tenant
-control plane, one tenant worker. The site's pool of that type is small enough
-that two concurrent runs contend for it. A create that fails immediately with a
-capacity error, rather than timing out, means the slots are taken — often by
-instances from an earlier run that are still `Terminating`.
+The site offers 8 `cpu.himem.t1` slots and a `full` run needs 2 of them: the
+site node and the tenant control plane. The tenant worker is an L40S, and the
+site has 8 of those sitting idle, so himem is the only contended type. A create
+that fails immediately with a capacity error, rather than timing out, means
+the slots are taken — often by instances from an earlier run that are still
+`Terminating`, which is its own reason to care about the section above.
 
 Check before assuming a defect:
 

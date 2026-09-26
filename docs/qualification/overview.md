@@ -59,20 +59,89 @@ Five steps, each built on the one before:
 [hardware-lane.md](hardware-lane.md) explains each step and why the awkward
 parts are the way they are.
 
+## Naming what is under qualification
+
+The question at the top of this page is about *particular versions*, so saying
+which ones is the whole input. That is `-e2e.versions`, a comma-separated set
+of `component=version` assignments.
+
+Three components have **no default**, because a run that did not name them has
+not said what it is qualifying:
+
+| Key | What it names |
+|---|---|
+| `controller` | the CWE build, or `built from this checkout` when the workflow compiles it |
+| `os-image` | HTTPS URL of the NKE qcow2 the machines boot |
+| `os-image-bootloader` | HTTPS URL of the qcow-imager EFI, versioned separately and not derivable from the image |
+
+Omitting one fails the run naming the key, and the error lists the keys that
+*were* supplied — which is the common case of a typo in a long assignment
+list.
+
+The rest fall back, so a run overrides only what it is changing:
+
+| Key | Default |
+|---|---|
+| `kube` | `1.36.3` |
+| `nke-cni-ovn` | `1.4.0` |
+| `spire-agent` | `1.14.1+tpm1.9.0` |
+| `nerdctl` | `2.3.5` |
+| `kind` | `v0.30.0` |
+| `clusterctl` | `v1.12.3` |
+
+**Both image URLs must be plain HTTPS.** iPXE cannot pull an OCI artifact, so
+an OCI reference fails at boot rather than at validation.
+
+A labelled `pull_request` run has no inputs to read, so the workflow sources
+these from repository variables — `FORGE_E2E_OS_IMAGE`,
+`FORGE_E2E_OS_IMAGE_BOOTLOADER` and `FORGE_E2E_STAGE` — and builds the
+controller from the checkout. Whatever the source, the run writes what it
+actually resolved, and which of those were overridden, to `run-inputs.txt`.
+Read that before trusting a result: it is the only artifact that answers "was
+this even testing what I thought?"
+
+Capabilities are a separate axis and are not versions. `-e2e.capabilities`
+describes the *machine* a run needs; see
+[environments.md](environments.md#how-a-machine-gets-chosen).
+
 ## Running one
 
-The lane never starts on its own. It runs on a `workflow_dispatch`, or when
-the `forge-e2e` label is applied to a pull request from this repository. It is
-deliberately not on a schedule or on push: it costs hardware, and a run nobody
-is watching is a run nobody acts on.
+The lane never starts on its own, and it is deliberately not on a schedule or
+on push: it costs hardware, and a run nobody is watching is a run nobody acts
+on.
+
+It declares two triggers and only one of them works today.
+
+**The label is the live one.** `pull_request: types: [labeled]` against `main`,
+so adding `forge-e2e` to a pull request is the request to run. `synchronize`
+is deliberately absent, which means pushing to an already-labelled PR does not
+quietly take another machine. To run again, remove the label and add it back,
+or use the re-run button.
+
+**`workflow_dispatch` is declared and not yet usable.** Dispatch reads a
+workflow's definition from the default branch, and this file is not on `main`
+yet, so it cannot be dispatched until it merges. Its inputs — the stage, a
+controller version, the two image URLs and `keep-site` — are exactly what a
+`pull_request` event cannot supply, which is why a labelled run falls back to
+`FORGE_E2E_*` repository variables for them.
+
+Either way, one run at a time repository-wide and never cancelled: two
+concurrent runs would exhaust the site's capacity, and cancelling one
+mid-flight leaks its instance.
 
 `-e2e.site-stage` chooses how far to go, so you can pay for the part you need:
 
 | Stage | Does everything above, plus | Roughly |
 |---|---|---|
 | `provision` | a Forge node, reachable, then released | 20 min |
-| `bootstrap` | vanilla Kubernetes via `nkectl bootstrap site` | 45 min |
-| `full` | the NKE stack, the engine, a tenant cluster, and the GPU runtime on it | 140 min |
+| `bootstrap` | vanilla Kubernetes via `nkectl bootstrap site` | 30 min |
+| `full` | the NKE stack, the engine, a tenant cluster, and the GPU runtime on it | 75 min |
+
+Only `full` has been measured end to end — 73 minutes on run 36209850156 and
+81 on the first green run. The other two are derived from that run's own spec
+times, where provisioning accounts for about 14 minutes and bootstrap for
+another 7, so read them as the right order of magnitude rather than as
+observations.
 
 ## Reading a result
 

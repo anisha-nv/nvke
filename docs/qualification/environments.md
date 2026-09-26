@@ -46,6 +46,29 @@ That split is the point. A second provider describes its infrastructure in its
 own terms, with its own field names, and nothing above the provider interface
 changes. There is no shared schema for it to satisfy.
 
+### What the forge provider requires
+
+`ForgeSite.validate()` runs on lookup rather than at decode, so a site missing
+a field fails naming that field, at the environment file, instead of surfacing
+later as an API rejection naming something the caller never set. These five
+are required and a site is rejected without them:
+
+| Field | Required | Notes |
+|---|---|---|
+| `id` | yes | the site's own UUID, not its name |
+| `vpcID` | yes | per-site; see [Identifiers, not names](#identifiers-not-names) |
+| `subnetID` | yes | only for `ETHERNET_VIRTUALIZER` sites; see [Adding a site](#adding-a-site) |
+| `sshKeyGroupID` | yes | console access only; see [below](#what-a-key-group-does-not-give-you) |
+| `instanceTypes` | yes, non-empty | each needs `name`, `id` and `provides` |
+
+`org.id` is checked separately, as is the presence of at least one site, and
+both fail against the environment name rather than a site key.
+
+Unknown keys are **ignored rather than rejected**, which is worth knowing
+before inventing a field: a misspelt key is silently dropped instead of
+failing. That is why the org's human-facing name lives in a comment rather
+than as a field nothing reads.
+
 ## How a machine gets chosen
 
 A run asks for capabilities, not for a site or an instance type — those are
@@ -73,9 +96,19 @@ Two consequences worth internalising.
 several types satisfy a request, the first listed wins.
 
 **An empty request matches everything.** Asking for nothing is satisfied by
-every type, so the first declared type wins by default. The Forge lane passes
-no `-e2e.capabilities` today, which is why it always lands on `cpu.himem.t1`
-and why the GPU type has never actually been selected.
+every type, so the first declared type wins by default. That is what the site
+node and the tenant control plane get: the Forge lane passes no
+`-e2e.capabilities`, so they land on `cpu.himem.t1`.
+
+**A table entry can ask separately, and the GPU path does.** `clusterShape`
+carries a `workerCapabilities` map that resolves the worker pools' instance
+type independently of the control plane's, so the `nico-forge` entry asks for
+`{machineType: gpu, arch: amd64}` and is answered with
+`gpu.l40sx8.ovx.t1.ib`. Run 36209850156 selected it and the node came back as
+an `NVIDIA-L40S` on driver `580.126.20`, so a single run now exercises both
+types the site declares. Asking by property rather than by id is what makes
+that portable: a site whose GPU is something else still answers, and a site
+with none fails saying so instead of quietly booting a CPU machine.
 
 A request nothing satisfies **fails rather than falling back**. Asking for
 `{gpu: gb200}` at a site with no GB200 is an error, not a quiet substitution of
@@ -175,6 +208,42 @@ its Instance Types tab returns exactly two results, and `forge.yaml` declares
 both. Capacity there, as of 2026-09-25, is 8 usable `gpu.l40sx8.ovx.t1.ib` with
 none in use and 2 usable `cpu.himem.t1` of 8 — the GPUs are idle and the CPU
 type is the contended one.
+
+### Finding the identifiers
+
+Mint a bearer token, then read what the org can see. The token is good for
+about an hour, so a long session re-mints rather than reusing:
+
+```bash
+KEY=$(grep -v '^[[:space:]]*#' <key file> | tr -d '\r\n')
+TOKEN=$(curl -s -u "\$oauthtoken:${KEY}" \
+  "https://authn.nvidia.com/token?service=forge&scope=group/ngc:${ORG}" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+```
+
+Key files here carry `#` comment headers, which is what the `grep` strips; a
+header left in the value produces a 401 that looks like a bad key.
+
+| Want | Endpoint |
+|---|---|
+| site names and ids | `GET /v2/org/{org}/forge/site` |
+| one site's detail | `GET /v2/org/{org}/forge/site/{id}` |
+| what is running, and free capacity by subtraction | `GET /v2/org/{org}/forge/instance?siteId={id}` |
+| which types the site has allocations for | `GET /v2/org/{org}/forge/allocation?siteId={id}` |
+
+Two limits to know before planning around this. `forge/instance-type` **404s**,
+so the per-type allocated/in-use/usable numbers quoted above come from the
+site's Instance Types tab in the UI and cannot be scripted from here. And
+`forge/machine` **401s with a tenant service key** — machines are
+provider-level — which is also why maintenance-flagging a machine is a UI
+action rather than something the harness can do.
+
+Instances are tenant-scoped and both readable and deletable with the same key,
+which is what makes the capacity check in [triage.md](triage.md#capacity)
+possible.
+
+The allocation record names a type and a site but carries **no counts**, so it
+answers "does this site have GB200 at all" and not "are any free".
 
 ## Adding a provider
 
