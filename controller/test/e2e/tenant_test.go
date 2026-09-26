@@ -6,6 +6,7 @@ package e2e
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"os"
@@ -442,6 +443,14 @@ func nicoForgeTenant() testSpec {
 		// still reporting Terminating.
 		options:  nke.Options{Provision: 90 * time.Minute, Delete: 45 * time.Minute, Poll: 30 * time.Second},
 		validate: validations{provisioningOnly: true, gpuRuntime: true},
+		// 45 minutes is still what a healthy release takes, so the budget
+		// stays and the wait still measures it. Only the verdict changed: on
+		// 2026-09-25 two of the site's instances reported Terminating for
+		// hours, one for over five, and the machine under one of them spent
+		// that time stopped at an initramfs LUKS prompt it had no key for. A
+		// machine that cannot finish booting is not a budget this lane can
+		// size for.
+		releaseIsBestEffort: true,
 	}
 }
 
@@ -601,8 +610,7 @@ func tenantSubtree(resolve managementResolver) func(spec testSpec) {
 			}
 
 			deleteWaited = true
-			test.deleteClusterAndWait(ctx)
-			deleted = true
+			deleted = test.deleteClusterAndWait(ctx, spec.releaseIsBestEffort)
 		}, Label("lifecycle"), NodeTimeout(1*time.Hour))
 
 		Describe("after cluster deletion", func() {
@@ -668,7 +676,7 @@ func tenantSubtree(resolve managementResolver) func(spec testSpec) {
 				GinkgoLogr.Info("tenant delete already timed out; leaving it to the site sweep rather than waiting again",
 					"cluster", test.cluster.ID)
 			default:
-				test.deleteClusterAndWait(ctx)
+				test.deleteClusterAndWait(ctx, spec.releaseIsBestEffort)
 			}
 			// Sized to what this node can actually contain rather than to the
 			// suite: WaitForClusterDeleted is bounded by the entry's
@@ -707,6 +715,11 @@ type testSpec struct {
 	validate  validations
 	// createVia selects the client that drives this entry's cluster lifecycle.
 	createVia clusterClient
+	// releaseIsBestEffort accepts a delete that CWE drove correctly but that
+	// the infrastructure has not finished. Set it for a backend whose machine
+	// release is slow enough that no budget inside the suite's own timeout
+	// would cover it; see deleteClusterAndWait.
+	releaseIsBestEffort bool
 }
 
 // clusterClient names the transport an entry drives its cluster lifecycle
@@ -994,13 +1007,34 @@ func validateTenantAccessSecretGCPostDelete(test *tenantTest) {
 }
 
 // deleteClusterAndWait deletes the tenant cluster and blocks until CWE reports
-// it gone (404). Shared by the delete spec and the AfterAll cleanup.
-func (t *tenantTest) deleteClusterAndWait(ctx context.Context) {
+// it gone (404), returning whether it confirmed that. Shared by the delete spec
+// and the AfterAll cleanup.
+//
+// releaseBestEffort tolerates the wait running out of time, and only that. What
+// this lane qualifies is NKE: that CWE accepts the delete, drives it, and does
+// not report it failed -- all of which are observable in minutes. Whether the
+// machine then comes back is not something a budget can influence. The control
+// plane of run 36188700235 rebooted during teardown into an initramfs it could
+// not get past: the node image roots on LUKS with a single TPM2-sealed keyslot
+// and no passphrase, and firmware boots the disk ahead of the network, so a
+// machine that cannot unseal stops at a prompt nothing can answer instead of
+// netbooting. It sat there while the instance reported Terminating for hours.
+// That is not slowness to size a budget against, and no verdict here would fix
+// it. A deletion CWE reports as failed is a real defect and still fails.
+func (t *tenantTest) deleteClusterAndWait(ctx context.Context, releaseBestEffort bool) bool {
 	GinkgoHelper()
 	By("Deleting the tenant cluster")
 	Expect(t.lifecycle.DeleteCluster(ctx, t.cluster.ID)).To(Succeed())
+
 	By("Waiting for the tenant cluster to be deleted")
-	Expect(t.lifecycle.WaitForClusterDeleted(ctx, t.cluster.ID)).To(Succeed())
+	err := t.lifecycle.WaitForClusterDeleted(ctx, t.cluster.ID)
+	if releaseBestEffort && errors.Is(err, nke.ErrClusterDeleteTimeout) {
+		GinkgoLogr.Info("CWE drove the delete and the infrastructure has not finished releasing; not failing the lane for it",
+			"cluster", t.cluster.ID, "detail", err.Error())
+		return false
+	}
+	Expect(err).NotTo(HaveOccurred())
+	return true
 }
 
 // Cluster shape is a property of the test, not the environment, so it lives in

@@ -5,6 +5,7 @@ package nke
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -52,6 +53,12 @@ func (c *Client) WaitForClusterReady(ctx context.Context, id openapi_types.UUID)
 	}
 }
 
+// ErrClusterDeleteTimeout is returned when the budget passes with the cluster
+// still there. It is deliberately distinct from a deletion CWE reports as
+// failed, so a caller willing to tolerate infrastructure that is merely slow
+// can match this one and still fail on the other.
+var ErrClusterDeleteTimeout = errors.New("cluster delete timed out")
+
 // WaitForClusterDeleted polls the cluster until it returns 404, erroring if the
 // Deleting condition flips to False, the deadline passes, or ctx is done.
 func (c *Client) WaitForClusterDeleted(ctx context.Context, id openapi_types.UUID) error {
@@ -62,7 +69,7 @@ func (c *Client) WaitForClusterDeleted(ctx context.Context, id openapi_types.UUI
 	for {
 		select {
 		case <-deadline:
-			return fmt.Errorf("timeout after %v waiting for cluster %s to be deleted", c.opts.Delete, id)
+			return fmt.Errorf("%w: cluster %s after %v", ErrClusterDeleteTimeout, id, c.opts.Delete)
 		case <-ctx.Done():
 			return fmt.Errorf("waiting for cluster %s to be deleted: %w", id, ctx.Err())
 		case <-ticker.C:
