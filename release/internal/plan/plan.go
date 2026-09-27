@@ -10,7 +10,11 @@
 // cache, so the same inputs always produce the same plan in the same order.
 package plan
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/dsx-ai-factory/nke/release/internal/policy"
+)
 
 // errNoCandidate is returned when no version survives a dependency's
 // constraint. It fails here, before anything is scheduled, rather than
@@ -57,21 +61,60 @@ type Stream struct {
 	Skip Outcome `json:"skip,omitempty"`
 }
 
-// Outcome is what became of a cell in an earlier run.
-type Outcome string
+// Cell is one runnable cell with the nesting flattened away.
+//
+// A matrix job takes a flat list, and flattening it here rather than in the
+// workflow keeps the arithmetic of what runs in code that is tested. The
+// fields are what `qualify run` needs to identify itself and nothing more:
+// the dependency versions stay in the plan, which the run reads.
+type Cell struct {
+	Component   string `json:"component"`
+	Version     string `json:"version"`
+	Combination string `json:"combination"`
+	Stream      string `json:"stream"`
 
-// The outcomes a cell can carry. Passed and Failed are skipped on a rerun,
-// because running the same candidate again proves nothing either way. Error
-// and Unschedulable are not, because the answer is still unknown.
-const (
-	OutcomeNone          Outcome = ""
-	OutcomePassed        Outcome = "passed"
-	OutcomeFailed        Outcome = "failed"
-	OutcomeError         Outcome = "error"
-	OutcomeUnschedulable Outcome = "unschedulable"
-)
-
-// skippable reports whether an earlier outcome settles the question.
-func (o Outcome) skippable() bool {
-	return o == OutcomePassed || o == OutcomeFailed
+	// Capabilities is the stream's, carried here because a matrix job has to
+	// choose a runner before it can read the plan. It is the declaration
+	// rather than a runner label: which label satisfies an architecture is
+	// the workflow's knowledge, not the policy's.
+	Capabilities map[string]string `json:"capabilities"`
 }
+
+// Matrix is the cells that will actually run.
+//
+// Skipped cells are dropped here, having been kept in the plan itself: the
+// plan is the record of what the scope covers, and the matrix is the work.
+// Scheduling a job to skip would spend a runner to print a decision the plan
+// already states.
+func (p *Plan) Matrix() []Cell {
+	var cells []Cell
+	for _, c := range p.Combinations {
+		for _, s := range c.Streams {
+			if s.Skip != OutcomeNone {
+				continue
+			}
+			cells = append(cells, Cell{
+				Component:    p.Component,
+				Version:      p.Version,
+				Combination:  c.ID,
+				Stream:       s.Name,
+				Capabilities: s.Capabilities,
+			})
+		}
+	}
+	return cells
+}
+
+// Outcome is what became of a cell in an earlier run. It is policy's Result
+// under a name that reads better at the Planner's call site: there, the
+// question is what happened last time rather than what this run produced.
+type Outcome = policy.Result
+
+// The outcomes a cell can carry.
+const (
+	OutcomeNone          = policy.ResultNone
+	OutcomePassed        = policy.ResultPassed
+	OutcomeFailed        = policy.ResultFailed
+	OutcomeError         = policy.ResultError
+	OutcomeUnschedulable = policy.ResultUnschedulable
+)

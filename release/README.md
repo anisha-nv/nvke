@@ -1,10 +1,12 @@
 # release/
 
-> **Plan only.** This directory defines the shape of NKE release
-> qualification, and `qualify plan` resolves a real one from the repository's
-> tags. Nothing runs it: there is no `run`, no capacity provider and no
-> published record, so a green CI run means a plan was well formed, not that
-> anything was qualified. See [Status](#status).
+> **The verbs run; the version pinning does not.** All five verbs exist, and
+> `release-qualify.yml` wires them end to end: a dispatch resolves a plan, runs
+> each cell against the e2e suite, publishes one record per stream, folds them
+> into a central artifact and renders a page from it. What is missing is the
+> part that makes a result mean what it says — no spec pins a version from
+> `-e2e.versions`, so a run qualifies what the working tree builds rather than
+> the candidate the plan named. See [Status](#status).
 
 Release tooling: the orchestration that takes a candidate set of already-built
 artifacts, qualifies it, and — on success — publishes the immutable record of
@@ -67,9 +69,14 @@ left that tree byte-for-byte unchanged.
 | Path | Contents |
 |---|---|
 | [`qualification.yaml`](qualification.yaml) | The release-wide policy: components in scope, the streams they run against, and the named scopes over those streams |
-| [`cmd/qualify/`](cmd/qualify/) | The binary. Five verbs are designed; `plan` is the one that exists |
+| [`cmd/qualify/`](cmd/qualify/) | The binary: one file per verb |
 | [`internal/plan/`](internal/plan/) | Turning a trigger into a run list: dependency resolution, scope expansion, and what an earlier run already settled |
-| [`internal/policy/`](internal/policy/) | Reading and validating the `qualification.yaml` files |
+| [`internal/policy/`](internal/policy/) | Reading and validating the `qualification.yaml` files, and the result vocabulary every verb shares |
+| [`internal/capacity/`](internal/capacity/) | Confirming the hardware a stream needs before anything runs, so a shortage reports as a shortage |
+| [`internal/suite/`](internal/suite/) | Every invocation of the e2e suite, both the dry run that asks what a selection needs and the run itself |
+| [`internal/record/`](internal/record/) | Where a result goes: the composite tag, the artifact, and the on-disk handoff between `run` and `publish` |
+| [`internal/aggregate/`](internal/aggregate/) | Folding every result into one artifact and deciding what each candidate is qualified at |
+| [`internal/dashboard/`](internal/dashboard/) | Rendering that artifact as a static page |
 A component says how it is qualified in its own file, next to the code:
 [`controller/qualification.yaml`](../controller/qualification.yaml),
 [`cli/qualification.yaml`](../cli/qualification.yaml),
@@ -147,6 +154,78 @@ same candidate proves nothing either way; `error` and `unschedulable` are not,
 because the answer is still unknown. Keeping them means a run covering four of
 six streams says so instead of looking like a smaller matrix.
 
+## The five verbs
+
+```sh
+qualify plan      --component controller --scope active --output plan.json --matrix matrix.json
+qualify run       --plan plan.json --combination <id> --stream <name> --artifacts ./artifacts
+qualify publish   --plan plan.json --combination <id> --stream <name> \
+                  --artifacts ./artifacts --push <registry>/qualification
+qualify aggregate --source <registry>/qualification --state <registry>/qualification/state:current
+qualify generate  --source <registry>/qualification/state:current --out ./site
+```
+
+Each is a separate job in [`release-qualify.yml`](../.github/workflows/release-qualify.yml)
+because each has a different trigger and a different failure meaning. The only
+state any of them shares is what is in the registry.
+
+**`run` does one cell and nothing else.** It looks the entry up in the plan —
+never resolves it — asks the suite what that selection needs with a `--dry-run`
+over the same label filter, acquires capacity, runs it, and writes the outcome
+next to the report. The two suite invocations build the same command and differ
+only by `--dry-run`, so the specs a requirement describes are by construction
+the specs that run. A filter selecting no spec is a hard error: Ginkgo exits 0
+on an empty selection, so without that check a mistyped filter reports a pass
+it never earned.
+
+**The outcome is written before an error is returned**, which is what makes a
+failed or unschedulable run publishable. The four outcomes are not
+interchangeable: `failed` means the suite ran and something asserted false,
+`error` means the suite itself broke and nothing was asserted, and
+`unschedulable` means the hardware was not there. Only the first is a
+qualification result, and only `passed` and `failed` are settled — the other
+two leave the answer unknown, so the next plan runs them again.
+
+**`publish` runs inside each matrix job**, not after the matrix, so a stream
+that failed has a durable result before anything else notices. The tag is
+composite — version, combination and stream, under the component's repository —
+so listing tags says which results exist without pulling any of them.
+
+**`aggregate` decides what qualified means.** Nothing before it does: each
+stream published only its own outcome. It discovers results from a tag listing
+rather than being told, which is what makes the central artifact a derived
+cache rather than a source of truth — a state that is missing or corrupt simply
+differs from everything, and the same code path rebuilds it in full. Coverage
+follows from which streams passed rather than from the scope a result carries,
+so a run that set out to cover the full matrix and went half unschedulable
+contributes only what it proved.
+
+## What the suite is told
+
+Three flags carry the whole interface, and
+[`controller/test/e2e/internal/qualification`](../controller/test/e2e/internal/qualification)
+is the suite's half of it:
+
+| Flag | Carries |
+|---|---|
+| `-e2e.versions` | The resolved component versions, as `name=version` pairs |
+| `-e2e.capabilities` | The stream's capabilities less `provider`, as `name=value` pairs |
+| `-e2e.environment` | The environment config to run against, by name |
+
+`provider` is dropped on the way in because it selects the label filter and the
+capacity client, both of which are the tool's concern. No site, subnet or
+instance identifier crosses this boundary at all — the suite resolves those
+from its own environment file, which is what lets a second environment with the
+same capabilities be a config change rather than a tooling change.
+
+Hardware demand travels the other way, as `needs:<type>=<count>` labels on the
+suite's own containers. The requirement is the **maximum** per machine type
+across the selected specs rather than the sum, because an `Ordered` container
+shares one site controller across every spec beneath it. Summing would ask for
+a site's worth of hardware per assertion. No spec carries such a label yet,
+which is honest: today's two streams are container-backed, so the requirement
+is genuinely empty.
+
 ## The model
 
 An NKE release is three independently versioned categories — **Controller**,
@@ -194,9 +273,10 @@ never run together.
 
 ## Status
 
-`plan` is real and the policy files are gate-covered. **No qualification lane
-is wired in** — a green run means a plan was well formed, not that anything was
-qualified. In dependency order:
+All five verbs run, and the workflow wires them together. **A result does not
+yet mean the candidate was qualified**, because no spec pins a version from
+`-e2e.versions`: a run says the suite passed against the commit it was launched
+from. In dependency order:
 
 - [x] Stand the tool up as a Go module in the workspace, so it is linted,
       tested and vulnerability-scanned like everything else
@@ -207,17 +287,24 @@ qualified. In dependency order:
 - [x] Validate the policy files in the merge gate. `TestRepositoryPolicyFilesAreValid`
       loads every one of them, so a selector naming a capability no stream
       declares fails a pull request instead of silently selecting nothing.
-- [ ] Publish a record. The SADD has `publish` write one per stream and
-      `aggregate` fold them into a central artifact in a registry. Whatever
-      shape that takes has to keep the `digest` versus `contentDigest` split
-      described above: a manifest digest identifies a publication event, so it
-      is not stable across a copy, and the layer digest is what survives one.
-- [ ] Implement `run`: the capacity provider, the test client, and the CTRF
+- [x] Implement `run`: the capacity provider, the test client, and the CTRF
       artifacts a run leaves behind
+- [x] Implement `publish`, `aggregate` and `generate`, and wire all five into
+      `release-qualify.yml`
+- [x] Give the suite the three flags the interface needs, so a selection can be
+      passed in and is parsed and validated rather than ignored
+- [ ] **Honour the versions.** The suite parses `-e2e.versions` and no spec
+      consults it, so a run qualifies the working tree. Until this closes, a
+      published record says the suite passed against that commit — which is why
+      `BeforeSuite` logs the gap rather than leaving it to be inferred.
+- [ ] Keep the `digest` versus `contentDigest` split described above in the
+      record's schema. `spec.dependencies` carries versions today, not digests,
+      so the record identifies a version set rather than a byte set.
 - [ ] Teach the pre-flight lane to accept pre-built artifacts (upstream of this
       directory: the build guard, an agent bundle checksum, and a configurable
       Kubernetes version)
-- [ ] Add the streams that need real hardware. Today's two are container-backed,
-      so `qualification.yaml` declares no `gpu` capability at all rather than
-      claiming one no lane can back.
-- [ ] Implement `aggregate` and `generate`
+- [ ] Add the streams that need real hardware, a Forge provider in
+      `internal/capacity`, and `needs:` labels on the specs that consume it.
+      Today's two streams are container-backed, so `qualification.yaml`
+      declares no `gpu` capability at all rather than claiming one no lane can
+      back.

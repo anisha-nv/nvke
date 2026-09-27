@@ -265,7 +265,7 @@ func (p *Planner) combination(
 		// A history that cannot answer is not a reason to refuse to plan:
 		// the worst case is rerunning a cell that had already settled, which
 		// costs time and proves the same thing.
-		if outcome, err := p.History.Outcome(component, version, id, s.Name); err == nil && outcome.skippable() {
+		if outcome, err := p.History.Outcome(component, version, id, s.Name); err == nil && outcome.Settled() {
 			cell.Skip = outcome
 		}
 		cells = append(cells, cell)

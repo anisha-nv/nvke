@@ -135,7 +135,7 @@ func TestNormalise(t *testing.T) {
 	}
 }
 
-func TestOutcomeSkippable(t *testing.T) {
+func TestOutcomeSettled(t *testing.T) {
 	// passed and failed settle the question; error and unschedulable leave
 	// it open, so a rerun is still worth doing.
 	for outcome, want := range map[Outcome]bool{
@@ -145,8 +145,8 @@ func TestOutcomeSkippable(t *testing.T) {
 		OutcomeUnschedulable: false,
 		OutcomeNone:          false,
 	} {
-		if got := outcome.skippable(); got != want {
-			t.Errorf("%q.skippable() = %v, want %v", outcome, got, want)
+		if got := outcome.Settled(); got != want {
+			t.Errorf("%q.Settled() = %v, want %v", outcome, got, want)
 		}
 	}
 }

@@ -68,6 +68,9 @@ type Component struct {
 	Kind       string        `json:"kind"`
 	Metadata   Metadata      `json:"metadata"`
 	Spec       ComponentSpec `json:"spec"`
+
+	// Status is absent in a declaration and present in a result.
+	Status *Status `json:"status,omitempty"`
 }
 
 // Metadata names the component spec and says what it is for.
@@ -78,7 +81,13 @@ type Metadata struct {
 
 // ComponentSpec is the body of a ComponentQualification.
 type ComponentSpec struct {
-	Component    string       `json:"component"`
+	Component string `json:"component"`
+
+	// Version is the candidate. A declaration leaves it empty and a result
+	// sets it: one kind carries both, differing only in this field and in
+	// whether Status exists at all.
+	Version string `json:"version,omitempty"`
+
 	Dependencies []Dependency `json:"dependencies,omitempty"`
 
 	// Streams narrows this component to a subset of the scope's streams.
@@ -224,6 +233,12 @@ func (p *Policy) validate(path string) error {
 func (c *Component) validate(path string) error {
 	if c.Spec.Component == "" {
 		return fmt.Errorf("%s: spec.component is empty", path)
+	}
+	if c.Spec.Version != "" {
+		return fmt.Errorf("%s: spec.version is set, which pins the candidate a plan is supposed to choose", path)
+	}
+	if c.Status != nil {
+		return fmt.Errorf("%s: status is set, so this is a result rather than a declaration", path)
 	}
 	if c.Metadata.Name != "" && c.Metadata.Name != c.Spec.Component {
 		return fmt.Errorf("%s: metadata.name is %q but spec.component is %q",

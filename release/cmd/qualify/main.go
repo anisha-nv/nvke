@@ -4,9 +4,9 @@
 // Command qualify drives release qualification: it resolves what to qualify,
 // runs it, records the result, and renders what is qualified.
 //
-// Only `plan` exists so far. The others are named in the root help rather
-// than stubbed, because a command that parses its flags and then refuses is
-// harder to tell from one that is merely broken.
+// The five verbs are separate because each is a different job in the
+// workflow, with a different trigger and a different failure meaning. The
+// only state any of them shares is what is in the registry.
 package main
 
 import (
@@ -44,15 +44,18 @@ func root() *cobra.Command {
 		Version: version,
 		Long: `Drive NKE release qualification.
 
-The tool has five verbs. Only plan is implemented.
+The tool has five verbs, one per job in the workflow.
 
-  plan       resolve what to qualify                  (implemented)
+  plan       resolve what to qualify
   run        acquire capacity, call the suite, release
   publish    record one stream's outcome
-  aggregate  rebuild one artifact from every result
-  generate   render the dashboard from it`,
+  aggregate  rebuild one artifact from every result and decide what is qualified
+  generate   render the dashboard from it
+
+Nothing before aggregate says whether a candidate is qualified: each stream
+publishes only its own outcome, and the judgement is over all of them.`,
 		SilenceUsage: true,
 	}
-	cmd.AddCommand(planCmd())
+	cmd.AddCommand(planCmd(), runCmd(), publishCmd(), aggregateCmd(), generateCmd())
 	return cmd
 }

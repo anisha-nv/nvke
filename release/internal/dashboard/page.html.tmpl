@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NKE release qualification</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.1rem; margin-top: 2rem; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 0.35rem 0.6rem; border-bottom: 1px solid #8884; }
+  th { font-weight: 600; }
+  code { font-family: ui-monospace, monospace; }
+  .result { font-weight: 600; }
+  .passed { color: #1a7f37; }
+  .failed { color: #cf222e; }
+  .error { color: #9a6700; }
+  .unschedulable { color: #6e7781; }
+  .not-run { color: #6e7781; font-style: italic; }
+  .scopes { color: #1a7f37; font-weight: 600; }
+  .none { color: #6e7781; font-style: italic; font-weight: normal; }
+  .empty { color: #6e7781; font-style: italic; }
+</style>
+</head>
+<body>
+<h1>NKE release qualification</h1>
+
+{{- if not .Components }}
+<p class="empty">No results yet. A candidate appears here once a stream has published.</p>
+{{- end }}
+
+{{- range .Components }}
+<h2>{{ .Name }} <code>{{ .Version }}</code></h2>
+<p>
+  Qualified at:
+  {{- if .Qualified }}
+  <span class="scopes">{{ range $i, $s := .Qualified }}{{ if $i }}, {{ end }}{{ $s }}{{ end }}</span>
+  {{- else }}
+  <span class="none">nothing yet</span>
+  {{- end }}
+</p>
+<table>
+  <thead>
+    <tr><th>stream</th><th>combination</th><th>result</th><th>specs</th><th>run</th></tr>
+  </thead>
+  <tbody>
+  {{- range .Streams }}
+    <tr>
+      <td>{{ .Name }}</td>
+      <td><code>{{ .Combination }}</code></td>
+      <td class="result {{ .Class }}">{{ .Result }}</td>
+      <td>{{ with .Summary }}{{ . }}{{ else }}&mdash;{{ end }}</td>
+      <td>{{ with .RunURL }}<a href="{{ . }}">logs</a>{{ else }}&mdash;{{ end }}</td>
+    </tr>
+  {{- end }}
+  </tbody>
+</table>
+{{- end }}
+</body>
+</html>

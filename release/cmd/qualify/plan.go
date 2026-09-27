@@ -23,6 +23,7 @@ func planCmd() *cobra.Command {
 		version   string
 		scope     string
 		output    string
+		matrix    string
 		root      string
 		policyAt  string
 	)
@@ -67,7 +68,13 @@ An absent --version means the component's latest release candidate.`,
 			if err != nil {
 				return err
 			}
-			return write(cmd, output, result)
+			if err := write(cmd, output, result); err != nil {
+				return err
+			}
+			if matrix == "" {
+				return nil
+			}
+			return writeMatrix(matrix, result)
 		},
 	}
 
@@ -79,6 +86,7 @@ An absent --version means the component's latest release candidate.`,
 	// person running it believed.
 	f.StringVar(&scope, "scope", "full", "how much of the matrix to cover")
 	f.StringVar(&output, "output", "-", "where to write the plan; - is stdout")
+	f.StringVar(&matrix, "matrix", "", "also write the runnable cells here, as a flat list for a job matrix")
 	f.StringVar(&root, "root", "", "repository root (default: the enclosing git checkout)")
 	f.StringVar(&policyAt, "policy", "", "release policy file (default: <root>/release/qualification.yaml)")
 
@@ -99,6 +107,27 @@ func write(cmd *cobra.Command, path string, result *plan.Plan) error {
 		return err
 	}
 	if err := os.WriteFile(path, b, 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	return nil
+}
+
+// writeMatrix emits the runnable cells as a compact one-line array, which is
+// the shape `fromJSON` wants and the shape a GITHUB_OUTPUT line admits.
+//
+// An empty matrix is written as [] rather than null, because `fromJSON(null)`
+// is a workflow error while a matrix of [] is a job that is skipped. A plan
+// that covers nothing should leave the run page empty, not red.
+func writeMatrix(path string, result *plan.Plan) error {
+	cells := result.Matrix()
+	if cells == nil {
+		cells = []plan.Cell{}
+	}
+	b, err := json.Marshal(cells)
+	if err != nil {
+		return fmt.Errorf("encoding the matrix: %w", err)
+	}
+	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	return nil

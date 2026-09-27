@@ -1,33 +1,35 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Resolve and print a qualification plan.
-#
-# SCAFFOLDING. This qualifies nothing. It resolves what qualifying a candidate
-# would involve and prints it. Both halves are deliberate -- the plan is the
-# part worth reviewing before any of it runs, and a workflow that silently did
-# nothing would be indistinguishable from a pass.
+# Qualify a candidate: resolve the plan, run each cell, record each outcome,
+# and decide what the candidate is qualified at.
 #
 # WHY THIS IS ADVISORY AND DISPATCH-ONLY. Per the invariants in README.md, the
 # required gate is the aggregate in merge-gate.yml, and a required member must
 # run for a fork pull request with no repository secrets. Qualification is the
 # opposite of that on every axis: it is per-candidate rather than per-commit, it
-# will need registry credentials once `latest` consults the central artifact,
-# and layer 3 needs privileged infrastructure. So its trigger is
-# `workflow_dispatch` and nothing else, and it must not become a gate member.
+# needs registry credentials to publish, and it needs privileged infrastructure.
+# So its trigger is `workflow_dispatch` and nothing else, and it must not become
+# a gate member.
 #
 # Note that the policy files this reads are NOT only checked here. The release
 # module's TestRepositoryPolicyFilesAreValid loads every qualification.yaml in
 # the tree, and that test runs in the merge gate, so a malformed policy fails a
 # pull request rather than waiting for someone to dispatch this.
 #
-# WHAT IT DOES NOT DO YET, AND WHY NOT. It does not invoke a qualification lane.
-# `qualify run` does not exist; layer 2 cannot run until backend-e2e.yml accepts
-# pre-built artifacts -- today the lane rebuilds the controller from the working
-# tree and reads the Kubernetes version from a constant -- and how layer 3 is
-# invoked is undecided. See release/README.md.
+# WHAT IT COVERS TODAY. Every stream the policy declares has provider `nico`,
+# whose hardware is the CI runner itself, so `run` executes the e2e suite on the
+# runner and needs no capacity API. A Forge stream is a new provider in
+# release/internal/capacity and a different runner here; nothing else in this
+# file changes shape for it.
+#
+# WHAT IS NOT HONOURED YET. The suite parses -e2e.versions but no spec pins a
+# version from it, so a run qualifies what the working tree builds rather than
+# the versions the plan named. Until that closes, a result here says the suite
+# passed against this commit, not that the named candidate is qualified. See
+# release/README.md and controller/test/e2e/suite_test.go.
 
-name: Release qualification (plan only)
+name: Release qualification
 
 on:
   workflow_dispatch:
@@ -48,6 +50,11 @@ on:
         default: full
         type: choice
         options: [full, active]
+      plan-only:
+        description: "Resolve and print the plan without running or publishing anything"
+        required: false
+        default: false
+        type: boolean
 
 permissions: {}
 
@@ -63,10 +70,15 @@ concurrency:
 
 jobs:
   plan:
-    name: Resolve and print the plan
+    name: Resolve the plan
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      # Named entries rather than matrix because it is the runnable subset: a
+      # plan covering four of six streams yields four entries and says so in
+      # plan.json.
+      entries: ${{ steps.plan.outputs.entries }}
     # Dispatch input comes from an operator, so it is passed through the
     # environment rather than interpolated into the shell. Set once here
     # rather than per step.
@@ -103,13 +115,21 @@ jobs:
       # without pipefail, so a failing qualify piped into a succeeding tee
       # would exit 0 and the step would pass having produced nothing.
       - name: Resolve the qualification plan
+        id: plan
         run: |
           go run ./release/cmd/qualify plan \
             --component "${COMPONENT}" \
             --scope "${SCOPE}" \
             ${VERSION:+--version "${VERSION}"} \
-            --output plan.json
+            --output plan.json \
+            --matrix matrix.json
           cat plan.json
+
+          # Written by the tool as one compact line, which is what a
+          # GITHUB_OUTPUT assignment admits. An empty plan is [] rather than
+          # null, because fromJSON(null) is a workflow error while a matrix of
+          # [] is a job that is skipped.
+          echo "entries=$(cat matrix.json)" >>"${GITHUB_OUTPUT}"
 
       - name: Summarise on the run page
         run: |
@@ -121,8 +141,6 @@ jobs:
             echo '```json'
             cat plan.json
             echo '```'
-            echo
-            echo '> Nothing was qualified. This run resolved the plan and printed it.'
           } >>"${GITHUB_STEP_SUMMARY}"
 
       - name: Upload the plan
@@ -136,7 +154,216 @@ jobs:
           name: qualification-plan-${{ env.COMPONENT }}-${{ env.SCOPE }}
           path: plan.json
           if-no-files-found: error
-          # Longer than the 1 day an intra-run handoff gets, because today
-          # nothing consumes this and a human reading it later is the point.
-          # Revisit when `run` lands and the plan becomes a job-to-job handoff.
+          # The plan is the handoff to every matrix job, and it is also what a
+          # person reads afterwards to see what a run covered.
+          retention-days: 30
+
+  qualify:
+    # The combination id is in the name rather than the index, because it is
+    # built from the resolved versions: a failed job then says which versions
+    # failed without anyone opening the plan.
+    name: ${{ matrix.combination }} on ${{ matrix.stream }}
+    needs: plan
+    if: ${{ !inputs.plan-only && needs.plan.outputs.entries != '[]' }}
+    # Provider `nico` means the hardware is the runner, and the architecture
+    # comes from the stream's own capabilities. Mapping it to a label here
+    # rather than in the policy keeps CI's runner names out of the release
+    # policy; a stream declaring no arch renders a label that does not exist,
+    # which fails loudly rather than landing on a default.
+    runs-on: linux-${{ matrix.capabilities.arch }}-cpu16
+    permissions:
+      contents: read
+    strategy:
+      # One stream failing is a qualification result, not a reason to abandon
+      # the rest of the matrix. Without this, the first failure would leave the
+      # candidate's coverage unknown rather than partial.
+      fail-fast: false
+      # Bounds concurrent hardware demand. Two is what the pool sustains, and
+      # the cost of getting it wrong is a queue rather than a failure.
+      max-parallel: 2
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.entries) }}
+    timeout-minutes: 240
+    env:
+      COMPONENT: ${{ inputs.component || 'controller' }}
+      SCOPE: ${{ inputs.scope || 'full' }}
+      COMBINATION: ${{ matrix.combination }}
+      STREAM: ${{ matrix.stream }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.work
+          cache: true
+
+      # Resolution happened once, in the plan job, and this artifact pins it.
+      # A tag landing between that job and this one cannot change what this
+      # job tests, and nothing here re-derives a version. That is why `run`
+      # takes a combination and a stream: both are lookups into this file.
+      - name: Download the plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: qualification-plan-${{ env.COMPONENT }}-${{ env.SCOPE }}
+
+      # Kept separate from `run` so a suite that fails to compile is a build
+      # failure naming the compiler, not a qualification error inferred from a
+      # missing report.
+      #
+      # The version comes out of controller/Makefile rather than being written
+      # again here, so `make test-e2e` and a qualification run cannot drift
+      # onto different ginkgo versions.
+      - name: Install ginkgo
+        run: |
+          version="$(sed -n 's/^GINKGO_VERSION ?= //p' controller/Makefile)"
+          if [ -z "${version}" ]; then
+            echo "no GINKGO_VERSION in controller/Makefile" >&2
+            exit 1
+          fi
+          go install "github.com/onsi/ginkgo/v2/ginkgo@${version}"
+
+      # continue-on-error, not `|| true`. The outcome is written to the
+      # artifacts directory before the error surfaces, so a failed or
+      # unschedulable run is still publishable -- and swallowing the exit here
+      # would leave the job green whatever happened.
+      - name: Qualify this entry
+        id: run
+        continue-on-error: true
+        run: |
+          go run ./release/cmd/qualify run \
+            --plan plan.json \
+            --combination "${COMBINATION}" \
+            --stream "${STREAM}" \
+            --artifacts ./artifacts
+
+      # Inside the matrix job, not after the matrix. A stream that finished has
+      # a durable result before the run is over, and a stream that failed has
+      # published before anything else notices.
+      #
+      # `if: always()` because that is exactly when a result matters most: a
+      # cell whose run errored still has an outcome to record, and recording it
+      # is what keeps the next plan from re-deriving the same unknown.
+      - name: Publish this stream's result
+        if: always()
+        env:
+          NGC_API_KEY: ${{ secrets.NGC_REGISTRY_TOKEN_NKE }}
+          PUSH: nvcr.io/${{ vars.NKE_NGC_ORG }}/qualification
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: |
+          go run ./release/cmd/qualify publish \
+            --plan plan.json \
+            --combination "${COMBINATION}" \
+            --stream "${STREAM}" \
+            --artifacts ./artifacts \
+            --push "${PUSH}" \
+            --run-url "${RUN_URL}"
+
+      - name: Upload this entry's artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: qualification-${{ env.COMPONENT }}-${{ env.COMBINATION }}-${{ env.STREAM }}
+          path: artifacts/
+          # Not `error`: a run that never started leaves nothing here, and the
+          # published result already says so. Failing on it would replace a
+          # recorded outcome with an upload failure.
+          if-no-files-found: warn
+          retention-days: 30
+
+      # The run's exit is deferred to here rather than to `continue-on-error`,
+      # so the job's colour still reflects what happened after publishing has
+      # had its turn.
+      - name: Report the run's outcome
+        if: steps.run.outcome == 'failure'
+        run: |
+          echo "the run did not pass; see the published result" >&2
+          exit 1
+
+  aggregate:
+    name: Decide what is qualified
+    needs: [plan, qualify]
+    # Runs after the matrix whatever its outcome, and needs nothing from it:
+    # results are discovered from a tag listing rather than passed in. `always`
+    # rather than `success` is what makes a half-failed matrix still produce an
+    # answer about the half that passed.
+    if: ${{ always() && !inputs.plan-only }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # The central artifact is the only thing in the design that is read,
+    # modified and written, so this group serialises it: two runs must never
+    # write it at once. It is deliberately not per-ref, because the artifact is
+    # global.
+    #
+    # cancel-in-progress is false, but a pending job is still cancelled when a
+    # third arrives -- which three components finishing together reaches. That
+    # is harmless here: the next aggregate folds in whatever the cancelled one
+    # would have.
+    concurrency:
+      group: release-qualify-aggregate
+      cancel-in-progress: false
+    env:
+      NGC_API_KEY: ${{ secrets.NGC_REGISTRY_TOKEN_NKE }}
+      SOURCE: nvcr.io/${{ vars.NKE_NGC_ORG }}/qualification
+      STATE: nvcr.io/${{ vars.NKE_NGC_ORG }}/qualification/state:current
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.work
+          cache: true
+
+      - name: Fold every result into the central artifact
+        run: |
+          go run ./release/cmd/qualify aggregate \
+            --source "${SOURCE}" \
+            --state "${STATE}"
+
+  dashboard:
+    name: Render the dashboard
+    needs: aggregate
+    if: ${{ always() && !inputs.plan-only }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # No concurrency group: generate is read-only, so two of them racing
+    # produce the same page twice. Keeping it out of aggregate's group is also
+    # what keeps the Planner's input independent of the dashboard -- the page
+    # can be replaced without touching the data path.
+    env:
+      NGC_API_KEY: ${{ secrets.NGC_REGISTRY_TOKEN_NKE }}
+      STATE: nvcr.io/${{ vars.NKE_NGC_ORG }}/qualification/state:current
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.work
+          cache: true
+
+      - name: Render the dashboard
+        run: |
+          go run ./release/cmd/qualify generate \
+            --source "${STATE}" \
+            --out ./site
+
+      - name: Upload the dashboard
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: qualification-dashboard
+          path: site/
+          if-no-files-found: error
           retention-days: 30
