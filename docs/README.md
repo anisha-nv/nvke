@@ -73,6 +73,7 @@ Deeper module documentation:
 | [../controller/deploy/charts/controller/README.md](../controller/deploy/charts/controller/README.md) | The engine's Helm chart and its values |
 | [../nktp/deploy/charts/nktp/README.md](../nktp/deploy/charts/nktp/README.md) | The NKTP Helm chart, what it deploys and its values |
 | [../build/README.md](../build/README.md) | The per-component build and publish scripts |
+| [../release/README.md](../release/README.md) | The release tooling package: what belongs in it, why it is a module, and where each piece lives |
 | [../os-image/README.md](../os-image/README.md) | Node image build, FDE/non-FDE variants, release |
 
 ## Tests
@@ -80,6 +81,7 @@ Deeper module documentation:
 | Document | Contents |
 |---|---|
 | [../controller/test/e2e/README.md](../controller/test/e2e/README.md) | The end to end suite |
+| [qualification/workflow.md](qualification/workflow.md) | Release qualification: the phases of a run, the stream and scope model, and the layers that gate a release |
 | [../controller/integration-test/README.md](../controller/integration-test/README.md) | The integration tests |
 | [../controller/nico-sim/docs/e2e-testing.md](../controller/nico-sim/docs/e2e-testing.md) | End-to-end testing for nico-sim's VM backend |
 | [nktp/kind-validation.md](nktp/kind-validation.md) | Ad hoc validation of the NKTP chart's default values on a Kind cluster |
