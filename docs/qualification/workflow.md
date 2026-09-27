@@ -59,6 +59,64 @@ layer and the numbering of the two is unrelated.
 
 ## The phases of a run
 
+End to end, with the package that owns each piece. Everything in the
+highlighted box happens once per cell, and the cells run in parallel:
+
+```mermaid
+flowchart TD
+    RP["release/qualification.yaml<br/>components, streams, scopes"] --> PLAN
+    CP["controller, cli, os-image<br/>qualification.yaml: dependencies"] --> PLAN
+
+    PLAN["plan<br/>internal/plan.Planner"] --> CELLS["one cell per<br/>combination x stream<br/>internal/plan.Cell"]
+
+    CELLS --> LANE
+
+    subgraph cell [per cell, in parallel]
+        direction TB
+        LANE["the lane<br/>internal/lane.For"] --> PROV["environment provisioning<br/>internal/infra, internal/site"]
+        PROV --> SUITE["the e2e suite<br/>ginkgo, one run per leg"]
+    end
+
+    SUITE --> SUM["summarise<br/>internal/suite.Fold"]
+    SUM --> PUB["publish<br/>internal/record.New"]
+    PUB --> REG[("registry<br/>one result per cell")]
+    REG --> AGG["aggregate<br/>internal/aggregate.Aggregator"]
+    AGG --> STATE[("state:current")]
+    STATE --> GEN["generate<br/>internal/dashboard.Render"]
+```
+
+The registry is the only thing that survives a phase. Read the diagram as
+five jobs that happen to run in sequence rather than as a pipeline holding
+state, because that is what it is:
+
+| Phase | Job in `release-qualify.yml` | Owned by |
+|---|---|---|
+| `plan` | `plan` — "Resolve the plan" | [`internal/plan`](../../release/internal/plan), [`internal/policy`](../../release/internal/policy) |
+| `run` or `summarise` | `qualify` — one per cell, `uses: backend-e2e.yml` | [`internal/suite`](../../release/internal/suite), [`internal/lane`](../../release/internal/lane), [`internal/capacity`](../../release/internal/capacity) |
+| `publish` | `publish` — one per cell | [`internal/record`](../../release/internal/record) |
+| `aggregate` | `aggregate` — "Decide what is qualified" | [`internal/aggregate`](../../release/internal/aggregate) |
+| `generate` | `dashboard` — "Render the dashboard" | [`internal/dashboard`](../../release/internal/dashboard) |
+
+As a job graph, with the fan-out that makes a matrix:
+
+```mermaid
+flowchart LR
+    D["workflow_dispatch<br/>component, scope"] --> P[plan]
+    P -->|"outputs.entries"| Q1["qualify<br/>cell 1"]
+    P -->|"outputs.entries"| QN["qualify<br/>cell N"]
+    Q1 --> B1["publish<br/>cell 1"]
+    QN --> BN["publish<br/>cell N"]
+    B1 --> A[aggregate]
+    BN --> A
+    A --> G[dashboard]
+```
+
+`publish` carries `if: always()`, which is the whole reason it is a separate
+job: a cell whose suite went red still has a result worth recording, and a job
+that inherited the failure could not record it. `aggregate` and `dashboard` are
+gated on `plan.outputs.publishable` instead, so a dispatch with nothing to
+publish stops cleanly rather than pushing an empty state.
+
 ```sh
 qualify plan      --component controller --scope active --output plan.json --matrix matrix.json
 qualify run       --plan plan.json --combination <id> --stream <name> --artifacts ./artifacts
@@ -93,6 +151,38 @@ what resolving once is for.
 
 These are the same phase split in half, and which one a stream uses depends on
 whether its specs need a cluster that does not exist yet.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as release-qualify.yml
+    participant L as backend-e2e.yml
+    participant G as ginkgo
+    participant Q as qualify
+    participant R as registry
+
+    W->>Q: plan --component --scope
+    Q-->>W: plan.json, matrix.json
+
+    rect rgb(240, 240, 240)
+        note over W,G: the qualify job, once per cell
+        W->>L: uses backend-e2e.yml with the cell's lane config
+        L->>L: build the controller and CLI, start kind, install Tilt providers
+        L->>G: run each leg with the cell's label filter
+        G-->>L: one ginkgo JSON report per leg
+        L->>Q: summarise --reports
+        Q-->>L: handoff, outcome plus summary
+    end
+
+    W->>Q: publish --plan --combination --stream
+    Q->>R: push one result under a composite tag
+    W->>Q: aggregate --source
+    Q->>R: list tags, fold every result, push state:current
+    W->>Q: generate --source state:current
+```
+
+The `run` path collapses the middle: it invokes ginkgo itself and writes the
+same handoff, with no lane involved.
 
 **`run` invokes the suite itself.** It looks the entry up in the plan — never
 resolves it — asks the suite what the selection needs with a `--dry-run` over
@@ -140,6 +230,28 @@ Only `failed` is a qualification result in the sense that it says something
 about the candidate. `error` and `unschedulable` leave the answer unknown, so
 the next plan runs those streams again.
 
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> executing : a cell starts
+    executing --> passed : every selected spec asserted true
+    executing --> failed : a spec asserted false
+    executing --> error : the suite broke, nothing was asserted
+    executing --> unschedulable : the capacity provider had nothing
+
+    passed --> settled
+    failed --> settled
+    error --> unknown
+    unschedulable --> unknown
+
+    settled --> [*] : the next plan carries it as skip
+    unknown --> executing : the next plan runs it again
+```
+
+That loop is the whole reason the outcomes are four rather than two. Collapsing
+`error` into `failed` would make a broken runner look like a broken candidate
+and then skip it, recording a verdict nobody earned.
+
 ### publish: one job per cell
 
 `publish` runs once per cell rather than once after the matrix, so a stream
@@ -172,7 +284,39 @@ published state and nothing else, so the page cannot disagree with the record.
 
 ## Streams, scopes and combinations
 
-Three words carry the whole matrix, and they are worth keeping straight.
+Three words carry the whole matrix, and they are worth keeping straight. The
+shape first, with today's actual values:
+
+```mermaid
+flowchart LR
+    CAND["candidate<br/>controller v0.1.1-rc.8"] --> COMB
+
+    subgraph combs [combinations: resolved dependency versions]
+        COMB["os-image v0.1.0-rc.4<br/>cli v0.1.0-rc.7"]
+    end
+
+    SCOPE["scope: full<br/>no selector, so every stream"] --> S1
+    SCOPE --> S2
+
+    subgraph streams [streams: capabilities, never infrastructure]
+        S1["nico-amd64-kube-1.34"]
+        S2["nico-arm64-kube-1.34"]
+    end
+
+    COMB --> C1
+    S1 --> C1
+    COMB --> C2
+    S2 --> C2
+
+    subgraph cells [cells: one qualify job each]
+        C1["cell: rc.8 x amd64"]
+        C2["cell: rc.8 x arm64"]
+    end
+```
+
+Multiply, do not add: cells are combinations times streams, so a second
+combination doubles the matrix. That is why each dependency carries one
+selector today.
 
 A **stream** is one configuration, named by the capabilities it provides —
 `{provider: nico, arch: amd64, kube: "1.34"}` — and never by the infrastructure
@@ -256,11 +400,34 @@ is the suite's half of it:
 | `-e2e.capabilities` | The stream's capabilities less `provider`, as `name=value` pairs |
 | `-e2e.environment` | The environment config to run against, by name |
 
-`provider` is dropped on the way in because it selects the label filter and the
-capacity client, both of which are the tooling's concern. **No site, subnet or
-instance identifier crosses this boundary at all** — the suite resolves those
-from its own environment file, which is what lets a second environment with
-the same capabilities be a config change rather than a tooling change.
+```mermaid
+flowchart LR
+    subgraph left [what qualify resolved]
+        direction TB
+        V["component versions"]
+        C["stream capabilities"]
+        N["environment name"]
+        PR["provider"]
+    end
+
+    V -->|"-e2e.versions"| F
+    C -->|"-e2e.capabilities"| F
+    N -->|"-e2e.environment"| F
+    PR --x F
+
+    F{{"the boundary:<br/>three flags, nothing else"}}
+
+    F --> S["the e2e suite"]
+    S --> ENV["it resolves infrastructure itself, from<br/>environments/forge.yaml: org, site,<br/>VPC, subnet, key group, jump host"]
+    S -.->|"needs:type=count labels"| CAP["hardware demand, the only thing<br/>travelling back, read by internal/capacity"]
+```
+
+`provider` has no arrow across on purpose: it is dropped on the way in because
+it selects the label filter and the capacity client, both of which are the
+tooling's concern. **No site, subnet or instance identifier crosses this
+boundary at all** — the suite resolves those from its own environment file,
+which is what lets a second environment with the same capabilities be a config
+change rather than a tooling change.
 
 Hardware demand travels the other way, as `needs:<type>=<count>` labels on the
 suite's own containers. The requirement is the **maximum** per machine type
@@ -295,6 +462,29 @@ run, and it catches the failure most likely to bite a release: components that
 were never run together.
 
 ## Where the hardware lane fits
+
+The specs do not change with the layer. Only the backend underneath them does,
+and exactly one backend provisions real machines:
+
+```mermaid
+flowchart LR
+    SPECS["controller/test/e2e<br/>the same specs, whatever runs them"]
+
+    SPECS --> B1
+    SPECS --> B2
+    SPECS --> B3
+    SPECS --> B4
+
+    subgraph sim [simulated: layers 1 and 2, minutes and free]
+        B1[capd]
+        B2[nico-containers]
+        B3[nico-vms]
+    end
+
+    subgraph real [real: layer 3, around 80 minutes on hardware]
+        B4["nico-forge<br/>environment provisioning"]
+    end
+```
 
 Layer 3 is the only layer that touches real machines, and it is documented
 separately because almost everything difficult about it is specific to the
