@@ -77,10 +77,13 @@ func Parse(versions, capabilities string) (Selection, error) {
 }
 
 func pairs(s string) (map[string]string, error) {
-	if s == "" {
-		return nil, nil
-	}
+	// Empty rather than nil: Split("", ",") yields one empty entry, which the
+	// loop below would reject as malformed, and a caller that ranges over the
+	// result should not have to care which it got.
 	out := map[string]string{}
+	if s == "" {
+		return out, nil
+	}
 	for _, entry := range strings.Split(s, ",") {
 		k, v, ok := strings.Cut(entry, "=")
 		k, v = strings.TrimSpace(k), strings.TrimSpace(v)

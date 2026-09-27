@@ -21,7 +21,7 @@ var cfgPath string
 // asks what a selection needs, so the specs a requirement describes are by
 // construction the specs that will run.
 //
-// WHAT IS HONOURED TODAY. The selection is parsed, validated and logged, and
+// WHAT IS HONORED TODAY. The selection is parsed, validated and logged, and
 // `selection` is readable by any spec. No spec consults the versions yet, so
 // a run qualifies the versions the working tree builds rather than the ones
 // named. That gap is why BeforeSuite says so in the log rather than leaving
