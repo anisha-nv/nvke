@@ -131,6 +131,30 @@ on:
         required: false
         type: string
         default: ''
+      # Qualification calls this lane rather than growing a second copy of the
+      # kind cluster, the Tilt providers and the internal CAPNICo checkout. What
+      # it needs back is a machine-readable outcome, and a matrix job's outputs
+      # collide across cells, so the handoff is an artifact named per cell.
+      #
+      # Empty by default, which is what keeps the CAPD and NICo merge-gate
+      # lanes paying nothing for this.
+      qualification-artifact:
+        description: >-
+          Artifact name to upload a qualification outcome under. Empty means
+          this run is not being qualified and no outcome is produced.
+        required: false
+        type: string
+        default: ''
+      qualification-combination:
+        description: Combination id the outcome belongs to. Required when qualification-artifact is set.
+        required: false
+        type: string
+        default: ''
+      qualification-stream:
+        description: Stream name the outcome belongs to. Required when qualification-artifact is set.
+        required: false
+        type: string
+        default: ''
     secrets:
       NKE_INTERNAL_RO_TOKEN:
         description: Read-only token for internal NVIDIA repositories.
@@ -282,7 +306,48 @@ jobs:
           raise_minimum fs.inotify.max_user_watches 1048576
 
       - name: Run the ${{ inputs.backend }} E2E suite
+        id: suite
         run: make test-e2e-backend-ci
+
+      # Before the diagnostics steps, because this is the data path and those
+      # are the human one: a lost diagnostics upload is tolerated there with
+      # continue-on-error, and an outcome must not inherit that.
+      #
+      # `always()` because that is when an outcome matters most. A lane that
+      # failed still says something about the candidate, and a lane that broke
+      # says the answer is unknown -- which is what stops the next plan from
+      # re-deriving the same unknown. The conclusion is what tells those apart.
+      - name: Summarise the run for qualification
+        if: always() && inputs.qualification-artifact != ''
+        env:
+          COMBINATION: ${{ inputs.qualification-combination }}
+          STREAM: ${{ inputs.qualification-stream }}
+          CONCLUSION: ${{ steps.suite.outcome }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${COMBINATION}" || -z "${STREAM}" ]]; then
+            echo "::error::qualification-artifact is set without a combination and stream"
+            exit 1
+          fi
+          go run ./release/cmd/qualify summarise \
+            --reports "controller/.local/backend-e2e/${NKE_E2E_RUN_ID}" \
+            --conclusion "${CONCLUSION}" \
+            --artifacts ./qualification \
+            --combination "${COMBINATION}" \
+            --stream "${STREAM}"
+
+      # if-no-files-found is error, unlike the diagnostics upload below: the
+      # step above writes an outcome on every path it can reach, so nothing
+      # here means it did not run and the caller would otherwise wait on an
+      # artifact that is never coming.
+      - name: Upload the qualification outcome
+        if: always() && inputs.qualification-artifact != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.qualification-artifact }}
+          path: qualification/
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Check whether diagnostics are safe to upload
         id: diagnostics

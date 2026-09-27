@@ -169,26 +169,22 @@ jobs:
           # person reads afterwards to see what a run covered.
           retention-days: 30
 
+  # The lane, not a second copy of it. These specs need a kind cluster, the
+  # Tilt providers and the internal CAPNICo source checked out beside the
+  # monorepo -- the last of which is an actions/checkout with a repository
+  # secret, so no Go process can arrange it for itself. backend-e2e.yml already
+  # builds all three and already takes a backend, a label filter and a provider
+  # list as inputs, which is the Capacity Provider and Test Client the design
+  # asks for.
+  #
+  # A matrix job may use `uses:` or `steps:` and never both, which is why
+  # publishing is the job below rather than a step here.
   qualify:
-    # The combination id is in the name rather than the index, because it is
-    # built from the resolved versions: a failed job then says which versions
-    # failed without anyone opening the plan.
     name: ${{ matrix.combination }} on ${{ matrix.stream }}
     needs: plan
     if: ${{ !inputs.plan-only && needs.plan.outputs.entries != '[]' }}
-    # Provider `nico` means the hardware is the runner, and the architecture
-    # comes from the stream's own capabilities. Mapping it to a label here
-    # rather than in the policy keeps CI's runner names out of the release
-    # policy; a stream declaring no arch renders a label that does not exist,
-    # which fails loudly rather than landing on a default.
-    runs-on: linux-${{ matrix.capabilities.arch }}-cpu16
     permissions:
       contents: read
-    # Conditional, and it has to be: declaring `nvcr` outright fails every run
-    # whose ref the environment's branch policy excludes, which is every branch.
-    # An empty name is no environment at all, so a branch run reaches this far
-    # and keeps its results locally instead of being turned away at the door.
-    environment: ${{ needs.plan.outputs.publishable == 'true' && 'nvcr' || '' }}
     strategy:
       # One stream failing is a qualification result, not a reason to abandon
       # the rest of the matrix. Without this, the first failure would leave the
@@ -199,7 +195,60 @@ jobs:
       max-parallel: 2
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.entries) }}
-    timeout-minutes: 240
+    uses: ./.github/workflows/backend-e2e.yml
+    # The lane needs this to read dsx-ai-factory/cluster-api-provider-nico,
+    # which is why a stream cannot be qualified from a fork.
+    secrets:
+      NKE_INTERNAL_RO_TOKEN: ${{ secrets.NKE_INTERNAL_RO_TOKEN }}
+    with:
+      # Every one of these comes from the plan rather than from a literal here.
+      # A workflow expression cannot look a provider up in a table, so a wiring
+      # written down here would apply one provider's lane to every stream
+      # whatever its provider said -- running somebody else's specs and
+      # recording the result under this stream's name. internal/lane resolves
+      # it at plan time instead, and refuses a provider it does not know.
+      backend: ${{ matrix.backend }}
+      label-filter: ${{ matrix.filter }}
+      providers: ${{ matrix.providers }}
+      needs-capnico-source: ${{ matrix.capnicoSource }}
+      # Which runner satisfies an architecture is CI's knowledge, not the
+      # release policy's, so this is the one thing the plan does not carry. A
+      # stream declaring no arch renders a label that does not exist, which
+      # fails loudly rather than landing on a default.
+      arch: ${{ matrix.capabilities.arch }}
+      runner: linux-${{ matrix.capabilities.arch }}-cpu16
+      timeout-minutes: 240
+      # Named per cell because a matrix job's outputs collide across cells:
+      # there is no per-cell addressing, so the last cell to finish would be
+      # the only one the publish job could read.
+      qualification-artifact: qualification-outcome-${{ matrix.combination }}-${{ matrix.stream }}
+      qualification-combination: ${{ matrix.combination }}
+      qualification-stream: ${{ matrix.stream }}
+
+  # Separate from the lane because the lane cannot hold a credential for the
+  # registry, and separate per cell because each has its own outcome to record.
+  #
+  # Inside the matrix rather than after it, still: a stream that finished has a
+  # durable result before the rest of the run is over.
+  publish:
+    name: publish ${{ matrix.combination }} on ${{ matrix.stream }}
+    needs: [plan, qualify]
+    # `always()` because that is exactly when a result matters most. A cell
+    # whose lane errored still has an outcome to record, and recording it is
+    # what keeps the next plan from re-deriving the same unknown.
+    if: ${{ always() && !inputs.plan-only && needs.plan.outputs.entries != '[]' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Conditional, and it has to be: declaring `nvcr` outright fails every run
+    # whose ref the environment's branch policy excludes, which is every branch.
+    # An empty name is no environment at all, so a branch run reaches this far
+    # and keeps its results locally instead of being turned away at the door.
+    environment: ${{ needs.plan.outputs.publishable == 'true' && 'nvcr' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.entries) }}
     env:
       COMPONENT: ${{ inputs.component || 'controller' }}
       SCOPE: ${{ inputs.scope || 'full' }}
@@ -225,53 +274,54 @@ jobs:
           org: ${{ vars.NKE_NGC_ORG }}
 
       # Resolution happened once, in the plan job, and this artifact pins it.
-      # A tag landing between that job and this one cannot change what this
-      # job tests, and nothing here re-derives a version. That is why `run`
-      # takes a combination and a stream: both are lookups into this file.
+      # A tag landing between that job and this one cannot change what was
+      # tested, and nothing here re-derives a version.
       - name: Download the plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: qualification-plan-${{ env.COMPONENT }}-${{ env.SCOPE }}
 
-      # Kept separate from `run` so a suite that fails to compile is a build
-      # failure naming the compiler, not a qualification error inferred from a
-      # missing report.
-      #
-      # The version comes out of controller/Makefile rather than being written
-      # again here, so `make test-e2e` and a qualification run cannot drift
-      # onto different ginkgo versions.
-      - name: Install ginkgo
-        run: |
-          version="$(sed -n 's/^GINKGO_VERSION ?= //p' controller/Makefile)"
-          if [ -z "${version}" ]; then
-            echo "no GINKGO_VERSION in controller/Makefile" >&2
-            exit 1
-          fi
-          go install "github.com/onsi/ginkgo/v2/ginkgo@${version}"
-
-      # continue-on-error, not `|| true`. The outcome is written to the
-      # artifacts directory before the error surfaces, so a failed or
-      # unschedulable run is still publishable -- and swallowing the exit here
-      # would leave the job green whatever happened.
-      - name: Qualify this entry
-        id: run
+      # continue-on-error, because a lane that never produced an outcome is
+      # itself a thing to record. Without it this step would end the job and
+      # the cell would go unrecorded, which is the one state the design has no
+      # way to represent.
+      - name: Download this stream's outcome
+        id: outcome
         continue-on-error: true
-        run: |
-          go run ./release/cmd/qualify run \
-            --plan plan.json \
-            --combination "${COMBINATION}" \
-            --stream "${STREAM}" \
-            --artifacts ./artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: qualification-outcome-${{ matrix.combination }}-${{ matrix.stream }}
+          path: artifacts
 
-      # Inside the matrix job, not after the matrix. A stream that finished has
-      # a durable result before the run is over, and a stream that failed has
-      # published before anything else notices.
+      # A lane that produced nothing leaves the answer unknown rather than
+      # negative. Writing the error outcome here rather than letting publish
+      # fail on a missing file is what keeps the record honest: `error` is not
+      # settled, so the next plan runs this stream again.
       #
-      # `if: always()` because that is exactly when a result matters most: a
-      # cell whose run errored still has an outcome to record, and recording it
-      # is what keeps the next plan from re-deriving the same unknown.
+      # summarise against an empty directory rather than a handwritten JSON
+      # file, because it already writes exactly this and it owns where the file
+      # goes. Spelling the path out here would be a second copy of the entry
+      # directory layout, in shell, free to drift from the one in the tool.
+      - name: Record an error when the lane produced no outcome
+        if: steps.outcome.outcome != 'success'
+        env:
+          # The matrix job's aggregate result. Which of the four it is does not
+          # change the outcome -- no report is an error whatever the lane said
+          # -- but summarise rejects a conclusion it does not recognise, so
+          # passing the real one keeps that check meaningful.
+          CONCLUSION: ${{ needs.qualify.result }}
+        run: |
+          set -euo pipefail
+          echo "::warning::No outcome from the lane for ${STREAM}; recording an error."
+          mkdir -p ./no-reports
+          go run ./release/cmd/qualify summarise \
+            --reports ./no-reports \
+            --conclusion "${CONCLUSION}" \
+            --artifacts ./artifacts \
+            --combination "${COMBINATION}" \
+            --stream "${STREAM}"
+
       - name: Publish this stream's result
-        if: always()
         env:
           NGC_API_KEY: ${{ secrets.NGC_REGISTRY_TOKEN_NKE }}
           PUSH: ${{ steps.registry.outputs.base }}
@@ -290,30 +340,21 @@ jobs:
             --output ./artifacts/result.yaml \
             --run-url "${RUN_URL}"
 
-      - name: Upload this entry's artifacts
+      - name: Upload this entry's record
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: qualification-${{ env.COMPONENT }}-${{ env.COMBINATION }}-${{ env.STREAM }}
           path: artifacts/
-          # Not `error`: a run that never started leaves nothing here, and the
-          # published result already says so. Failing on it would replace a
-          # recorded outcome with an upload failure.
+          # Not `error`: the step above records an outcome on every path, and
+          # failing on an empty directory would replace a recorded result with
+          # an upload failure.
           if-no-files-found: warn
           retention-days: 30
 
-      # The run's exit is deferred to here rather than to `continue-on-error`,
-      # so the job's colour still reflects what happened after publishing has
-      # had its turn.
-      - name: Report the run's outcome
-        if: steps.run.outcome == 'failure'
-        run: |
-          echo "the run did not pass; see the published result" >&2
-          exit 1
-
   aggregate:
     name: Decide what is qualified
-    needs: [plan, qualify]
+    needs: [plan, publish]
     # Runs after the matrix whatever its outcome, and needs nothing from it:
     # results are discovered from a tag listing rather than passed in. `always`
     # rather than `success` is what makes a half-failed matrix still produce an

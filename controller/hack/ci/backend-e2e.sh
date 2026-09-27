@@ -559,8 +559,14 @@ collect_diagnostics() {
           clusters,machinedeployments,machinesets,machines,kubeadmcontrolplanes,kubeadmconfigs,dockerclusters,dockermachines \
           -A \
           >"${STATE_DIR}/capi-describe.txt" 2>&1
+        # The ginkgo reports are written to the runner's /state volume, so a
+        # name absent here never reaches the host and `qualify summarise` sees
+        # a leg that did not run. They pass through redact_diagnostics with
+        # everything else, which substitutes values in place and so leaves the
+        # JSON parseable.
         for artifact in tilt.log tilt-snapshot.json nico-sim.log e2e.log junit.xml \
-          junit-cp-controller.xml junit-nodepool.xml; do
+          junit-cp-controller.xml junit-nodepool.xml \
+          report.json report-cp-controller.json report-nodepool.json; do
           docker cp "${RUNNER_NAME}:/state/${artifact}" "${STATE_DIR}/${artifact}" >/dev/null 2>&1 || true
         done
       fi

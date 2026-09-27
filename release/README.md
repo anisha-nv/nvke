@@ -1,6 +1,6 @@
 # release/
 
-> **The verbs run; the version pinning does not.** All five verbs exist, and
+> **The verbs run; the version pinning does not.** All six verbs exist, and
 > `release-qualify.yml` wires them end to end: a dispatch resolves a plan, runs
 > each cell against the e2e suite, publishes one record per stream, folds them
 > into a central artifact and renders a page from it. What is missing is the
@@ -73,7 +73,8 @@ left that tree byte-for-byte unchanged.
 | [`internal/plan/`](internal/plan/) | Turning a trigger into a run list: dependency resolution, scope expansion, and what an earlier run already settled |
 | [`internal/policy/`](internal/policy/) | Reading and validating the `qualification.yaml` files, and the result vocabulary every verb shares |
 | [`internal/capacity/`](internal/capacity/) | Confirming the hardware a stream needs before anything runs, so a shortage reports as a shortage |
-| [`internal/suite/`](internal/suite/) | Every invocation of the e2e suite, both the dry run that asks what a selection needs and the run itself |
+| [`internal/lane/`](internal/lane/) | Which CI lane a stream's provider runs in: backend, label filter and Tilt providers, resolved at plan time |
+| [`internal/suite/`](internal/suite/) | Every invocation of the e2e suite, both the dry run that asks what a selection needs and the run itself, plus folding a lane's legs into one summary |
 | [`internal/record/`](internal/record/) | Where a result goes: the composite tag, the artifact, and the on-disk handoff between `run` and `publish` |
 | [`internal/aggregate/`](internal/aggregate/) | Folding every result into one artifact and deciding what each candidate is qualified at |
 | [`internal/dashboard/`](internal/dashboard/) | Rendering that artifact as a static page |
@@ -154,11 +155,13 @@ same candidate proves nothing either way; `error` and `unschedulable` are not,
 because the answer is still unknown. Keeping them means a run covering four of
 six streams says so instead of looking like a smaller matrix.
 
-## The five verbs
+## The six verbs
 
 ```sh
 qualify plan      --component controller --scope active --output plan.json --matrix matrix.json
 qualify run       --plan plan.json --combination <id> --stream <name> --artifacts ./artifacts
+qualify summarise --reports <dir> --conclusion success --combination <id> --stream <name> \
+                  --artifacts ./artifacts
 qualify publish   --plan plan.json --combination <id> --stream <name> \
                   --artifacts ./artifacts --push <registry>/qualification
 qualify aggregate --source <registry>/qualification --state <registry>/qualification/state:current
@@ -168,6 +171,37 @@ qualify generate  --source <registry>/qualification/state:current --out ./site
 Each is a separate job in [`release-qualify.yml`](../.github/workflows/release-qualify.yml)
 because each has a different trigger and a different failure meaning. The only
 state any of them shares is what is in the registry.
+
+### Two ways a stream gets executed
+
+`run` and `summarise` are the same verb split in half, and which one a stream
+uses depends on whether its specs need a cluster that does not exist yet.
+
+**`run` invokes the suite itself.** That works for a suite needing no
+provisioning, and not for the `nico` streams: their specs need a kind cluster,
+the Tilt providers, and `dsx-ai-factory/cluster-api-provider-nico` checked out
+beside the monorepo. The last of those is an `actions/checkout` consuming a
+repository secret, so no Go process can arrange it for itself.
+
+**So the lane runs those.** [`backend-e2e.yml`](../.github/workflows/backend-e2e.yml)
+already builds all three and already takes a backend, a label filter and a
+provider list as inputs — which is the Capacity Provider and Test Client the
+design asks for, already written. Qualification calls it rather than growing a
+second copy of eleven hundred lines of cluster setup, and `summarise` reads the
+ginkgo reports it leaves behind. Both paths write the same handoff, so
+`publish` cannot tell them apart.
+
+A lane runs ginkgo more than once — the NICo lane has up to three legs, because
+controller-managed control planes need a deployment-wide flag and so need their
+own run. `summarise` folds every leg, because a stream is qualified when
+everything it selected passed rather than when its last leg did.
+
+Which lane a stream runs in is resolved at plan time, in
+[`internal/lane/`](internal/lane/), and carried in the matrix. A workflow
+expression cannot look a provider up in a table, so a wiring written into CI
+would apply one provider's lane to every stream whatever its provider said —
+running somebody else's specs and recording the result under this stream's
+name. A provider with no lane is an error, not a cell.
 
 **`run` does one cell and nothing else.** It looks the entry up in the plan —
 never resolves it — asks the suite what that selection needs with a `--dry-run`
@@ -186,8 +220,11 @@ interchangeable: `failed` means the suite ran and something asserted false,
 qualification result, and only `passed` and `failed` are settled — the other
 two leave the answer unknown, so the next plan runs them again.
 
-**`publish` runs inside each matrix job**, not after the matrix, so a stream
-that failed has a durable result before anything else notices. The tag is
+**`publish` is one job per cell**, not one after the matrix, so a stream that
+failed has a durable result before the rest of the run is over. It is a
+separate job from the lane rather than a step in it, because a matrix job may
+use `uses:` or `steps:` and never both — and because the lane holds no
+credential for the registry. The tag is
 composite — version, combination and stream, under the component's repository —
 so listing tags says which results exist without pulling any of them.
 
@@ -273,7 +310,7 @@ never run together.
 
 ## Status
 
-All five verbs run, and the workflow wires them together. **A result does not
+All six verbs run, and the workflow wires them together. **A result does not
 yet mean the candidate was qualified**, because no spec pins a version from
 `-e2e.versions`: a run says the suite passed against the commit it was launched
 from. In dependency order:
