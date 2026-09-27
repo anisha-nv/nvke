@@ -79,10 +79,17 @@ jobs:
       # plan covering four of six streams yields four entries and says so in
       # plan.json.
       entries: ${{ steps.plan.outputs.entries }}
-      # Every later job needs the registry base. Building it once here, in the
-      # cheapest job, is what keeps an unset NKE_NGC_ORG from spending four
-      # hours of runner time before publish fails on nvcr.io//qualification.
-      registry: ${{ steps.registry.outputs.base }}
+      # Whether this run can reach the registry at all. NKE_NGC_ORG and
+      # NGC_REGISTRY_TOKEN_NKE live in the `nvcr` environment, whose branch
+      # policy admits main and the component release tags and nothing else, so
+      # off main there are no credentials to have.
+      #
+      # That makes a branch run a first-class mode rather than a broken one: it
+      # plans, runs and summarises, keeps its results in the job's artifacts,
+      # and skips the two jobs that exist only to read and write the registry.
+      # Deciding it here, from the ref alone, needs no environment -- which is
+      # the point, because declaring one would fail every branch run outright.
+      publishable: ${{ github.ref == 'refs/heads/main' }}
     # Dispatch input comes from an operator, so it is passed through the
     # environment rather than interpolated into the shell. Set once here
     # rather than per step.
@@ -101,18 +108,6 @@ jobs:
       SCOPE: ${{ inputs.scope || 'full' }}
       VERSION: ${{ inputs.version }}
     steps:
-      - name: Resolve the qualification registry
-        id: registry
-        env:
-          NKE_NGC_ORG: ${{ vars.NKE_NGC_ORG }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${NKE_NGC_ORG}" ]]; then
-            echo "::error::NKE_NGC_ORG is not set"
-            exit 1
-          fi
-          echo "base=nvcr.io/${NKE_NGC_ORG}/qualification" >>"${GITHUB_OUTPUT}"
-
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -189,6 +184,11 @@ jobs:
     runs-on: linux-${{ matrix.capabilities.arch }}-cpu16
     permissions:
       contents: read
+    # Conditional, and it has to be: declaring `nvcr` outright fails every run
+    # whose ref the environment's branch policy excludes, which is every branch.
+    # An empty name is no environment at all, so a branch run reaches this far
+    # and keeps its results locally instead of being turned away at the door.
+    environment: ${{ needs.plan.outputs.publishable == 'true' && 'nvcr' || '' }}
     strategy:
       # One stream failing is a qualification result, not a reason to abandon
       # the rest of the matrix. Without this, the first failure would leave the
@@ -216,6 +216,13 @@ jobs:
         with:
           go-version-file: go.work
           cache: true
+
+      - name: Resolve the qualification registry
+        id: registry
+        uses: ./.github/actions/qualification-registry
+        with:
+          publishable: ${{ needs.plan.outputs.publishable }}
+          org: ${{ vars.NKE_NGC_ORG }}
 
       # Resolution happened once, in the plan job, and this artifact pins it.
       # A tag landing between that job and this one cannot change what this
@@ -267,15 +274,20 @@ jobs:
         if: always()
         env:
           NGC_API_KEY: ${{ secrets.NGC_REGISTRY_TOKEN_NKE }}
-          PUSH: ${{ needs.plan.outputs.registry }}
+          PUSH: ${{ steps.registry.outputs.base }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
         run: |
+          # An empty PUSH writes the record to --output instead of pushing it.
+          # Pointing that at the artifacts directory is what keeps a branch run
+          # reviewable: the record it would have published is downloadable from
+          # the run, byte for byte what main would have pushed.
           go run ./release/cmd/qualify publish \
             --plan plan.json \
             --combination "${COMBINATION}" \
             --stream "${STREAM}" \
             --artifacts ./artifacts \
             --push "${PUSH}" \
+            --output ./artifacts/result.yaml \
             --run-url "${RUN_URL}"
 
       - name: Upload this entry's artifacts
@@ -306,10 +318,14 @@ jobs:
     # results are discovered from a tag listing rather than passed in. `always`
     # rather than `success` is what makes a half-failed matrix still produce an
     # answer about the half that passed.
-    if: ${{ always() && !inputs.plan-only }}
+    # Skipped without a registry rather than run against nothing: the state
+    # this folds into lives only in the registry, so off main there is no
+    # central artifact to read, update or write.
+    if: ${{ always() && !inputs.plan-only && needs.plan.outputs.publishable == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    environment: nvcr
     # The central artifact is the only thing in the design that is read,
     # modified and written, so this group serialises it: two runs must never
     # write it at once. It is deliberately not per-ref, because the artifact is
@@ -324,8 +340,6 @@ jobs:
       cancel-in-progress: false
     env:
       NGC_API_KEY: ${{ secrets.NGC_REGISTRY_TOKEN_NKE }}
-      SOURCE: ${{ needs.plan.outputs.registry }}
-      STATE: ${{ needs.plan.outputs.registry }}/state:current
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -338,26 +352,35 @@ jobs:
           go-version-file: go.work
           cache: true
 
+      - name: Resolve the qualification registry
+        id: registry
+        uses: ./.github/actions/qualification-registry
+        with:
+          publishable: ${{ needs.plan.outputs.publishable }}
+          org: ${{ vars.NKE_NGC_ORG }}
+
       - name: Fold every result into the central artifact
+        env:
+          SOURCE: ${{ steps.registry.outputs.base }}
         run: |
           go run ./release/cmd/qualify aggregate \
             --source "${SOURCE}" \
-            --state "${STATE}"
+            --state "${SOURCE}/state:current"
 
   dashboard:
     name: Render the dashboard
     needs: [plan, aggregate]
-    if: ${{ always() && !inputs.plan-only }}
+    if: ${{ always() && !inputs.plan-only && needs.plan.outputs.publishable == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    environment: nvcr
     # No concurrency group: generate is read-only, so two of them racing
     # produce the same page twice. Keeping it out of aggregate's group is also
     # what keeps the Planner's input independent of the dashboard -- the page
     # can be replaced without touching the data path.
     env:
       NGC_API_KEY: ${{ secrets.NGC_REGISTRY_TOKEN_NKE }}
-      STATE: ${{ needs.plan.outputs.registry }}/state:current
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -370,7 +393,16 @@ jobs:
           go-version-file: go.work
           cache: true
 
+      - name: Resolve the qualification registry
+        id: registry
+        uses: ./.github/actions/qualification-registry
+        with:
+          publishable: ${{ needs.plan.outputs.publishable }}
+          org: ${{ vars.NKE_NGC_ORG }}
+
       - name: Render the dashboard
+        env:
+          STATE: ${{ steps.registry.outputs.base }}/state:current
         run: |
           go run ./release/cmd/qualify generate \
             --source "${STATE}" \

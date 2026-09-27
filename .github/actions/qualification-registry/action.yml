@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Resolves the OCI repository that holds qualification results, and says so
+# once rather than in each of the three jobs that need it.
+#
+# NKE_NGC_ORG is a variable on the `nvcr` environment, not a repository
+# variable, so a job that does not declare that environment reads it empty --
+# and interpolating it anyway yields nvcr.io//qualification, which surfaces as
+# an obscure push failure rather than as the wiring error it is.
+#
+# Empty output is a legitimate answer, not a failure: a run off main has no
+# credentials by policy and keeps its results in its own artifacts. Only a run
+# that claims to be publishing has to have somewhere to publish to.
+
+name: Resolve the qualification registry
+description: Build the qualification repository reference from the nvcr environment, or report that there is none
+
+inputs:
+  publishable:
+    description: Whether this run is expected to reach the registry. When true, an unset org is an error.
+    required: true
+  org:
+    description: The NGC org, passed in as vars.NKE_NGC_ORG by the calling job.
+    required: false
+    default: ""
+
+outputs:
+  base:
+    description: The qualification repository, or empty when this run cannot publish.
+    value: ${{ steps.resolve.outputs.base }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      env:
+        PUBLISHABLE: ${{ inputs.publishable }}
+        NKE_NGC_ORG: ${{ inputs.org }}
+      run: |
+        set -euo pipefail
+        if [[ -n "${NKE_NGC_ORG}" ]]; then
+          echo "base=nvcr.io/${NKE_NGC_ORG}/qualification" >>"${GITHUB_OUTPUT}"
+          exit 0
+        fi
+        if [[ "${PUBLISHABLE}" == "true" ]]; then
+          echo "::error::NKE_NGC_ORG is not set in the nvcr environment"
+          exit 1
+        fi
+        echo "::notice::No qualification registry for this ref. Results stay in this run's artifacts."
+        echo "base=" >>"${GITHUB_OUTPUT}"
