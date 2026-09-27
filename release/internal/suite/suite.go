@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/dsx-ai-factory/nke/release/internal/capacity"
+	"github.com/dsx-ai-factory/nke/release/internal/lane"
 	"github.com/dsx-ai-factory/nke/release/internal/policy"
 )
 
@@ -97,42 +98,6 @@ type Client interface {
 	Execute(ctx context.Context, e Entry, l capacity.Lease) (Result, error)
 }
 
-// filter is the label expression that selects the specs a provider can
-// satisfy, and excludes the ones it cannot.
-type filter struct {
-	// Label selects the provider's specs.
-	Label string
-
-	// Exclude names labels the provider cannot satisfy. A nico-vms stream
-	// excludes gpu; a Forge stream excludes nothing.
-	Exclude []string
-}
-
-// String renders the ginkgo label expression.
-func (f filter) String() string {
-	expr := f.Label
-	for _, x := range f.Exclude {
-		expr += " && !" + x
-	}
-	return expr
-}
-
-// filters maps a stream's provider capability to its label filter.
-//
-// The Client constructs the filter rather than accepting one, because taking
-// it from the caller would let a run select specs its backend cannot satisfy
-// and then report the result as a qualification.
-//
-// A provider absent here is an error. The alternative is a filter that
-// selects nothing, and ginkgo exits zero on an empty selection, so the run
-// would pass without executing an assertion.
-var filters = map[string]filter{
-	// nico-sim's container backend. The label is the suite's, which is
-	// narrower than the capability name: nico-vms is a different backend with
-	// its own label and its own exclusions.
-	"nico": {Label: "nico-containers"},
-}
-
 // Ginkgo runs the suite as a subprocess.
 type Ginkgo struct {
 	// Dir is the suite's package directory.
@@ -171,7 +136,7 @@ func (g Ginkgo) Requirement(ctx context.Context, e Entry) (capacity.Requirement,
 	report := filepath.Join(os.TempDir(), "qualify-dryrun.json")
 	args := append([]string{
 		"--dry-run",
-		"--label-filter=" + f.String(),
+		"--label-filter=" + f.Filter(),
 		"--json-report=" + report,
 	}, g.suiteArgs(e)...)
 
@@ -192,7 +157,7 @@ func (g Ginkgo) Requirement(ctx context.Context, e Entry) (capacity.Requirement,
 		// ginkgo exits zero having run nothing, so this has to be caught
 		// here or the run reports a pass it never earned.
 		return capacity.Requirement{}, fmt.Errorf(
-			"label filter %q selected no specs, so a run would pass without asserting anything", f,
+			"label filter %q selected no specs, so a run would pass without asserting anything", f.Filter(),
 		)
 	}
 	return capacity.Requirement{Stream: e.Stream, Nodes: nodes}, nil
@@ -217,7 +182,7 @@ func (g Ginkgo) Execute(ctx context.Context, e Entry, _ capacity.Lease) (Result,
 	report := filepath.Join(dir, "report.json")
 
 	args := append([]string{
-		"--label-filter=" + f.String(),
+		"--label-filter=" + f.Filter(),
 		"--json-report=" + report,
 	}, g.suiteArgs(e)...)
 
@@ -258,20 +223,17 @@ func (g Ginkgo) Execute(ctx context.Context, e Entry, _ capacity.Lease) (Result,
 	return result, nil
 }
 
-// filter resolves the entry's provider to its label filter.
-func (g Ginkgo) filter(e Entry) (filter, error) {
-	p := e.Provider()
-	if p == "" {
-		return filter{}, fmt.Errorf("stream %q declares no provider capability", e.Stream)
+// filter resolves the entry's provider to the lane it runs in.
+//
+// The Client resolves this rather than accepting it, because taking a filter
+// from the caller would let a run select specs its backend cannot satisfy and
+// then report the result as a qualification.
+func (g Ginkgo) filter(e Entry) (lane.Lane, error) {
+	l, err := lane.For(e.Provider())
+	if err != nil {
+		return lane.Lane{}, fmt.Errorf("stream %q: %w", e.Stream, err)
 	}
-	f, ok := filters[p]
-	if !ok {
-		return filter{}, fmt.Errorf(
-			"no label filter for provider %q; known providers are %s",
-			p, strings.Join(slices.Sorted(maps.Keys(filters)), ", "),
-		)
-	}
-	return f, nil
+	return l, nil
 }
 
 // suiteArgs is everything after the -- separator: the arguments the suite's

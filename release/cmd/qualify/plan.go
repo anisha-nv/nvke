@@ -119,7 +119,10 @@ func write(cmd *cobra.Command, path string, result *plan.Plan) error {
 // is a workflow error while a matrix of [] is a job that is skipped. A plan
 // that covers nothing should leave the run page empty, not red.
 func writeMatrix(path string, result *plan.Plan) error {
-	cells := result.Matrix()
+	cells, err := result.Matrix()
+	if err != nil {
+		return err
+	}
 	if cells == nil {
 		cells = []plan.Cell{}
 	}

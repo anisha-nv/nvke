@@ -12,7 +12,9 @@ package plan
 
 import (
 	"errors"
+	"fmt"
 
+	"github.com/dsx-ai-factory/nke/release/internal/lane"
 	"github.com/dsx-ai-factory/nke/release/internal/policy"
 )
 
@@ -78,6 +80,16 @@ type Cell struct {
 	// rather than a runner label: which label satisfies an architecture is
 	// the workflow's knowledge, not the policy's.
 	Capabilities map[string]string `json:"capabilities"`
+
+	// Backend, Filter, Providers and CAPNICoSource are the lane that will run
+	// this cell, resolved here so the matrix job can pass them straight to
+	// the reusable workflow. A workflow expression cannot look a provider up
+	// in a table, so leaving this to CI would mean one provider's wiring
+	// applied to every stream, whatever its provider said.
+	Backend       string `json:"backend"`
+	Filter        string `json:"filter"`
+	Providers     string `json:"providers"`
+	CAPNICoSource bool   `json:"capnicoSource"`
 }
 
 // Matrix is the cells that will actually run.
@@ -86,23 +98,36 @@ type Cell struct {
 // plan is the record of what the scope covers, and the matrix is the work.
 // Scheduling a job to skip would spend a runner to print a decision the plan
 // already states.
-func (p *Plan) Matrix() []Cell {
+//
+// An error rather than a silent omission when a stream's provider has no lane.
+// Dropping the cell would shrink the matrix and let the run report on the
+// streams that remained, so a typo in a provider name would read as a narrower
+// qualification rather than as a broken policy.
+func (p *Plan) Matrix() ([]Cell, error) {
 	var cells []Cell
 	for _, c := range p.Combinations {
 		for _, s := range c.Streams {
 			if s.Skip != OutcomeNone {
 				continue
 			}
+			l, err := lane.For(s.Capabilities["provider"])
+			if err != nil {
+				return nil, fmt.Errorf("stream %q: %w", s.Name, err)
+			}
 			cells = append(cells, Cell{
-				Component:    p.Component,
-				Version:      p.Version,
-				Combination:  c.ID,
-				Stream:       s.Name,
-				Capabilities: s.Capabilities,
+				Component:     p.Component,
+				Version:       p.Version,
+				Combination:   c.ID,
+				Stream:        s.Name,
+				Capabilities:  s.Capabilities,
+				Backend:       l.Backend,
+				Filter:        l.Filter(),
+				Providers:     l.ProvidersJSON(),
+				CAPNICoSource: l.NeedsCAPNICoSource,
 			})
 		}
 	}
-	return cells
+	return cells, nil
 }
 
 // Outcome is what became of a cell in an earlier run. It is policy's Result
