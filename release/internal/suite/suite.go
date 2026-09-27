@@ -208,19 +208,66 @@ func (g Ginkgo) Execute(ctx context.Context, e Entry, _ capacity.Lease) (Result,
 		return Result{Outcome: policy.ResultError, Report: b}, err
 	}
 
-	result := Result{Summary: summary, Report: b}
+	return Result{
+		Summary: summary,
+		Report:  b,
+		Outcome: Outcome(summary, runErr == nil),
+	}, nil
+}
+
+// Outcome classifies a run from its summary and whether whatever ran the suite
+// exited clean.
+//
+// Shared with `summarise`, where the thing that ran the suite is a CI lane and
+// `ok` is its conclusion rather than a subprocess exit. The distinction the
+// three cases draw is the same either way, and it is the distinction the whole
+// design rests on: a suite that ran and asserted false has told us something
+// about the candidate, and a suite that broke has not.
+func Outcome(summary policy.Summary, ok bool) policy.Result {
 	switch {
-	case runErr == nil:
-		result.Outcome = policy.ResultPassed
+	case ok:
+		return policy.ResultPassed
 	case summary.Failed > 0:
 		// The suite ran and something asserted false. That is a qualification
 		// result, and the only kind of failure that is one.
-		result.Outcome = policy.ResultFailed
+		return policy.ResultFailed
 	default:
 		// A non-zero exit with nothing failed is the suite itself breaking.
-		result.Outcome = policy.ResultError
+		return policy.ResultError
 	}
-	return result, nil
+}
+
+// Fold sums every leg's report into one summary.
+//
+// A lane runs ginkgo more than once -- the NICo lane has up to three legs,
+// because controller-managed control planes need a deployment-wide flag and so
+// need their own run. Each writes its own report, and the stream's result is
+// all of them: a stream is qualified when everything it selected passed, not
+// when its last leg did.
+//
+// An error when no report parses, because a stream with no legs asserted
+// nothing, and a zero summary would read as a clean run.
+func Fold(reports [][]byte) (policy.Summary, error) {
+	var total policy.Summary
+	var errs []error
+	folded := 0
+	for i, b := range reports {
+		s, err := parseSummary(b)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("leg %d: %w", i, err))
+			continue
+		}
+		total.Passed += s.Passed
+		total.Failed += s.Failed
+		total.Skipped += s.Skipped
+		folded++
+	}
+	if folded == 0 {
+		return policy.Summary{}, fmt.Errorf(
+			"no leg reported any spec result: %w", errors.Join(errs...),
+		)
+	}
+	return total, nil
 }
 
 // filter resolves the entry's provider to the lane it runs in.

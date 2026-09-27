@@ -100,6 +100,13 @@ e2e_write_tilt_config() {
 # The flags below are the ones both must share. `-ginkgo.fail-on-empty` is in
 # that set deliberately: without it a label filter that matches no spec passes
 # silently, which is the failure mode a shared filter constant exists to stop.
+#
+# Both report formats, because they answer different questions. JUnit is what a
+# person and the CI summary read. The JSON report carries PreRunStats, which
+# JUnit has no equivalent of, and without it a leg's skip count is the size of
+# the suite rather than the size of the run: a filter selecting 69 of 272 specs
+# reports 203 label-filter exclusions as skips, indistinguishable from specs the
+# run reached and declined. `qualify summarise` reads the JSON for that reason.
 e2e_run_ginkgo_leg() {
   local exec_fn="$1" log_fn="$2" state_dir="$3"
   local label_filter="$4" cp_flag="$5" suffix="$6"
@@ -120,6 +127,7 @@ e2e_run_ginkgo_leg() {
     -ginkgo.timeout=100m \
     "-ginkgo.label-filter=${label_filter}" \
     "-ginkgo.junit-report=/state/junit${suffix}.xml" \
+    "-ginkgo.json-report=/state/report${suffix}.json" \
     "$@" \
     2>&1 | tee "${state_dir}/e2e${suffix}.log"
   local rc=${PIPESTATUS[0]}

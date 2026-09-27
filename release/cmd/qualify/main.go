@@ -56,6 +56,6 @@ Nothing before aggregate says whether a candidate is qualified: each stream
 publishes only its own outcome, and the judgement is over all of them.`,
 		SilenceUsage: true,
 	}
-	cmd.AddCommand(planCmd(), runCmd(), publishCmd(), aggregateCmd(), generateCmd())
+	cmd.AddCommand(planCmd(), runCmd(), summariseCmd(), publishCmd(), aggregateCmd(), generateCmd())
 	return cmd
 }

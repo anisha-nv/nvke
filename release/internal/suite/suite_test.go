@@ -154,6 +154,87 @@ func TestParseNeedsNoLabelsIsNotAnError(t *testing.T) {
 	}
 }
 
+func TestOutcomeDistinguishesBrokenFromFailed(t *testing.T) {
+	// The whole design rests on this: a suite that ran and asserted false has
+	// told us something about the candidate, and a suite that broke has not.
+	// Only the first two are settled, so only they stop the next plan from
+	// running the stream again.
+	for _, tc := range []struct {
+		name    string
+		summary policy.Summary
+		ok      bool
+		want    policy.Result
+	}{
+		{"clean exit", policy.Summary{Passed: 5}, true, policy.ResultPassed},
+		{"something asserted false", policy.Summary{Passed: 3, Failed: 2}, false, policy.ResultFailed},
+		{"exited dirty having failed nothing", policy.Summary{Passed: 5}, false, policy.ResultError},
+		{"nothing ran at all", policy.Summary{}, false, policy.ResultError},
+		// A clean exit wins even with no specs. The empty selection is caught
+		// earlier, by the filter, because that is where it can still be named.
+		{"clean exit, no specs", policy.Summary{}, true, policy.ResultPassed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Outcome(tc.summary, tc.ok); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFoldSumsEveryLeg(t *testing.T) {
+	// A lane runs ginkgo more than once, and a stream is qualified when
+	// everything it selected passed rather than when its last leg did. Taking
+	// the last report would report on one leg and name the stream.
+	legs := [][]byte{
+		report(2, strings.Join([]string{
+			spec("It", "passed", "", ""),
+			spec("It", "passed", "", ""),
+		}, ",")),
+		report(3, strings.Join([]string{
+			spec("It", "failed", "", ""),
+			spec("It", "passed", "", ""),
+			spec("It", "skipped", "", ""),
+		}, ",")),
+	}
+
+	got, err := Fold(legs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := policy.Summary{Passed: 3, Failed: 1, Skipped: 1}
+	if got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestFoldKeepsGoingPastOneUnreadableLeg(t *testing.T) {
+	// A leg whose report is unreadable must not discard the legs that are.
+	// The stream still ran specs, and a summary naming none of them would
+	// classify as an error rather than as what actually happened.
+	legs := [][]byte{
+		[]byte("not json"),
+		report(1, spec("It", "failed", "", "")),
+	}
+	got, err := Fold(legs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (policy.Summary{Failed: 1}); got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestFoldOfNothingCountableIsAnError(t *testing.T) {
+	// A stream with no legs asserted nothing, and a zero summary would read
+	// as a clean run.
+	if _, err := Fold(nil); err == nil {
+		t.Fatal("want an error for no legs")
+	}
+	if _, err := Fold([][]byte{[]byte("not json")}); err == nil {
+		t.Fatal("want an error when no leg parses")
+	}
+}
+
 func TestParseNeed(t *testing.T) {
 	for _, tc := range []struct {
 		label string
