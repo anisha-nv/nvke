@@ -42,7 +42,7 @@ of them.
 |---|---|---|---|
 | **Phase** | the steps of one qualification run, in order | [`release/cmd/qualify`](../../release/cmd/qualify) | `plan`, `run` or `summarise`, `publish`, `aggregate`, `generate` |
 | **Layer** | how much assurance a check can afford, and what it gates | this document | continuous, pre-flight, qualification, governance |
-| **Stage** | how far a hardware run goes before it stops | the Forge lane's `SITE_STAGE` input | `provision`, `full` |
+| **Stage** | how far a hardware run goes before it stops | `-e2e.site-stage`, set from the lane's `SITE_STAGE` input | `provision`, `bootstrap`, `full` |
 | **Step** | the infrastructure a hardware run stands up, in order | `docs/qualification/hardware-lane.md` | infrastructure, site controller, tenant, node pools, GPU runtime |
 
 The phases are the `qualify` subcommands, which the code calls verbs: verb when
