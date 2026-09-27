@@ -79,6 +79,10 @@ jobs:
       # plan covering four of six streams yields four entries and says so in
       # plan.json.
       entries: ${{ steps.plan.outputs.entries }}
+      # Every later job needs the registry base. Building it once here, in the
+      # cheapest job, is what keeps an unset NKE_NGC_ORG from spending four
+      # hours of runner time before publish fails on nvcr.io//qualification.
+      registry: ${{ steps.registry.outputs.base }}
     # Dispatch input comes from an operator, so it is passed through the
     # environment rather than interpolated into the shell. Set once here
     # rather than per step.
@@ -97,6 +101,18 @@ jobs:
       SCOPE: ${{ inputs.scope || 'full' }}
       VERSION: ${{ inputs.version }}
     steps:
+      - name: Resolve the qualification registry
+        id: registry
+        env:
+          NKE_NGC_ORG: ${{ vars.NKE_NGC_ORG }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${NKE_NGC_ORG}" ]]; then
+            echo "::error::NKE_NGC_ORG is not set"
+            exit 1
+          fi
+          echo "base=nvcr.io/${NKE_NGC_ORG}/qualification" >>"${GITHUB_OUTPUT}"
+
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -251,7 +267,7 @@ jobs:
         if: always()
         env:
           NGC_API_KEY: ${{ secrets.NGC_REGISTRY_TOKEN_NKE }}
-          PUSH: nvcr.io/${{ vars.NKE_NGC_ORG }}/qualification
+          PUSH: ${{ needs.plan.outputs.registry }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
         run: |
           go run ./release/cmd/qualify publish \
@@ -308,8 +324,8 @@ jobs:
       cancel-in-progress: false
     env:
       NGC_API_KEY: ${{ secrets.NGC_REGISTRY_TOKEN_NKE }}
-      SOURCE: nvcr.io/${{ vars.NKE_NGC_ORG }}/qualification
-      STATE: nvcr.io/${{ vars.NKE_NGC_ORG }}/qualification/state:current
+      SOURCE: ${{ needs.plan.outputs.registry }}
+      STATE: ${{ needs.plan.outputs.registry }}/state:current
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -330,7 +346,7 @@ jobs:
 
   dashboard:
     name: Render the dashboard
-    needs: aggregate
+    needs: [plan, aggregate]
     if: ${{ always() && !inputs.plan-only }}
     runs-on: ubuntu-latest
     permissions:
@@ -341,7 +357,7 @@ jobs:
     # can be replaced without touching the data path.
     env:
       NGC_API_KEY: ${{ secrets.NGC_REGISTRY_TOKEN_NKE }}
-      STATE: nvcr.io/${{ vars.NKE_NGC_ORG }}/qualification/state:current
+      STATE: ${{ needs.plan.outputs.registry }}/state:current
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
