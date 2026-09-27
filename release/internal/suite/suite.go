@@ -305,6 +305,15 @@ const specNode = "It"
 
 // ginkgoReport is the part of ginkgo's JSON report this package reads.
 type ginkgoReport []struct {
+	// SpecsThatWillRun is what the label filter selected. Every spec in the
+	// suite appears in SpecReports whether selected or not, and an unselected
+	// one is reported skipped, so counting skipped states conflates "the
+	// filter excluded this" with "the run did not reach it".
+	PreRunStats struct {
+		TotalSpecs       int `json:"TotalSpecs"`
+		SpecsThatWillRun int `json:"SpecsThatWillRun"`
+	} `json:"PreRunStats"`
+
 	SpecReports []struct {
 		State string `json:"State"`
 
@@ -343,11 +352,11 @@ func parseNeeds(b []byte) (map[string]int, int, error) {
 	nodes := map[string]int{}
 	selected := 0
 	for _, suite := range report {
+		selected += suite.PreRunStats.SpecsThatWillRun
 		for _, spec := range suite.SpecReports {
 			if spec.LeafNodeType != specNode || spec.State == "skipped" {
 				continue
 			}
-			selected++
 			labels := slices.Concat(spec.Labels, flatten(spec.ContainerLabels))
 			for _, l := range labels {
 				kind, count, ok := parseNeed(l)
@@ -403,23 +412,30 @@ func parseSummary(b []byte) (policy.Summary, error) {
 		return policy.Summary{}, fmt.Errorf("parsing the ginkgo report: %w", err)
 	}
 	var s policy.Summary
+	selected, specs := 0, 0
 	for _, suite := range report {
+		selected += suite.PreRunStats.SpecsThatWillRun
 		for _, spec := range suite.SpecReports {
 			if spec.LeafNodeType != specNode {
 				continue
 			}
+			specs++
 			switch spec.State {
 			case "passed":
 				s.Passed++
 			case "failed", "panicked", "interrupted", "aborted":
 				s.Failed++
-			case "skipped", "pending":
-				s.Skipped++
 			}
 		}
 	}
-	if s == (policy.Summary{}) {
-		return s, errors.New("the report holds no spec results")
+	if specs == 0 {
+		return policy.Summary{}, errors.New("the report holds no spec results")
 	}
+
+	// What the filter selected and the run did not settle: specs an Ordered
+	// container cut short after an earlier failure, and specs a Skip() left
+	// alone. Deriving it this way keeps the three counts summing to the size
+	// of the run rather than the size of the suite.
+	s.Skipped = max(selected-s.Passed-s.Failed, 0)
 	return s, nil
 }

@@ -6,6 +6,7 @@ package suite
 import (
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,8 +16,13 @@ import (
 // report builds a ginkgo report with the fields this package reads. The real
 // one carries some fifty more, so constructing it here keeps the tests about
 // the parsing rather than about ginkgo's schema.
-func report(specs string) []byte {
-	return []byte(`[{"SpecReports":[` + specs + `]}]`)
+//
+// selected is PreRunStats.SpecsThatWillRun, which is what the label filter
+// chose. It is passed explicitly rather than derived from specs because the
+// gap between the two is the thing several of these tests are about.
+func report(selected int, specs string) []byte {
+	return []byte(`[{"PreRunStats":{"TotalSpecs":272,"SpecsThatWillRun":` +
+		strconv.Itoa(selected) + `},"SpecReports":[` + specs + `]}]`)
 }
 
 func spec(leaf, state, labels, containers string) string {
@@ -27,7 +33,7 @@ func spec(leaf, state, labels, containers string) string {
 func TestParseSummaryCountsSpecsOnly(t *testing.T) {
 	// BeforeSuite and AfterSuite are reported passed when they succeed. A run
 	// that passed no spec must not be credited with two.
-	b := report(strings.Join([]string{
+	b := report(3, strings.Join([]string{
 		spec("BeforeSuite", "passed", "", ""),
 		spec("It", "failed", "", ""),
 		spec("It", "skipped", "", ""),
@@ -46,7 +52,7 @@ func TestParseSummaryCountsSpecsOnly(t *testing.T) {
 }
 
 func TestParseSummaryStates(t *testing.T) {
-	b := report(strings.Join([]string{
+	b := report(5, strings.Join([]string{
 		spec("It", "passed", "", ""),
 		spec("It", "panicked", "", ""),
 		spec("It", "interrupted", "", ""),
@@ -64,10 +70,35 @@ func TestParseSummaryStates(t *testing.T) {
 	}
 }
 
+func TestParseSummaryIgnoresWhatTheFilterExcluded(t *testing.T) {
+	// Measured from a real run: --label-filter=nico-containers selected 69 of
+	// 272 specs, and the 203 the filter excluded were reported skipped along
+	// with the 64 an Ordered container cut short. Counting skipped states gave
+	// "267 skipped", which reads as a suite that tested almost nothing.
+	//
+	// Here: 4 specs in the suite, 2 selected, 1 failed. The one skip belongs
+	// to the run; the two exclusions do not.
+	b := report(2, strings.Join([]string{
+		spec("It", "failed", "", ""),
+		spec("It", "skipped", "", ""),
+		spec("It", "skipped", "", ""),
+		spec("It", "skipped", "", ""),
+	}, ","))
+
+	got, err := parseSummary(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := policy.Summary{Passed: 0, Failed: 1, Skipped: 1}
+	if got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
 func TestParseSummaryEmptyIsAnError(t *testing.T) {
 	// A report with no spec results means the suite did not run anything.
 	// Returning a zero summary would let that read as a clean pass.
-	if _, err := parseSummary(report("")); err == nil {
+	if _, err := parseSummary(report(0, "")); err == nil {
 		t.Fatal("want an error for a report holding no spec results")
 	}
 }
@@ -75,7 +106,7 @@ func TestParseSummaryEmptyIsAnError(t *testing.T) {
 func TestParseNeedsTakesTheMaximum(t *testing.T) {
 	// Two specs under one Ordered container share a site controller, so the
 	// requirement is the larger of the two rather than their sum.
-	b := report(strings.Join([]string{
+	b := report(2, strings.Join([]string{
 		spec("It", "passed", `"needs:cpu=3"`, `["lifecycle"]`),
 		spec("It", "passed", `"needs:cpu=5"`, `["lifecycle"]`),
 		spec("It", "skipped", `"needs:cpu=99"`, `["lifecycle"]`),
@@ -97,7 +128,7 @@ func TestParseNeedsReadsTheContainerHierarchy(t *testing.T) {
 	// The hierarchy is nested, one slice per level, and a label on an
 	// Ordered Describe applies to every spec beneath it. Reading only the
 	// spec's own labels would miss the declaration entirely.
-	b := report(spec("It", "passed", `"lifecycle"`, `["nico-containers","needs:gpu=2"],["needs:cpu=4"]`))
+	b := report(1, spec("It", "passed", `"lifecycle"`, `["nico-containers","needs:gpu=2"],["needs:cpu=4"]`))
 
 	nodes, selected, err := parseNeeds(b)
 	if err != nil {
@@ -114,7 +145,7 @@ func TestParseNeedsReadsTheContainerHierarchy(t *testing.T) {
 func TestParseNeedsNoLabelsIsNotAnError(t *testing.T) {
 	// A suite that declares no hardware is the state of the tree today. It
 	// must yield an empty requirement rather than a failure.
-	nodes, selected, err := parseNeeds(report(spec("It", "passed", "", "")))
+	nodes, selected, err := parseNeeds(report(1, spec("It", "passed", "", "")))
 	if err != nil {
 		t.Fatal(err)
 	}
