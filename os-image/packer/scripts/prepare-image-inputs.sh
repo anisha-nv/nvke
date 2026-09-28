@@ -9,6 +9,7 @@ staging_directory="${STAGING_DIRECTORY:?STAGING_DIRECTORY is required}"
 
 case "${staging_directory}" in
   /*/fde/.image-inputs|/*/non-fde/.image-inputs) ;;
+  /*/fde-development/.image-inputs|/*/non-fde-development/.image-inputs) ;;
   *)
     echo "refusing unsafe image-input staging path: ${staging_directory}" >&2
     exit 1

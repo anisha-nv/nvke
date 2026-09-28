@@ -71,6 +71,13 @@ class PackerMakefileTest(unittest.TestCase):
         )
         return result.stdout.strip()
 
+    def test_clean_covers_production_and_development_outputs(self):
+        command = self.dry_run("clean")
+        for variant in ("fde", "non-fde"):
+            for suffix in ("", "-development"):
+                self.assertIn(f'"{PACKER_DIR}/output-{variant}{suffix}"', command)
+                self.assertIn(f'"{PACKER_DIR}/.packer-output-{variant}{suffix}"', command)
+
     def dry_run(self, target):
         env = os.environ.copy()
         for name in ("MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS"):
@@ -115,6 +122,7 @@ class PackerMakefileTest(unittest.TestCase):
                 str(makefile or PACKER_DIR / "Makefile"),
                 *make_options,
                 target,
+                "IMAGE_PROFILE=production",
                 *variables,
             ],
             cwd=cwd,
@@ -653,7 +661,7 @@ exec "${REAL_MV:?}" "$@"
                 packer_init = output.index("/tmp/nkd-packer init ")
                 fetch_command = str(PACKER_DIR / "scripts" / "fetch-artifacts.sh")
                 artifact_fetch = output.index(fetch_command)
-                packer_build = output.index("/tmp/nkd-packer build")
+                packer_build = output.index("bash /tmp/nkd-packer")
 
                 self.assertIn(str(PACKER_DIR), output[packer_init:].splitlines()[0])
                 build_command = output[packer_build:]
@@ -1285,6 +1293,23 @@ exec "${REAL_MV:?}" "$@"
             self.assertEqual(cleaned.returncode, 0, cleaned.stderr)
             self.assertFalse(staging.exists())
 
+            development_staging = root / "output/non-fde-development/.image-inputs"
+            staged = subprocess.run(
+                [helper],
+                env={
+                    **os.environ,
+                    "MODE": "stage",
+                    "MATERIAL_PATH": str(archive),
+                    "EXPECTED_DIGEST": digest,
+                    "STAGING_DIRECTORY": str(development_staging),
+                },
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(staged.returncode, 0, staged.stderr)
+            self.assertTrue((development_staging / "debs/example.deb").exists())
+
     def test_image_input_staging_rejects_unsafe_archive_members(self):
         helper = PACKER_DIR / "scripts/prepare-image-inputs.sh"
         cases = ("absolute", "traversal", "symlink", "hardlink", "fifo")
@@ -1534,20 +1559,23 @@ exec "${REAL_MV:?}" "$@"
         # Collection re-derives the expected filename from ISO_URL, so a 24.04
         # leg must pass the same UBUNTU_RELEASE or collection refuses.
         cases = (
-            ("fde", "amd64", "26.04.1"),
-            ("non-fde", "arm64", "26.04.1"),
-            ("non-fde", "amd64", "24.04.5"),
+            ("fde", "amd64", "26.04.1", "production"),
+            ("non-fde", "arm64", "26.04.1", "production"),
+            ("non-fde", "amd64", "24.04.5", "production"),
+            ("fde", "arm64", "26.04.1", "development"),
+            ("non-fde", "amd64", "24.04.5", "development"),
         )
-        for variant, arch, release in cases:
-            with self.subTest(variant=variant, arch=arch, release=release), tempfile.TemporaryDirectory() as tmp:
+        for variant, arch, release, profile in cases:
+            with self.subTest(variant=variant, arch=arch, release=release, profile=profile), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 source = root / "source"
                 workspace = root / "workspace"
                 workspace.mkdir()
                 commit = self.create_source_repo(source)
-                output = workspace / f"output-{variant}"
+                suffix = "-development" if profile == "development" else ""
+                output = workspace / f"output-{variant}{suffix}"
                 output.mkdir()
-                name = f"nke-node-{variant}-ubuntu-{release}-{arch}.qcow2"
+                name = f"nke-node-{variant}{suffix}-ubuntu-{release}-{arch}.qcow2"
                 payload = f"{variant}-{arch}-bytes".encode()
                 (output / name).write_bytes(payload)
                 dist = workspace / "dist"
@@ -1561,6 +1589,7 @@ exec "${REAL_MV:?}" "$@"
                         f"QCOW2_DIST_DIR={dist}",
                         f"ARCH={arch}",
                         f"UBUNTU_RELEASE={release}",
+                        f"IMAGE_PROFILE={profile}",
                     ),
                 )
 

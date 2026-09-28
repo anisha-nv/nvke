@@ -6,6 +6,35 @@
 # filename is the source of truth, so an arm64 image cannot accidentally be
 # launched with x86 QEMU.
 
+# Image builds additionally select a kernel profile. Keep this policy out of
+# nke_qemu_env so boot tools can still launch compatible arm64 images with HVF.
+nke_image_env() {
+  local arch="$1" host_os
+  host_os="$(uname -s)"
+  case "${IMAGE_PROFILE:-auto}" in
+    auto)
+      if [[ "$host_os" == Darwin ]]; then IMAGE_PROFILE=development;
+      else IMAGE_PROFILE=production; fi
+      ;;
+    production|development) ;;
+    *) echo 'qemu-arch: IMAGE_PROFILE must be auto, production, or development' >&2; return 1 ;;
+  esac
+
+  # The production arm64 kernel requires 64 KiB pages, unavailable under HVF.
+  # Software emulation can supply them; never silently change a requested
+  # production kernel into a development kernel to get hardware acceleration.
+  if [[ "$IMAGE_PROFILE" == production && "$arch" == arm64 && "$host_os" == Darwin ]]; then
+    case "${ACCELERATOR:-}" in
+      ""|tcg) ACCELERATOR=tcg ;;
+      hvf)
+        echo 'qemu-arch: production arm64 requires 64 KiB pages; use ACCELERATOR=tcg or IMAGE_PROFILE=development for HVF' >&2
+        return 1
+        ;;
+    esac
+  fi
+  nke_qemu_env "$arch"
+}
+
 nke_arch_from_qcow() {
   case "$(basename "$1")" in
     *-amd64.qcow2) printf '%s\n' amd64 ;;

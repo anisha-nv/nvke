@@ -8,7 +8,13 @@ installed later through `nke-agent`. The image includes the Calico manifests
 package used during bootstrap.
 
 The in-tree Packer recipe (`packer/`) is one implementation of this contract,
-not the only allowed one.
+not the only allowed one. The `production` build profile follows this contract.
+The `development` profile uses `linux-generic` for local VMs (including macOS
+HVF, which cannot boot the production arm64 64 KiB kernel). It has distinct
+artifact names and records `development` in `/etc/nke/image-profile`; it is
+not a production image. Linux Make builds default to production; macOS Make
+builds default to development. Direct Packer invocations default to production
+on every host.
 
 ## Must have (baked into the image)
 
@@ -17,7 +23,7 @@ TODO:  Need to refine the requirements around spire-agent below
 | Item | Requirement |
 |---|---|
 | OS | Ubuntu 26.04 LTS by default, or 24.04 LTS with `UBUNTU_RELEASE=24.04.5`; both are published. `linux/amd64` and `linux/arm64` both build both variants (`make os-image-fde ARCH=arm64`), each on a runner of its own architecture under KVM. See [README.md](README.md#build-the-os-image). |
-| Kernel | Ubuntu's NVIDIA-tuned kernel flavor (`linux-nvidia` on amd64, `linux-nvidia-64k` on arm64), not the generic default — set via autoinstall's `kernel.package` (`cidata/autoinstall-lvm.pkrtpl`), so curtin installs it directly at image-build time instead of the generic kernel ever landing on disk. Matches `node-images`' `nvidia-kernel` role. |
+| Kernel | Ubuntu's NVIDIA-tuned kernel flavor (`linux-nvidia` on amd64, `linux-nvidia-64k` on arm64), not the generic default — set via autoinstall's `kernel.package` (`cidata/autoinstall-lvm.pkrtpl`), so curtin installs it at image-build time; provisioning removes any leftover generic kernel only after verifying that an NVIDIA kernel is running. Matches `node-images`' `nvidia-kernel` role. |
 | `nke-agent` | Built as a Debian package from this repository's `agent/` source at bake time. dpkg owns `/usr/local/bin/nke-agent`, `/usr/local/bin/nke-agent-updater`, and their systemd units. `nke-agent.service` is **enabled**, with startup deferred until first boot. Listens on TCP **15005**. mTLS is on (no `--disable-mtls` in `/etc/default/nke-agent`). An image-owned systemd drop-in waits for the SPIRE workload API before exec and survives package upgrades. |
 | SPIRE agent | `spire-agent` at `/usr/local/bin/spire-agent`, unit `spire-agent.service` **enabled**. Workload API socket at `unix:///tmp/spire-agent/public/api.sock` (the `nke-agent` default). Installed from the `spire-agent` .deb built at bake time by [`packages/spire-agent/`](packages/spire-agent/), which also owns the two units, the first-boot renderer and its template; `dpkg -S` on any of those paths names that package. |
 | Unix workload attestor | SPIRE `WorkloadAttestor "unix"` so root `nke-agent` can fetch an X.509 SVID. |

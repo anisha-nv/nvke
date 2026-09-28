@@ -2,8 +2,9 @@
 
 Ubuntu image that ships `nke-agent` and `spire-agent` so a site
 controller can reach the node over SPIFFE mTLS, built on Ubuntu's
-NVIDIA-tuned kernel flavor (`linux-nvidia`/`linux-nvidia-64k`), not the
-generic default. The contract is [SPEC.md](SPEC.md).
+NVIDIA-tuned kernel flavor (`linux-nvidia`/`linux-nvidia-64k`) for production.
+A development profile uses `linux-generic` for local VMs. The production
+contract is [SPEC.md](SPEC.md).
 
 26.04 LTS is the default. 24.04 LTS is built and published alongside it, for
 consumers whose other software pins that release — see `UBUNTU_RELEASE` under
@@ -102,13 +103,47 @@ a matching Linux host and otherwise uses the
 [NixOS package-builder VM](nix/README.md), which returns the packages to the
 host before Packer uploads them to its separate Ubuntu guest.
 
-`image-native` requires usable KVM. The generic `image` target and the existing
-`packer/` targets allow `ACCELERATOR=tcg` for development. Emulated builds are
-much slower. Image builds accept `kvm` or `tcg` and nothing else —
-`check-acceleration` rejects `ACCELERATOR=hvf`, which exists only for `run-vm`
-and `boot-smoke`. Make stages artifacts in its owned `packer/artifacts/`
-directory; Packer uploads them to `/var/tmp/nke-image`, which the provisioner removes before
-finishing the image. Installer ISOs remain in their separate cache.
+`IMAGE_PROFILE=auto` (the Make default) selects `development` on macOS and
+`production` elsewhere. Set `IMAGE_PROFILE=production|development` to choose
+explicitly. Direct Packer invocations default to `production` on every host.
+
+| Profile | Kernel | Output |
+|---|---|---|
+| `production` | `linux-nvidia` (amd64), `linux-nvidia-64k` (arm64) | Existing `output-fde/` or `output-non-fde/` paths and filenames |
+| `development` | `linux-generic` | `output-fde-development/` or `output-non-fde-development/`; filenames include `-development` |
+
+Each image records its profile in `/etc/nke/image-profile`. Development images
+are for local testing and do not satisfy the production kernel contract.
+Linux builds retain the production default. `image-native` explicitly selects
+production and requires usable Linux KVM.
+
+On Apple Silicon, a local development build uses HVF with the generic kernel:
+
+```bash
+make -C os-image image ARCH=arm64 VARIANT=non-fde
+# Explicit production image on the same Mac: uses TCG for 64 KiB page support.
+make -C os-image image ARCH=arm64 VARIANT=non-fde IMAGE_PROFILE=production
+```
+
+The production arm64 kernel needs 64 KiB pages, which Apple Silicon HVF guests
+do not support. Production arm64 builds on macOS automatically select TCG;
+explicitly combining that profile with `ACCELERATOR=hvf` fails before boot.
+Other builds use the shared QEMU helper to select native KVM/HVF when available,
+or TCG otherwise. `ACCELERATOR=tcg` explicitly selects emulation.
+`CPU_MODEL`, `SSH_TIMEOUT`, and `BOOT_WAIT` remain overridable. Hardware
+acceleration defaults to CPU `host`, a 30-minute SSH timeout, and a 10-second
+boot wait; TCG uses a 180-minute timeout and 30-second wait.
+
+The build keeps package artifacts in `packer/artifacts/` and uploads
+them to `/var/tmp/nke-image`, which the provisioner removes before finishing.
+Installer ISOs remain in their separate cache. Development serial logs are
+`packer/build-logs/<variant>-development-install-console.log`; production log
+names stay unchanged. To boot a development image, pass its path explicitly:
+
+```bash
+make -C os-image run-vm ARCH=arm64 \
+  QCOW=packer/output-non-fde-development/nke-node-non-fde-development-ubuntu-26.04.1-arm64.qcow2
+```
 
 Boot tools share architecture, firmware, and acceleration selection. They
 infer the architecture from the `-amd64.qcow2` or `-arm64.qcow2` filename and
@@ -127,11 +162,12 @@ make run-vm QCOW=packer/output-non-fde/nke-node-non-fde-ubuntu-26.04.1-amd64.qco
 emulation, and an explicit unavailable `ACCELERATOR=kvm` or `hvf` fails early.
 
 On Apple Silicon, `run-vm` and `boot-smoke` can use HVF with an already-built
-compatible arm64 image. The production arm64 kernel is `linux-nvidia-64k`;
-compatibility with a particular Mac/QEMU combination still needs live
-validation. Apple Silicon macOS package builds use the NixOS VM; image baking still needs the
-host Packer/ISO tools. The boot scripts also need `cloud-localds`, SSH and, for
-smoke tests, `timeout`.
+compatible arm64 development image. For the production arm64 image, pass
+`ACCELERATOR=tcg` to the boot tools; the generic boot helper does not infer the
+kernel's page size from an arbitrary disk. Apple Silicon macOS package builds use the NixOS
+VM; full image baking still requires the host Packer/ISO tools and a supported
+QEMU/kernel combination.
+The boot scripts also need `cloud-localds`, SSH and, for smoke tests, `timeout`.
 Run `make -C os-image test-qemu` for the selection and build-entrypoint tests
 without booting a VM.
 
@@ -158,9 +194,9 @@ dropping the upstream binaries in by hand, so a node ends up with the same
 artifact whichever path installed it. The build also installs the Calico
 manifests package that the agent uses during offline bootstrap.
 
-Both variants install Ubuntu's NVIDIA-tuned kernel (`kernel.package` in
-`cidata/autoinstall-lvm.pkrtpl`), so the generic kernel never lands on disk in
-the first place — no post-install kernel swap or reboot.
+Production images install Ubuntu's NVIDIA-tuned kernel (`kernel.package` in
+`cidata/autoinstall-lvm.pkrtpl`), so there is no post-install kernel swap or
+reboot. Development images install `linux-generic` instead.
 
 `ARCH=arm64` builds the arm64 image instead (`ARCH=amd64` is the default):
 

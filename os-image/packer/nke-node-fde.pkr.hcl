@@ -35,11 +35,11 @@ source "qemu" "nke-fde" {
 
   http_content = {
     "/user-data" = templatefile("${local.project_root}/cidata/autoinstall-lvm.pkrtpl", {
-      ssh_public_key        = local.ssh_public_key
-      luks_enabled          = true
-      luks_passphrase       = var.luks_passphrase
-      nvidia_kernel_package = local.nvidia_kernel_package
-      serial_console        = local.serial_console
+      ssh_public_key  = local.ssh_public_key
+      luks_enabled    = true
+      luks_passphrase = var.luks_passphrase
+      kernel_package  = local.kernel_package
+      serial_console  = local.serial_console
     })
     "/meta-data" = "instance-id: nke-packer-fde\nlocal-hostname: nke-packer-fde\n"
   }
@@ -47,7 +47,7 @@ source "qemu" "nke-fde" {
   boot_wait    = var.boot_wait
   boot_command = local.boot_command
   qemuargs = concat(local.architecture_qemuargs, [
-    ["-serial", "file:${local.build_log_directory}/fde-install-console.log"],
+    ["-serial", "file:${local.build_log_directory}/fde${local.profile_suffix}-install-console.log"],
   ])
 
   ssh_username         = "ubuntu"
@@ -59,7 +59,7 @@ source "qemu" "nke-fde" {
 
   shutdown_command = "sudo shutdown -P now"
   vm_name          = "nke-node.qcow2"
-  output_directory = "${var.output_directory}/fde"
+  output_directory = local.variant_output_directories.fde
   headless         = true
   memory           = 8192
   cpus             = var.cpus
@@ -69,6 +69,12 @@ source "qemu" "nke-fde" {
 build {
   name    = "nke-node-fde"
   sources = ["source.qemu.nke-fde"]
+
+  # Check the booted kernel and preserve the selected profile before cleanup.
+  provisioner "shell" {
+    environment_vars = ["IMAGE_PROFILE=${var.image_profile}"]
+    script           = "${path.root}/scripts/configure-image-kernel.sh"
+  }
 
   provisioner "shell-local" {
     environment_vars = [
@@ -124,6 +130,6 @@ build {
 
   post-processor "shell-local" {
     # Keep one source-owned final conversion for Make and direct callers.
-    inline = ["${local.project_root}/scripts/compress-qcow2.sh ${var.output_directory}/fde/nke-node.qcow2"]
+    inline = ["${local.project_root}/scripts/compress-qcow2.sh ${local.variant_output_directories.fde}/nke-node.qcow2"]
   }
 }

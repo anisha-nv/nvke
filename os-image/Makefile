@@ -142,8 +142,9 @@ image: ## Bake with native or NixOS VM package builds (ARCH=amd64|arm64, VARIANT
 	$(MAKE) -C packer os-image-$(VARIANT) ARCH=$(ARCH)
 
 image-native: ## Bake with native Linux KVM; fail if acceleration is unavailable.
-	$(MAKE) image REQUIRE_ACCELERATION=1
+	$(MAKE) image IMAGE_PROFILE=production ACCELERATOR=kvm REQUIRE_ACCELERATION=1
 
 test-qemu: ## Test QEMU architecture, firmware, and accelerator selection without a VM.
 	bash ./packer/scripts/qemu-arch-test.sh
 	python3 ./packer/scripts/test_build_entrypoint.py
+	python3 ./packer/scripts/test_image_profiles.py

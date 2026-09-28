@@ -135,11 +135,11 @@ variable "root_fs_label" {
 variable "accelerator" {
   type        = string
   default     = "kvm"
-  description = "QEMU accelerator: kvm for hardware virtualization or tcg for software emulation."
+  description = "QEMU accelerator: kvm (Linux), hvf (macOS development), or tcg (software emulation)."
 
   validation {
-    condition     = contains(["kvm", "tcg"], var.accelerator)
-    error_message = "The accelerator value must be kvm or tcg."
+    condition     = contains(["kvm", "hvf", "tcg"], var.accelerator)
+    error_message = "The accelerator value must be kvm, hvf, or tcg."
   }
 }
 
@@ -197,5 +197,16 @@ variable "efi_firmware_vars" {
   validation {
     condition     = length(var.efi_firmware_vars) > 0
     error_message = "The firmware variables path must not be empty."
+  }
+}
+
+variable "image_profile" {
+  type        = string
+  default     = "production"
+  description = "Production uses the NVIDIA kernel; development uses a generic kernel for local VMs."
+
+  validation {
+    condition     = contains(["production", "development"], var.image_profile)
+    error_message = "Image profile must be production or development."
   }
 }

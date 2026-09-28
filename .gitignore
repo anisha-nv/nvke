@@ -19,6 +19,8 @@ controller/hack/capd-reboot-controller/capd-reboot-controller
 os-image/packer/output/
 os-image/packer/output-fde/
 os-image/packer/output-non-fde/
+os-image/packer/output-fde-development/
+os-image/packer/output-non-fde-development/
 os-image/packer/artifacts/
 os-image/packer/.artifacts.tmp.*/
 os-image/packer/.artifacts.backup.*/

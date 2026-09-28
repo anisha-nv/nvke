@@ -27,9 +27,14 @@ locals {
   installer_checksum  = local.installer_record.digest
   image_inputs        = "${local.material_root}/${local.image_input_record.path}"
   image_inputs_digest = local.image_input_record.digest
+  profile_suffix      = var.image_profile == "development" ? "-development" : ""
+  variant_output_directories = {
+    fde     = "${var.output_directory}/fde${local.profile_suffix}"
+    non_fde = "${var.output_directory}/non-fde${local.profile_suffix}"
+  }
   staged_image_inputs = {
-    fde     = "${var.output_directory}/fde/.image-inputs"
-    non_fde = "${var.output_directory}/non-fde/.image-inputs"
+    fde     = "${local.variant_output_directories.fde}/.image-inputs"
+    non_fde = "${local.variant_output_directories.non_fde}/.image-inputs"
   }
   ssh_public_key      = trimspace(file(var.ssh_public_key_file))
   build_log_directory = var.build_log_directory == "" ? var.output_directory : var.build_log_directory
@@ -38,7 +43,7 @@ locals {
   # manifest before it selects QEMU, firmware, console, and guest packages.
   # ARM uses virt, AAVMF, the PL011 serial console, and the NVIDIA 64K-page
   # kernel. AMD64 uses q35, OVMF, ttyS0, and linux-nvidia.
-  nvidia_kernel_package = local.architecture == "arm64" ? "linux-nvidia-64k" : "linux-nvidia"
+  kernel_package = var.image_profile == "development" ? "linux-generic" : (local.architecture == "arm64" ? "linux-nvidia-64k" : "linux-nvidia")
   # The INSTALLED system's console only. boot_command below keeps the installer
   # on the first UART, because the build VM maps `-serial file:` there and
   # moving it would blank the log used to diagnose a stuck bake. Overridable
