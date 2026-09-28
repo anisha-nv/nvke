@@ -1,36 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# Builds the nke-agent .debs on an agent/v* tag, uploads them to the
-# apt-publisher S3 intake, attaches both packages as assets on a GitHub
-# Release for that tag, and publishes the same packages to GHCR as an OCI
-# artifact (ghcr.io/dsx-ai-factory/nke/agent-deb) for oras pull. Apt intake is
-# tag-only: workflow_dispatch is kept so a failed tag publish can be re-run,
-# but branch dispatches never upload. deb.yml exercises the same packaging
-# path on every agent change and throws the packages away; this workflow is
-# the release side.
-#
-# Layout written by agent/scripts/upload-s3-apt-intake.sh (consumed by
-# nke/packages/apt-publisher):
-#
-#   <intake>/<project>/releases/<tag>/<distro>/<arch>/<filename>
-#   <prefix>/<project>/index.json
-#
-# The destination is not written here. It comes from the `apt-intake`
-# environment, so no bucket name lands in a tracked file of a repository that
-# is released publicly:
-#
-#   APT_INTAKE_S3_URI       variable  e.g. s3://example-bucket/nke-packages
-#   APT_INTAKE_PROJECT      variable  optional; default nke-agent
-#   APT_INTAKE_AWS_ROLE_ARN variable  IAM role assumed via OIDC to write intake
-#   APT_INTAKE_AWS_REGION   variable  optional; default us-west-2
-#
-# Both architectures are built natively (amd64 on ubuntu-24.04, arm64 on
-# ubuntu-24.04-arm) for the same reason as deb.yml: cross-compiling flips CGO
-# off and produces a static binary that still claims Depends: libc6. A single
-# publish job then uploads both packages once so the shared index.json merge
-# cannot race with itself. The GitHub Release job and the GHCR job run in
-# parallel with S3 publish and do not touch apt intake.
 
 name: Agent Deb Publish
 
@@ -52,9 +21,6 @@ env:
   SOURCE_REF: ${{ inputs.ref || github.ref_name }}
 
 concurrency:
-  # A literal name, NOT ${{ github.workflow }}. Inside a called workflow that
-  # expression is the CALLER's name, so any workflow merge-gate.yml calls would
-  # share a group with its siblings and cancel them.
   group: Agent Deb Publish-${{ inputs.ref || github.ref_name }}
   # Never cancel a publish midway: a half-written index.json leaves apt-publisher
   # with a partial release.
@@ -100,8 +66,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.sha }}
-          # DEB_VERSION comes from `git describe --match 'agent/v*'`; a shallow
-          # clone would stamp the wrong version into a release package.
           fetch-depth: 0
           persist-credentials: false
 
@@ -176,16 +140,10 @@ jobs:
           echo "OK  ${deb}  package=${pkg} version=${ver} arch=${arch}"
           echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
-      # Scanned here rather than in the two consumers. `publish` and
-      # `github-release` both take `needs: [build]`, so gating once covers the
-      # apt intake and the GitHub release together, and the package cannot
-      # reach either if it fails.
       - name: Malware scan the package
         uses: ./.github/actions/malware-scan
         with:
           scan_path: 'agent/bin'
-          # Per architecture: this job is a matrix, and two uploads sharing one
-          # category would overwrite each other in the Security tab.
           category: 'clamav-agent-deb-${{ matrix.arch }}'
           output_file: 'clamav-agent-deb.sarif'
 
@@ -196,6 +154,60 @@ jobs:
           path: agent/bin/*.deb
           if-no-files-found: error
           retention-days: 14
+
+  publish-dev:
+    name: Upload dev packages to S3
+    needs: [build]
+    if: >-
+      github.repository == 'dsx-ai-factory/nke' &&
+      github.ref == 'refs/heads/main' &&
+      !startsWith(inputs.ref || github.ref_name, 'agent/v')
+    runs-on: ubuntu-latest
+    environment: s3-publish-non-prod
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      APT_INTAKE_S3_URI: ${{ vars.S3_PUBLISH_S3_URI }}
+      APT_INTAKE_PROJECT: nke-agent
+      APT_INTAKE_RELEASE: ${{ needs.build.outputs.sha }}
+      DEV_AWS_ROLE_ARN: ${{ vars.S3_PUBLISH_AWS_ROLE_ARN }}
+    steps:
+      - name: Validate dev publication
+        run: |
+          : "${APT_INTAKE_S3_URI:?Set S3_PUBLISH_S3_URI in s3-publish-non-prod}"
+          : "${DEV_AWS_ROLE_ARN:?Set S3_PUBLISH_AWS_ROLE_ARN in s3-publish-non-prod}"
+          if [[ ! "${APT_INTAKE_RELEASE}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Dev publication requires the full built commit SHA"
+            exit 1
+          fi
+
+      - name: Checkout uploader
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: agent-deb-*
+          merge-multiple: true
+          path: agent/bin
+
+      - name: Configure dev AWS credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.DEV_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.S3_PUBLISH_AWS_REGION || 'us-west-2' }}
+
+      - name: Upload dev packages
+        working-directory: agent
+        env:
+          PUBLISH_INDEX_JSON: "false"
+          ASSETS_DIR: bin
+        run: ./scripts/upload-s3-apt-intake.sh
 
   publish:
     name: Upload to apt intake
@@ -272,59 +284,6 @@ jobs:
           APT_INTAKE_PROJECT: ${{ steps.meta.outputs.project }}
           APT_INTAKE_RELEASE: ${{ steps.meta.outputs.release }}
           PUBLISH_INDEX_JSON: "true"
-          ASSETS_DIR: bin
-        run: ./scripts/upload-s3-apt-intake.sh
-
-  publish-dev:
-    name: Upload dev packages to S3
-    needs: [build]
-    if: >-
-      github.repository == 'dsx-ai-factory/nke' &&
-      github.ref == 'refs/heads/main' &&
-      !startsWith(inputs.ref || github.ref_name, 'agent/v')
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      APT_INTAKE_S3_URI: ${{ vars.AGENT_DEV_S3_URI }}
-      APT_INTAKE_PROJECT: nke-agent
-      APT_INTAKE_RELEASE: ${{ needs.build.outputs.sha }}
-      DEV_AWS_ROLE_ARN: ${{ vars.AGENT_DEV_AWS_ROLE_ARN }}
-    steps:
-      - name: Validate dev publication
-        run: |
-          : "${APT_INTAKE_S3_URI:?Set the AGENT_DEV_S3_URI repository variable}"
-          : "${DEV_AWS_ROLE_ARN:?Set the AGENT_DEV_AWS_ROLE_ARN repository variable}"
-          if [[ ! "${APT_INTAKE_RELEASE}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::Dev publication requires the full built commit SHA"
-            exit 1
-          fi
-
-      - name: Checkout uploader
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - name: Download packages
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: agent-deb-*
-          merge-multiple: true
-          path: agent/bin
-
-      - name: Configure dev AWS credentials
-        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
-        with:
-          role-to-assume: ${{ env.DEV_AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AGENT_DEV_AWS_REGION || 'us-west-2' }}
-
-      - name: Upload dev packages
-        working-directory: agent
-        env:
-          PUBLISH_INDEX_JSON: "false"
           ASSETS_DIR: bin
         run: ./scripts/upload-s3-apt-intake.sh
 
