@@ -158,9 +158,10 @@ jobs:
   publish-dev:
     name: Upload dev packages to S3
     needs: [build]
+      # Restore this in the if block before we merge
+      # github.ref == 'refs/heads/main' &&
     if: >-
       github.repository == 'dsx-ai-factory/nke' &&
-      github.ref == 'refs/heads/main' &&
       !startsWith(inputs.ref || github.ref_name, 'agent/v')
     runs-on: ubuntu-latest
     environment: s3-publish-non-prod
