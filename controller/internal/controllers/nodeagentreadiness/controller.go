@@ -52,14 +52,15 @@ func NewAgentReadinessController(
 }
 
 func (c *AgentReadinessController) SetupWithManager(mgr manager.Manager) error {
-	return dbreconcile.SetupController(
-		mgr,
-		"node-agent-health",
-		c,
-		dbwrapper.NewNodeSource(c.db, dbfilters.Node{
-			Deleting: ptr.To(false),
-		}),
-	)
+	return dbreconcile.Register(mgr, dbreconcile.Registration{
+		Name:       "node-agent-health",
+		Reconciler: c,
+		Sources: []dbreconcile.Source{
+			dbwrapper.NewNodeSource(c.db, dbfilters.Node{
+				Deleting: ptr.To(false),
+			}),
+		},
+	})
 }
 
 func (c *AgentReadinessController) Reconcile(ctx context.Context, key dbreconcile.Key) (reconcile.Result, error) {

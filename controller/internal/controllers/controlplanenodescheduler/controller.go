@@ -48,17 +48,18 @@ func NewControlPlaneNodeScheduler(
 
 // SetupWithManager wires the scheduler into controller-runtime.
 func (s *ControlPlaneNodeScheduler) SetupWithManager(mgr manager.Manager) error {
-	return dbreconcile.SetupController(
-		mgr,
-		"control-plane-node-scheduler",
-		s,
-		dbwrapper.NewClusterSource(s.db, dbfilters.Cluster{}),
-		dbwrapper.NewNodeSource(s.db, dbfilters.Node{
-			Pending:      ptr.To(true),
-			Deleting:     ptr.To(false),
-			ControlPlane: ptr.To(true),
-		}, clusterKeysForManagedControlPlaneNode),
-	)
+	return dbreconcile.Register(mgr, dbreconcile.Registration{
+		Name:       "control-plane-node-scheduler",
+		Reconciler: s,
+		Sources: []dbreconcile.Source{
+			dbwrapper.NewClusterSource(s.db, dbfilters.Cluster{}),
+			dbwrapper.NewNodeSource(s.db, dbfilters.Node{
+				Pending:      ptr.To(true),
+				Deleting:     ptr.To(false),
+				ControlPlane: ptr.To(true),
+			}, clusterKeysForManagedControlPlaneNode),
+		},
+	})
 }
 
 func clusterKeysForManagedControlPlaneNode(_ context.Context, node db.Node) ([]dbreconcile.Key, error) {

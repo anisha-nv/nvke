@@ -94,19 +94,20 @@ func NewController(
 // existing NodePool reconciler, so this controller intentionally watches NodeSets
 // instead of adding a direct NodePool source.
 func (c *Controller) SetupWithManager(mgr manager.Manager) error {
-	return dbreconcile.SetupController(
-		mgr,
-		"teleport-token",
-		c,
-		dbwrapper.NewNodeSource(c.db, dbfilters.Node{Deleting: ptr.To(false)}),
-		dbwrapper.NewClusterSource(c.db, dbfilters.Cluster{}, c.nodeKeysForCluster),
-		dbwrapper.NewNodeSetSource(c.db, dbfilters.NodeSet{}, c.nodeKeysForNodeSet),
-		source.TypedKind(
-			mgr.GetCache(),
-			&nicov1.NicoMachine{},
-			handler.TypedEnqueueRequestsFromMapFunc(c.nodeKeysForNicoMachine),
-		),
-	)
+	return dbreconcile.Register(mgr, dbreconcile.Registration{
+		Name:       "teleport-token",
+		Reconciler: c,
+		Sources: []dbreconcile.Source{
+			dbwrapper.NewNodeSource(c.db, dbfilters.Node{Deleting: ptr.To(false)}),
+			dbwrapper.NewClusterSource(c.db, dbfilters.Cluster{}, c.nodeKeysForCluster),
+			dbwrapper.NewNodeSetSource(c.db, dbfilters.NodeSet{}, c.nodeKeysForNodeSet),
+			source.TypedKind(
+				mgr.GetCache(),
+				&nicov1.NicoMachine{},
+				handler.TypedEnqueueRequestsFromMapFunc(c.nodeKeysForNicoMachine),
+			),
+		},
+	})
 }
 
 func (c *Controller) nodeKeysForCluster(ctx context.Context, cluster db.Cluster) ([]dbreconcile.Key, error) {

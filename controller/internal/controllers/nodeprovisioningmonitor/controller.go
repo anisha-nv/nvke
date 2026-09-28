@@ -44,15 +44,16 @@ func NewController(
 }
 
 func (c *Controller) SetupWithManager(mgr manager.Manager) error {
-	return dbreconcile.SetupController(
-		mgr,
-		"node-provisioning-monitor",
-		c,
-		dbwrapper.NewNodeSource(c.db, dbfilters.Node{
-			Provisioning: ptr.To(true),
-			Deleting:     ptr.To(false),
-		}),
-	)
+	return dbreconcile.Register(mgr, dbreconcile.Registration{
+		Name:       "node-provisioning-monitor",
+		Reconciler: c,
+		Sources: []dbreconcile.Source{
+			dbwrapper.NewNodeSource(c.db, dbfilters.Node{
+				Provisioning: ptr.To(true),
+				Deleting:     ptr.To(false),
+			}),
+		},
+	})
 }
 
 func (c *Controller) Reconcile(ctx context.Context, key dbreconcile.Key) (reconcile.Result, error) {

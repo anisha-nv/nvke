@@ -48,16 +48,17 @@ func NewNodePoolNodeScheduler(
 
 // SetupWithManager wires the scheduler into controller-runtime.
 func (s *NodePoolNodeScheduler) SetupWithManager(mgr manager.Manager) error {
-	return dbreconcile.SetupController(
-		mgr,
-		"node-pool-node-scheduler",
-		s,
-		dbwrapper.NewNodePoolSource(s.db, dbfilters.NodePool{}),
-		dbwrapper.NewNodeSource(s.db, dbfilters.Node{
-			Pending:  ptr.To(true),
-			Deleting: ptr.To(false),
-		}, nodePoolKeysForPendingNode),
-	)
+	return dbreconcile.Register(mgr, dbreconcile.Registration{
+		Name:       "node-pool-node-scheduler",
+		Reconciler: s,
+		Sources: []dbreconcile.Source{
+			dbwrapper.NewNodePoolSource(s.db, dbfilters.NodePool{}),
+			dbwrapper.NewNodeSource(s.db, dbfilters.Node{
+				Pending:  ptr.To(true),
+				Deleting: ptr.To(false),
+			}, nodePoolKeysForPendingNode),
+		},
+	})
 }
 
 func nodePoolKeysForPendingNode(_ context.Context, node db.Node) ([]dbreconcile.Key, error) {

@@ -45,12 +45,13 @@ func NewController(cfg config.Config, logger *slog.Logger, dbInstance *dbwrapper
 }
 
 func (c *Controller) SetupWithManager(mgr manager.Manager) error {
-	return dbreconcile.SetupController(
-		mgr,
-		"cert-renewal-controller",
-		c,
-		dbwrapper.NewClusterSource(c.db, dbfilters.Cluster{}),
-	)
+	return dbreconcile.Register(mgr, dbreconcile.Registration{
+		Name:       "cert-renewal-controller",
+		Reconciler: c,
+		Sources: []dbreconcile.Source{
+			dbwrapper.NewClusterSource(c.db, dbfilters.Cluster{}),
+		},
+	})
 }
 
 func (c *Controller) Reconcile(ctx context.Context, key dbreconcile.Key) (reconcile.Result, error) {

@@ -43,13 +43,14 @@ func NewController(
 }
 
 func (c *Controller) SetupWithManager(mgr manager.Manager) error {
-	return dbreconcile.SetupController(
-		mgr,
-		"node-set-controller",
-		c,
-		dbwrapper.NewNodeSetSource(c.db, dbfilters.NodeSet{}),
-		dbwrapper.NewNodeSource(c.db, dbfilters.Node{}, nodeSetKeysForNode),
-	)
+	return dbreconcile.Register(mgr, dbreconcile.Registration{
+		Name:       "node-set-controller",
+		Reconciler: c,
+		Sources: []dbreconcile.Source{
+			dbwrapper.NewNodeSetSource(c.db, dbfilters.NodeSet{}),
+			dbwrapper.NewNodeSource(c.db, dbfilters.Node{}, nodeSetKeysForNode),
+		},
+	})
 }
 
 func nodeSetKeysForNode(_ context.Context, node db.Node) ([]dbreconcile.Key, error) {

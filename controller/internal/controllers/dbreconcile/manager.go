@@ -13,68 +13,27 @@ import (
 	crcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	crsource "sigs.k8s.io/controller-runtime/pkg/source"
 
 	dbsource "github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile/source"
 )
 
-func SetupController(
-	mgr manager.Manager,
-	name string,
-	reconciler reconcile.TypedReconciler[Key],
-	sources ...crsource.TypedSource[Key],
-) error {
-	return setupController(mgr, name, reconciler, crcontroller.TypedOptions[Key]{}, sources...)
-}
-
-func setupController(
-	mgr manager.Manager,
-	name string,
-	reconciler reconcile.TypedReconciler[Key],
-	opts crcontroller.TypedOptions[Key],
-	sources ...crsource.TypedSource[Key],
-) error {
-	if len(sources) == 0 {
-		return fmt.Errorf("must specify Source for DB reconciler")
+// Register creates a controller-runtime controller for a reconciler and registers its event sources.
+func Register(mgr manager.Manager, registration Registration) error {
+	if registration.Workers < 0 {
+		return fmt.Errorf("controller %q: Workers must not be negative", registration.Name)
 	}
-	for _, source := range sources {
-		if source == nil {
-			return fmt.Errorf("must specify Source for DB reconciler")
-		}
+	if registration.ReconcileTimeout < 0 {
+		return fmt.Errorf("controller %q: ReconcileTimeout must not be negative", registration.Name)
 	}
 
-	opts.Reconciler = reconciler
-	ctrl, err := crcontroller.NewTyped[Key](name, mgr, opts)
-	if err != nil {
-		return err
-	}
-
-	for _, source := range sources {
-		if err := ctrl.Watch(source); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// AddController registers a Controller with a controller-runtime manager.
-// It's just syntactic sugar around SetupController.
-func AddController(mgr manager.Manager, controller Controller) error {
-	if controller.Workers < 0 {
-		return fmt.Errorf("controller %q: Workers must not be negative", controller.Name)
-	}
-	if controller.ReconcileTimeout < 0 {
-		return fmt.Errorf("controller %q: ReconcileTimeout must not be negative", controller.Name)
-	}
-
-	sources := append([]crsource.TypedSource[Key](nil), controller.Sources...)
-	for index, watch := range controller.Watches {
+	sources := append([]crsource.TypedSource[Key](nil), registration.Sources...)
+	for index, watch := range registration.Watches {
 		if watch.Object == nil {
-			return fmt.Errorf("controller %q: Watches[%d].Object must not be nil", controller.Name, index)
+			return fmt.Errorf("controller %q: Watches[%d].Object must not be nil", registration.Name, index)
 		}
 		if watch.Map == nil {
-			return fmt.Errorf("controller %q: Watches[%d].Map must not be nil", controller.Name, index)
+			return fmt.Errorf("controller %q: Watches[%d].Map must not be nil", registration.Name, index)
 		}
 
 		selector := labels.Everything()
@@ -82,12 +41,12 @@ func AddController(mgr manager.Manager, controller Controller) error {
 			var err error
 			selector, err = metav1.LabelSelectorAsSelector(watch.LabelSelector)
 			if err != nil {
-				return fmt.Errorf("controller %q: Watches[%d] invalid label selector: %w", controller.Name, index, err)
+				return fmt.Errorf("controller %q: Watches[%d] invalid label selector: %w", registration.Name, index, err)
 			}
 		}
 
 		mapFunc := watch.Map
-		logger := mgr.GetLogger().WithValues("controller", controller.Name)
+		logger := mgr.GetLogger().WithValues("controller", registration.Name)
 		sources = append(sources, dbsource.NewKubernetesSource(
 			mgr.GetCache(),
 			watch.Object,
@@ -102,14 +61,27 @@ func AddController(mgr manager.Manager, controller Controller) error {
 		))
 	}
 
-	return setupController(
-		mgr,
-		controller.Name,
-		controller.Reconciler,
-		crcontroller.TypedOptions[Key]{
-			MaxConcurrentReconciles: controller.Workers,
-			ReconciliationTimeout:   controller.ReconcileTimeout,
-		},
-		sources...,
-	)
+	if len(sources) == 0 {
+		return fmt.Errorf("must specify Source for DB reconciler")
+	}
+	for _, source := range sources {
+		if source == nil {
+			return fmt.Errorf("must specify Source for DB reconciler")
+		}
+	}
+
+	ctrl, err := crcontroller.NewTyped[Key](registration.Name, mgr, crcontroller.TypedOptions[Key]{
+		Reconciler:              registration.Reconciler,
+		MaxConcurrentReconciles: registration.Workers,
+		ReconciliationTimeout:   registration.ReconcileTimeout,
+	})
+	if err != nil {
+		return err
+	}
+	for _, source := range sources {
+		if err := ctrl.Watch(source); err != nil {
+			return err
+		}
+	}
+	return nil
 }

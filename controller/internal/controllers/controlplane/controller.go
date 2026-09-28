@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/client"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -49,14 +48,15 @@ func NewController(
 
 // SetupWithManager wires the controller into controller-runtime with DB-backed sources.
 func (c *Controller) SetupWithManager(mgr manager.Manager) error {
-	return dbreconcile.SetupController(
-		mgr,
-		"control-plane-controller",
-		c,
-		dbwrapper.NewClusterSource(c.db, dbfilters.Cluster{}),
-		dbwrapper.NewNodePoolSource(c.db, dbfilters.NodePool{ControlPlane: ptr.To(true)}, nodePoolClusterKeys),
-		dbwrapper.NewNodeSource(c.db, dbfilters.Node{ControlPlane: ptr.To(true)}, nodeClusterKeys),
-	)
+	return dbreconcile.Register(mgr, dbreconcile.Registration{
+		Name:       "control-plane-controller",
+		Reconciler: c,
+		Sources: []dbreconcile.Source{
+			dbwrapper.NewClusterSource(c.db, dbfilters.Cluster{}),
+			dbwrapper.NewNodePoolSource(c.db, dbfilters.NodePool{ControlPlane: new(true)}, nodePoolClusterKeys),
+			dbwrapper.NewNodeSource(c.db, dbfilters.Node{ControlPlane: new(true)}, nodeClusterKeys),
+		},
+	})
 }
 
 func nodePoolClusterKeys(_ context.Context, nodePool db.NodePool) ([]dbreconcile.Key, error) {

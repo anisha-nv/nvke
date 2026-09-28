@@ -47,14 +47,15 @@ func NewController(
 
 // SetupWithManager wires the controller into controller-runtime with DB-backed sources.
 func (c *Controller) SetupWithManager(mgr manager.Manager) error {
-	return dbreconcile.SetupController(
-		mgr,
-		"auto-mode-controller",
-		c,
-		dbwrapper.NewNodePoolSource(c.db, dbfilters.NodePool{ControlPlane: ptr.To(false)}),
-		dbwrapper.NewNodeSetSource(c.db, dbfilters.NodeSet{}, nodePoolKeysForNodeSet),
-		dbwrapper.NewNodeSource(c.db, dbfilters.Node{ControlPlane: ptr.To(false)}, nodePoolKeysForNode),
-	)
+	return dbreconcile.Register(mgr, dbreconcile.Registration{
+		Name:       "auto-mode-controller",
+		Reconciler: c,
+		Sources: []dbreconcile.Source{
+			dbwrapper.NewNodePoolSource(c.db, dbfilters.NodePool{ControlPlane: ptr.To(false)}),
+			dbwrapper.NewNodeSetSource(c.db, dbfilters.NodeSet{}, nodePoolKeysForNodeSet),
+			dbwrapper.NewNodeSource(c.db, dbfilters.Node{ControlPlane: ptr.To(false)}, nodePoolKeysForNode),
+		},
+	})
 }
 
 func nodePoolKeysForNodeSet(_ context.Context, nodeSet db.NodeSet) ([]dbreconcile.Key, error) {

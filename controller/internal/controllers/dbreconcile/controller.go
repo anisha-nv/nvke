@@ -19,8 +19,8 @@ type Reconciler = reconcile.TypedReconciler[Key]
 // Source is a source of events for DB record keys.
 type Source = crsource.TypedSource[Key]
 
-// Controller defines a DB reconciler and the sources that feed its work queue.
-type Controller struct {
+// Registration defines a DB reconciler and the sources that feed its work queue.
+type Registration struct {
 	// Name identifies the controller in logs and metrics.
 	Name string
 	// Reconciler processes keys produced by Sources and Watches.
@@ -36,7 +36,7 @@ type Controller struct {
 }
 
 // KubeWatch maps selected Kubernetes object events to DB reconcile keys. When
-// registered through AddController, Map receives a context containing a logger
+// registered through Register, Map receives a context containing a logger
 // tagged with the controller name and object key.
 type KubeWatch struct {
 	Object        client.Object

@@ -28,9 +28,9 @@ const (
 	clusterMetadataNamespace = "nke-system"
 )
 
-// ExampleAddController registers a controller that reacts to both DB changes
+// ExampleRegister registers a controller that reacts to both DB changes
 // and Kubernetes objects owned by a cluster row.
-func ExampleAddController() {
+func ExampleRegister() {
 	ctx := context.Background()
 	bunDB, err := testutil.NewDB(ctx, (*db.Cluster)(nil))
 	if err != nil {
@@ -48,7 +48,7 @@ func ExampleAddController() {
 		db:   database,
 		kube: mgr.GetClient(),
 	}
-	if err := dbreconcile.AddController(mgr, dbreconcile.Controller{
+	if err := dbreconcile.Register(mgr, dbreconcile.Registration{
 		// Name identifies the controller in logs and metrics.
 		Name: "cluster-metadata",
 		// Reconciler receives every key produced by Sources and Watches.

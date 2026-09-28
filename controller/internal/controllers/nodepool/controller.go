@@ -41,13 +41,14 @@ func NewController(
 }
 
 func (a *Controller) SetupWithManager(mgr manager.Manager) error {
-	return dbreconcile.SetupController(
-		mgr,
-		"node-pool-controller",
-		a,
-		dbwrapper.NewNodePoolSource(a.db, dbfilters.NodePool{}),
-		dbwrapper.NewNodeSource(a.db, dbfilters.Node{}, nodePoolKeysForNode),
-	)
+	return dbreconcile.Register(mgr, dbreconcile.Registration{
+		Name:       "node-pool-controller",
+		Reconciler: a,
+		Sources: []dbreconcile.Source{
+			dbwrapper.NewNodePoolSource(a.db, dbfilters.NodePool{}),
+			dbwrapper.NewNodeSource(a.db, dbfilters.Node{}, nodePoolKeysForNode),
+		},
+	})
 }
 
 func nodePoolKeysForNode(_ context.Context, node db.Node) ([]dbreconcile.Key, error) {

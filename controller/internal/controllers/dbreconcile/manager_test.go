@@ -34,7 +34,7 @@ import (
 
 const testClusterSecretNamespace = "nke-system"
 
-func TestAddControllerReconcilesDatabaseAndKubernetesChanges(t *testing.T) {
+func TestRegisterReconcilesDatabaseAndKubernetesChanges(t *testing.T) {
 	bunDB := testutil.SetupDB(t.Context(), t, (*db.Cluster)(nil))
 	database := dbwrapper.New(db.NewDB(bunDB), slog.New(slog.DiscardHandler))
 	mgr, err := controllertest.NewManager(nil)
@@ -54,7 +54,7 @@ func TestAddControllerReconcilesDatabaseAndKubernetesChanges(t *testing.T) {
 	require.NoError(t, err)
 
 	reconciler := &clusterSecretReconciler{db: database, kube: mgr.GetClient()}
-	require.NoError(t, dbreconcile.AddController(mgr, dbreconcile.Controller{
+	require.NoError(t, dbreconcile.Register(mgr, dbreconcile.Registration{
 		Name:       "cluster-secret-controller",
 		Reconciler: reconciler,
 		Sources: []dbreconcile.Source{
@@ -94,7 +94,7 @@ func TestAddControllerReconcilesDatabaseAndKubernetesChanges(t *testing.T) {
 	})
 }
 
-func TestAddControllerOptions(t *testing.T) {
+func TestRegisterOptions(t *testing.T) {
 	t.Run("Workers controls reconcile concurrency", func(t *testing.T) {
 		mgr, err := controllertest.NewManager(nil)
 		require.NoError(t, err)
@@ -113,7 +113,7 @@ func TestAddControllerOptions(t *testing.T) {
 				}
 			},
 		)
-		require.NoError(t, dbreconcile.AddController(mgr, dbreconcile.Controller{
+		require.NoError(t, dbreconcile.Register(mgr, dbreconcile.Registration{
 			Name:       "concurrent-controller",
 			Reconciler: reconciler,
 			Sources:    []dbreconcile.Source{events},
@@ -142,7 +142,7 @@ func TestAddControllerOptions(t *testing.T) {
 				return reconcile.Result{}, reconcile.TerminalError(ctx.Err())
 			},
 		)
-		require.NoError(t, dbreconcile.AddController(mgr, dbreconcile.Controller{
+		require.NoError(t, dbreconcile.Register(mgr, dbreconcile.Registration{
 			Name:             "timeout-controller",
 			Reconciler:       reconciler,
 			Sources:          []dbreconcile.Source{events},
@@ -164,7 +164,7 @@ func TestAddControllerOptions(t *testing.T) {
 	})
 }
 
-func TestAddControllerRejectsInvalidOptions(t *testing.T) {
+func TestRegisterRejectsInvalidOptions(t *testing.T) {
 	tests := map[string]struct {
 		workers          int
 		reconcileTimeout time.Duration
@@ -184,7 +184,7 @@ func TestAddControllerRejectsInvalidOptions(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			mgr, err := controllertest.NewManager(nil)
 			require.NoError(t, err)
-			err = dbreconcile.AddController(mgr, dbreconcile.Controller{
+			err = dbreconcile.Register(mgr, dbreconcile.Registration{
 				Name:             "invalid-options-controller",
 				Reconciler:       reconcile.TypedFunc[dbreconcile.Key](func(context.Context, dbreconcile.Key) (reconcile.Result, error) { return reconcile.Result{}, nil }),
 				Sources:          []dbreconcile.Source{newManualSource(1)},
