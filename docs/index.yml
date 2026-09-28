@@ -54,6 +54,8 @@ navigation:
             path: tenant-clusters/kubernetes-api-access.md
           - page: OIDC Authentication
             path: tenant-clusters/oidc-authentication.md
+          - page: Certificate Rotation
+            path: tenant-clusters/certificate-rotation.md
 
       - section: Operations
         contents:
