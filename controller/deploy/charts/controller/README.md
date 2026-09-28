@@ -18,7 +18,7 @@ A Helm chart to deploy the NKE controller service
 | apiAuth.enabled | bool | `false` | Enable NKE API authentication. |
 | apiAuth.permissive | bool | `false` | Count what enforcement would have refused but serve the request anyway. Watch nke_auth_requests_total{outcome="would_reject"} before enforcing. |
 | apiAuthz.enabled | bool | `false` | Enable NKE API authorization. Requires apiAuth.enabled: authorizing a caller nobody authenticated is not a meaningful state. |
-| apiAuthz.existingConfigMap | string | `""` | A ConfigMap in the release namespace holding the policy bundle, keyed `policies.cedar`, `actions.json` and `roles.json`. Required when apiAuthz.enabled=true; an empty name fails the render. |
+| apiAuthz.existingConfigMap | string | `""` | A ConfigMap in the release namespace holding the policy bundle, keyed `policies.cedar`, `actions.json`, `roles.json` and `roleMappings.json`. Required when apiAuthz.enabled=true; an empty name fails the render. |
 | apiAuthz.permissive | bool | `false` | Count what enforcement would have refused but serve the request anyway. Watch nke_authz_requests_total{outcome="would_reject"} before enforcing. |
 | appDb.dbName | string | `"cloud-workflow"` |  |
 | appDb.postgresPassword | string | `""` |  |

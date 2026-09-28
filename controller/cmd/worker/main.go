@@ -144,9 +144,10 @@ func main() {
 	// policy engine holding no bundle refuses every request, and that is much
 	// better to learn at start time than at request time.
 	authzProvider, err := authz.Setup(ctx, authz.Options{
-		BundleDir:  cfg.AuthzBundlePath,
-		Permissive: cfg.AuthzPermissive,
-		Recorder:   metrics.RecordAuthzRequest,
+		BundleDir:   cfg.AuthzBundlePath,
+		Permissive:  cfg.AuthzPermissive,
+		Recorder:    metrics.RecordAuthzRequest,
+		IssuerNames: authenticator.IssuerNames(),
 	}, logger)
 	if err != nil {
 		logger.Error("Failed to set up API authorization", "error", err)
@@ -434,7 +435,8 @@ func main() {
 		csr.NewRegistrar(dbInstance, logger.With("logger", "tenant-csr-controller")),
 	}
 	if !cfg.NodeHealthCheckDisabled {
-		tenantRegistrars = append(tenantRegistrars,
+		tenantRegistrars = append(
+			tenantRegistrars,
 			tenantnodestatus.NewRegistrar(dbInstance, logger.With("logger", "tenant-node-health-controller")),
 			tenantnoderemediation.NewRegistrar(
 				cfg,

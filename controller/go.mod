@@ -3,6 +3,7 @@ module github.com/dsx-ai-factory/nke/controller
 go 1.26.6
 
 require (
+	cel.dev/cel-go v0.32.0
 	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5
 	github.com/blang/semver/v4 v4.0.0
 	github.com/caarlos0/env/v11 v11.4.1
@@ -57,7 +58,9 @@ require (
 )
 
 require (
+	cel.dev/expr v0.25.2 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
+	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/beevik/etree v1.6.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/charlievieth/strcase v0.0.6 // indirect
