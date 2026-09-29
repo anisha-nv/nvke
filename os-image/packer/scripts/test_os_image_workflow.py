@@ -28,30 +28,21 @@ class OSImageWorkflowTest(unittest.TestCase):
     def test_workflow_collects_make_finalized_bytes_without_reconversion(self):
         self.assertNotIn("qemu-img convert", self.workflow)
         collect = self.step(
-            "- name: Collect the finalized qcow2s",
-            "- name: Push the qcow2s to GHCR",
+            "- name: Collect the finalized qcow2",
+            "- name: Push the qcow2 to GHCR",
         )
-        lane_start = 'if [[ "${{ matrix.build_fde }}" == "true" ]]; then'
         self.assertIn("EXPECTED_SOURCE_COMMIT: ${{ github.sha }}", collect)
         self.assertIn("mkdir -p dist", collect)
-        self.assertIn(lane_start, collect)
-        fde_lane, non_fde_lane = collect.split(lane_start, 1)[1].split("fi", 1)
-        self.assertIn("collect-qcow2-fde", fde_lane)
-        self.assertIn('echo "fde=${fde_name}" >> "$GITHUB_OUTPUT"', fde_lane)
-        self.assertNotIn("collect-qcow2-non-fde", fde_lane)
-        self.assertIn("collect-qcow2-non-fde", non_fde_lane)
-        self.assertIn(
-            'echo "non_fde=${non_fde_name}" >> "$GITHUB_OUTPUT"',
-            non_fde_lane,
-        )
+        self.assertIn("collect-qcow2-${{ matrix.variant }}", collect)
+        self.assertIn('echo "disk=${disk}" >> "$GITHUB_OUTPUT"', collect)
         self.assertEqual(
             collect.count(
                 "make --no-print-directory --silent -C os-image/packer"
             ),
-            2,
+            1,
         )
-        self.assertEqual(collect.count("ARCH=${{ matrix.arch }}"), 2)
-        self.assertEqual(collect.count('QCOW2_DIST_DIR="$PWD/dist"'), 2)
+        self.assertEqual(collect.count("ARCH=${{ matrix.arch }}"), 1)
+        self.assertEqual(collect.count('QCOW2_DIST_DIR="$PWD/dist"'), 1)
         self.assertNotIn("cp --", collect)
         self.assertNotIn("cmp --silent", collect)
 
@@ -87,8 +78,8 @@ class OSImageWorkflowTest(unittest.TestCase):
                 "- name: Boot-smoke the non-FDE qcow2",
             ),
             (
-                "- name: Collect the finalized qcow2s",
-                "- name: Push the qcow2s to GHCR",
+                "- name: Collect the finalized qcow2",
+                "- name: Push the qcow2 to GHCR",
             ),
         ):
             self.assertIn(
@@ -97,8 +88,8 @@ class OSImageWorkflowTest(unittest.TestCase):
             )
 
         push = self.step(
-            "- name: Push the qcow2s to GHCR",
-            "- name: Show published manifests",
+            "- name: Push the qcow2 to GHCR",
+            "- name: Show published manifest",
         )
         self.assertIn('tags="${tags:+${tags},}${alias}${SUFFIX}-${ARCH}"', push)
 
@@ -106,18 +97,20 @@ class OSImageWorkflowTest(unittest.TestCase):
             "- name: Prepare release assets",
             "- name: Upload release assets",
         )
-        self.assertIn("assets/checksums-${ARCH}${SUFFIX}.txt", release_assets)
-        # Two legs share an arch now, so the two files the release job merges
-        # once are pinned to the default flavor's leg, not to amd64 alone.
         self.assertIn(
-            'if [[ "${ARCH}" == "amd64" && -z "${SUFFIX}" ]]; then',
+            "BUILD: ${{ matrix.arch }}${{ matrix.tag_suffix }}-${{ matrix.variant }}",
             release_assets,
         )
+        self.assertIn("assets/checksums-${BUILD}.txt", release_assets)
+        # Several builds share an arch, so the two files the release job merges
+        # once are pinned to the default flavor's non-FDE build, not to amd64
+        # alone.
+        self.assertIn('if [[ "${BUILD}" == "amd64-non-fde" ]]; then', release_assets)
 
         # upload-artifact rejects two jobs in one run sharing a name.
         for artifact in (
-            "fde-install-console-logs-${{ matrix.arch }}${{ matrix.tag_suffix }}",
-            "release-assets-${{ matrix.arch }}${{ matrix.tag_suffix }}",
+            "install-console-logs-${{ matrix.arch }}${{ matrix.tag_suffix }}-${{ matrix.variant }}",
+            "release-assets-${{ matrix.arch }}${{ matrix.tag_suffix }}-${{ matrix.variant }}",
         ):
             self.assertIn(artifact, self.workflow)
 
@@ -140,16 +133,15 @@ class OSImageWorkflowTest(unittest.TestCase):
 
     def test_publication_and_release_payloads_remain_qcow2_only(self):
         publish = self.step(
-            "- name: Push the qcow2s to GHCR",
-            "- name: Show published manifests",
+            "- name: Push the qcow2 to GHCR",
+            "- name: Show published manifest",
         )
         release_assets = self.step(
             "- name: Prepare release assets",
             "- name: Upload release assets",
         )
-        self.assertIn('"${disk}:application/vnd.qemu.qcow2"', publish)
-        self.assertIn('disks=("${DISK_NON_FDE}")', release_assets)
-        self.assertIn('disks+=("${DISK_FDE}")', release_assets)
+        self.assertIn('"${DISK}:application/vnd.qemu.qcow2"', publish)
+        self.assertIn('sha256sum "${DISK}"', release_assets)
 
 
 if __name__ == "__main__":

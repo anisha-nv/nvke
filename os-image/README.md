@@ -451,7 +451,7 @@ that device is absent or unusable. The Makefile still retains its portable
 same-architecture KVM probe and TCG fallback for local builds.
 
 If the FDE/non-FDE build or boot-smoke steps fail in CI, download the
-`fde-install-console-logs` artifact from the run — it's the guest's own
+`install-console-logs-<arch>[-ubuntu24.04]-<variant>` artifact from the run — it's the guest's own
 serial console output (boot + autoinstall), uploaded regardless of outcome
 since there's no VNC/monitor access on the runner to inspect a stuck build
 interactively.
