@@ -19,6 +19,8 @@
 #   SSH_KEY       ssh key used for the build (default: packer/.ssh/id_ed25519)
 #   SSH_PORT      host port to forward to guest :22 (default: 2222)
 #   BOOT_TIMEOUT  seconds to wait for SSH per boot (default: 360 kvm / 1800 tcg)
+#   LOCKED_GRACE  seconds the wrong-TPM boot must sit at the LUKS prompt to
+#                 count as locked (default: 60)
 #   CPU_MODEL     QEMU -cpu model (default: host kvm / max tcg)
 #
 # No interactive/blind console typing is needed: autoinstall-lvm.pkrtpl bakes
@@ -219,6 +221,35 @@ wait_ssh() {
   [[ "${up}" -eq 0 ]] && echo "up" || echo "timeout"
 }
 
+# For a boot that should NOT unlock: watches the serial console instead of
+# waiting out BOOT_TIMEOUT for SSH that never comes. cryptroot prints its
+# passphrase prompt even while clevis is still unlocking in the background,
+# so the prompt alone proves nothing; it must still be the latest thing on
+# the console LOCKED_GRACE seconds later, with the guest never having
+# reached systemd in the real root. Prints "locked", "unlocked", or
+# "timeout" (prompt never seen and no SSH, the old pass condition).
+LOCKED_GRACE="${LOCKED_GRACE:-60}"
+wait_locked() {
+  local log="${VM_RUNWORK}/qemu.log"
+  local deadline=$((SECONDS + BOOT_TIMEOUT)) prompt_at=""
+  while (( SECONDS <= deadline )); do
+    if grep -aq 'Welcome to' "${log}" || ssh_guest true 2>/dev/null; then
+      echo "unlocked"
+      return
+    fi
+    if [[ -z "${prompt_at}" ]] && grep -aq 'Please unlock disk' "${log}"; then
+      prompt_at="${SECONDS}"
+      grep -a -m1 'Please unlock disk' "${log}" >&2
+    fi
+    if [[ -n "${prompt_at}" ]] && (( SECONDS - prompt_at >= LOCKED_GRACE )); then
+      echo "locked"
+      return
+    fi
+    sleep 5
+  done
+  echo "timeout"
+}
+
 # Tears down the VM started by the most recent start_vm.
 stop_vm() {
   kill "${VM_QPID}" 2>/dev/null || true
@@ -286,12 +317,14 @@ stop_vm
 echo "=== Scenario: an encrypted volume cannot be read off the node ==="
 TPM_B="${WORKDIR}/tpm-b"
 mkdir -p "${TPM_B}"
-STATE="$(boot_and_wait "${TPM_B}")"
-if [[ "${STATE}" == "timeout" ]]; then
-  report "moved-to-different-tpm-fails" "PASS" "boot against a different TPM did not unlock within ${BOOT_TIMEOUT}s, as expected"
-else
-  report "moved-to-different-tpm-fails" "FAIL" "boot against a different TPM unexpectedly reached SSH — the LUKS key is not actually TPM-bound"
-fi
+start_vm "${TPM_B}"
+STATE="$(wait_locked)"
+stop_vm
+case "${STATE}" in
+  locked) report "moved-to-different-tpm-fails" "PASS" "boot against a different TPM stayed at the LUKS passphrase prompt for ${LOCKED_GRACE}s, as expected" ;;
+  timeout) report "moved-to-different-tpm-fails" "PASS" "boot against a different TPM did not unlock within ${BOOT_TIMEOUT}s, as expected" ;;
+  *) report "moved-to-different-tpm-fails" "FAIL" "boot against a different TPM unexpectedly unlocked the root — the LUKS key is not actually TPM-bound" ;;
+esac
 
 echo "=== Scenario: encryption survives node replacement (fresh boot, same TPM, still unlocks) ==="
 STATE="$(boot_and_wait "${TPM_A}")"
