@@ -27,7 +27,7 @@ func validatePostReadyCertificateRenewal(test *tenantTest) {
 	It("renews every control-plane certificate and returns the cluster to Ready", func(ctx context.Context) {
 		tenantClient := expectSucceed(test.tenantClients.GetClient(ctx, test.cluster.Name))
 		expectedPools := expectedNodeCounts(test.spec)
-		expectedControlPlanes := expectedControlPlaneCount(test.spec)
+		expectedControlPlanes := controlPlaneNodeCount(test.spec)
 		Expect(expectedControlPlanes).To(BeNumerically(">", 0), "certificate renewal requires control-plane nodes")
 
 		By("Waiting for every static control-plane component to be Ready before renewal")

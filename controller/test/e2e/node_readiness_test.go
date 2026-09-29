@@ -24,7 +24,7 @@ import (
 func validateNodeReadinessPostCreate(test *tenantTest) {
 	It("brings every desired node to Ready", func(ctx context.Context) {
 		expectedPools := expectedNodeCounts(test.spec)
-		expectedNodeCount := expectedNodeTotal(test.spec)
+		expectedNodeCount := clusterNodeCount(test.spec)
 
 		By("Asserting CWE reports KubernetesReady for every desired node")
 		Eventually(test.assertDesiredNodesReady).WithContext(ctx).WithTimeout(test.timeouts.Provision).WithPolling(1*time.Second).
@@ -52,7 +52,7 @@ func validateNodeReadinessPostCreate(test *tenantTest) {
 
 // expectedNodeCounts returns the desired node count of every node pool in spec,
 // keyed by pool name. A controller-managed control plane has no pool, so its
-// nodes are not in the map; see controllerControlPlaneCount.
+// nodes are not in the map; see controlPlaneConfigNodeCount.
 func expectedNodeCounts(spec nke.ClusterSpec) map[string]int {
 	counts := make(map[string]int, len(spec.ControlPlane.Pools)+len(spec.Workers))
 	for _, pool := range spec.ControlPlane.Pools {
@@ -64,30 +64,33 @@ func expectedNodeCounts(spec nke.ClusterSpec) map[string]int {
 	return counts
 }
 
-// controllerControlPlaneCount returns the control-plane node count spec's
-// cluster-level controlPlaneConfig asks for, or zero when the control plane is a
-// node pool.
-func controllerControlPlaneCount(spec nke.ClusterSpec) int {
+// controlPlaneConfigNodeCount returns how many nodes spec's cluster-level
+// controlPlaneConfig asks for: the nodes that belong to no node pool. Zero when
+// the control plane is a node pool.
+func controlPlaneConfigNodeCount(spec nke.ClusterSpec) int {
 	if spec.ControlPlane.Config == nil {
 		return 0
 	}
 	return spec.ControlPlane.Config.DesiredCount
 }
 
-// expectedControlPlaneCount returns the desired control-plane node count in
-// either control-plane shape.
-func expectedControlPlaneCount(spec nke.ClusterSpec) int {
-	total := controllerControlPlaneCount(spec)
-	for _, pool := range spec.ControlPlane.Pools {
-		total += pool.DesiredNodeCount
+// controlPlaneNodeCount returns how many control-plane nodes spec asks for. A
+// control plane is either a controlPlaneConfig or node pools, never both.
+func controlPlaneNodeCount(spec nke.ClusterSpec) int {
+	if spec.ControlPlane.Config != nil {
+		return spec.ControlPlane.Config.DesiredCount
 	}
-	return total
+	count := 0
+	for _, pool := range spec.ControlPlane.Pools {
+		count += pool.DesiredNodeCount
+	}
+	return count
 }
 
-// expectedNodeTotal returns the desired count of every node in spec: node-pool
-// nodes plus a controller-managed control plane.
-func expectedNodeTotal(spec nke.ClusterSpec) int {
-	return totalExpectedNodes(expectedNodeCounts(spec)) + controllerControlPlaneCount(spec)
+// clusterNodeCount returns how many nodes spec asks for in total: every
+// node-pool node plus the nodes of a controlPlaneConfig.
+func clusterNodeCount(spec nke.ClusterSpec) int {
+	return totalExpectedNodes(expectedNodeCounts(spec)) + controlPlaneConfigNodeCount(spec)
 }
 
 func totalExpectedNodes(expectedPools map[string]int) int {
@@ -105,7 +108,7 @@ func (t *tenantTest) assertDesiredNodesReady(ctx context.Context) error {
 	if err := t.nke.AssertNodeConditions(ctx, t.cluster.ID, expectedNodeCounts(t.spec), nke.IsNodeReady); err != nil {
 		return err
 	}
-	if desired := controllerControlPlaneCount(t.spec); desired > 0 {
+	if desired := controlPlaneConfigNodeCount(t.spec); desired > 0 {
 		return t.nke.AssertControlPlaneNodesReady(ctx, t.cluster.ID, desired)
 	}
 	return nil

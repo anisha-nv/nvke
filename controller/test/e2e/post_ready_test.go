@@ -41,8 +41,8 @@ func validatePostReadyClusterState(test *tenantTest) {
 	It("validates intended cluster state after all nodes are Ready", func(ctx context.Context) {
 		tenantClient := expectSucceed(test.tenantClients.GetClient(ctx, test.cluster.Name))
 		adminClient := expectSucceed(test.tenantClients.GetAdminClient(ctx, test.cluster.Name))
-		expectedNodes := expectedNodeTotal(test.spec)
-		expectedControlPlanes := expectedControlPlaneCount(test.spec)
+		expectedNodes := clusterNodeCount(test.spec)
+		expectedControlPlanes := controlPlaneNodeCount(test.spec)
 
 		By("Verifying node-local DNS is fully available on every Ready node")
 		Eventually(func(ctx context.Context) error {
@@ -255,7 +255,7 @@ func assertSystemReservedMemory(ctx context.Context, tenantClient client.Client,
 	if err := tenantClient.List(ctx, &nodes); err != nil {
 		return fmt.Errorf("listing tenant nodes: %w", err)
 	}
-	if want := expectedNodeTotal(spec); len(nodes.Items) != want {
+	if want := clusterNodeCount(spec); len(nodes.Items) != want {
 		return fmt.Errorf("found %d tenant nodes while checking memory reservation, want %d", len(nodes.Items), want)
 	}
 	for _, node := range nodes.Items {
