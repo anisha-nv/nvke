@@ -2040,6 +2040,14 @@ components:
           description: The condition indicating that the most recent cluster update failed.
           x-order: 7
           $ref: "#/components/schemas/Condition"
+        apiServerReachable:
+          description: |
+            Last observed access to the tenant Kubernetes API from CWE using its
+            published credentials. Absent before the first observation. This
+            condition does not expire; lastTransitionTime is the status transition
+            time, not the time of the latest probe, and does not establish freshness.
+          x-order: 8
+          $ref: "#/components/schemas/Condition"
 
     UpdateInProgress:
       type: object

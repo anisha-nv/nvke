@@ -5,6 +5,7 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -821,7 +822,7 @@ func TestClusterService_GetCluster(t *testing.T) {
 
 func TestClusterService_DeleteCluster(t *testing.T) {
 	clusterID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
-	reachable := db.NewCondition(false, "Tenant API request failed")
+	updateFailed := db.NewCondition(false, "Cluster update failed")
 	tests := []struct {
 		name             string
 		clusterID        uuid.UUID
@@ -853,7 +854,7 @@ func TestClusterService_DeleteCluster(t *testing.T) {
 			setupMockCalls: func(tx *mockTx) {
 				tx.On("GetClusterForUpdate", mock.Anything, clusterID).Return(db.Cluster{
 					ID:         clusterID,
-					Conditions: db.ClusterConditions{APIServerReachable: &reachable},
+					Conditions: db.ClusterConditions{UpdateFailed: &updateFailed},
 				}, nil)
 				tx.On("UpdateCluster", mock.Anything, mock.MatchedBy(func(c *db.Cluster) bool {
 					return c.ID == clusterID && c.Conditions.Deleting.Status == db.ConditionStatusTrue
@@ -866,8 +867,8 @@ func TestClusterService_DeleteCluster(t *testing.T) {
 			verifyConditions: func(t *testing.T, conditions db.ClusterConditions) {
 				t.Helper()
 				assert.Equal(t, db.ConditionStatusTrue, conditions.Deleting.Status)
-				require.NotNil(t, conditions.APIServerReachable)
-				assert.True(t, conditions.APIServerReachable.Equal(reachable))
+				require.NotNil(t, conditions.UpdateFailed)
+				assert.True(t, conditions.UpdateFailed.Equal(updateFailed))
 			},
 		},
 		{
@@ -2284,4 +2285,27 @@ func TestApiClusterFromDB_OmitsMissingProviderPayload(t *testing.T) {
 	}
 	got := server.APIClusterFromDB(&cluster)
 	assert.Nil(t, got.Nico)
+}
+
+func TestAPIClusterReachabilityProjection(t *testing.T) {
+	for _, status := range []db.ConditionStatus{"", db.ConditionStatusTrue, db.ConditionStatusFalse, db.ConditionStatusUnknown} {
+		t.Run(string(status), func(t *testing.T) {
+			row := db.Cluster{ID: uuid.New(), Name: "reachability-projection"}
+			if status != "" {
+				row.Conditions.APIServerReachable = &db.Condition{Status: status, Message: "Observation", LastTransitionTime: time.Now().UTC()}
+			}
+			projected := server.APIClusterFromDB(&row)
+			encoded, err := json.Marshal(projected)
+			require.NoError(t, err)
+			if status == "" {
+				require.Nil(t, projected.Conditions.APIServerReachable)
+				require.NotContains(t, string(encoded), "apiServerReachable")
+				return
+			}
+			require.NotNil(t, projected.Conditions.APIServerReachable)
+			require.Equal(t, string(status), string(projected.Conditions.APIServerReachable.Status))
+			require.Equal(t, row.Conditions.APIServerReachable.Message, projected.Conditions.APIServerReachable.Message)
+			require.True(t, row.Conditions.APIServerReachable.LastTransitionTime.Equal(projected.Conditions.APIServerReachable.LastTransitionTime))
+		})
+	}
 }

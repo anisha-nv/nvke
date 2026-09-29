@@ -12,7 +12,7 @@ trap 'rm -rf "${output_dir}"' EXIT
 run_check() {
   local mode="$1" result
   set +e
-  timeout 15s kubectl exec -i -n cloud-workflow-engine deployment/cloud-workflow-engine -- \
+  timeout 15s kubectl exec -i -n cloud-workflow-engine deployment/cloud-workflow-engine -c cloud-workflow-engine -- \
     /bin/sh -s -- "${mode}" >"${output_dir}/stdout" 2>"${output_dir}/stderr" <<'REMOTE'
 set -eu
 mode="$1"

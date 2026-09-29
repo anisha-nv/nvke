@@ -108,6 +108,7 @@ type Cluster struct {
 
 // ClusterConditions Conditions representing various aspects of the Cluster's state
 type ClusterConditions struct {
+	APIServerReachable    *Condition `json:"apiServerReachable,omitempty"`
 	ControlPlaneUpgrading *Condition `json:"controlPlaneUpgrading,omitempty"`
 	CpNodesRecycling      *Condition `json:"cpNodesRecycling,omitempty"`
 	Deleting              Condition  `json:"deleting"`
