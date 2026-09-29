@@ -114,8 +114,8 @@ func (t *tenantTest) assertDesiredNodesReady(ctx context.Context) error {
 	return nil
 }
 
-// validateNodesReadyInCluster checks that the nodes of expectedPools, plus any
-// controller-managed control-plane nodes CWE reports, are Ready in the tenant
+// validateNodesReadyInCluster checks that the nodes of expectedPools, plus the
+// desired controller-managed control-plane nodes, are Ready in the tenant
 // cluster. It returns their names.
 func validateNodesReadyInCluster(
 	ctx context.Context,
@@ -133,9 +133,16 @@ func validateNodesReadyInCluster(
 		expectedNodeNames = append(expectedNodeNames, node.Name)
 	}
 	if test.spec.ControlPlane.Config != nil {
+		desired, err := currentControllerControlPlaneCount(ctx, test)
+		if err != nil {
+			return nil, err
+		}
 		controlPlaneNames, err := test.nke.ControlPlaneNodeNames(ctx, test.cluster.ID)
 		if err != nil {
 			return nil, err
+		}
+		if len(controlPlaneNames) != desired {
+			return nil, fmt.Errorf("CWE reports %d controller-managed control-plane nodes; want %d", len(controlPlaneNames), desired)
 		}
 		expectedNodeNames = append(expectedNodeNames, controlPlaneNames...)
 	}
