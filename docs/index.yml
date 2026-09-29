@@ -32,3 +32,5 @@ navigation:
     contents:
       - page: Node Lifecycle
         path: tenant-clusters/node-lifecycle.md
+      - page: Tenant API Reachability
+        path: site-health.md
