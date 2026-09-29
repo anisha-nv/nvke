@@ -4,11 +4,11 @@
 package e2e
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/netip"
 	"os"
-	"reflect"
 	"runtime"
 	"strconv"
 	"testing"
@@ -24,6 +24,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/yaml"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/dsx-ai-factory/nke/controller/api"
 	"github.com/dsx-ai-factory/nke/controller/test/e2e/internal/config"
@@ -963,8 +965,8 @@ func capdSpec(cfg config.Config, name string, shape clusterShape) nke.ClusterSpe
 	return applyControlPlaneMode(nke.ClusterSpec{
 		Name:              name,
 		Backend:           nke.BackendCAPD,
-		KubernetesVersion: defaultString(shape.kubernetesVersion, defaultKubernetesVersion),
-		CNIPlugin:         defaultString(shape.cniPlugin, CNIPluginCalico),
+		KubernetesVersion: cmp.Or(shape.kubernetesVersion, defaultKubernetesVersion),
+		CNIPlugin:         cmp.Or(shape.cniPlugin, CNIPluginCalico),
 		CAPDNodeImage:     cfg.Cluster.CAPDNodeImage,
 		SiteID:            uuid.Nil.String(),
 		ControlPlane: nke.ControlPlane{
@@ -987,10 +989,10 @@ func nicoControlPlaneControllerSpec(cfg config.Config, name string, shape cluste
 		// the machine template has no instance type or subnet and CWE rejects the
 		// create.
 		cp := *spec.ControlPlane.Config
-		cp.InstanceTypeID = defaultString(cp.InstanceTypeID, nicoInstanceTypeID)
+		cp.InstanceTypeID = cmp.Or(cp.InstanceTypeID, nicoInstanceTypeID)
 		cp.SubnetIDs = defaultStrings(cp.SubnetIDs, nicoSubnetID)
 		cp.SSHKeyGroupIDs = defaultStrings(cp.SSHKeyGroupIDs, nicoSSHKeyGroupID)
-		cp.SystemReservedMemory = defaultString(cp.SystemReservedMemory, "1Gi")
+		cp.SystemReservedMemory = cmp.Or(cp.SystemReservedMemory, "1Gi")
 		spec.ControlPlane.Config = &cp
 	}
 	return spec
@@ -1087,15 +1089,9 @@ func TestUnit_ApplyControlPlaneMode(t *testing.T) {
 			t.Setenv(controlPlaneControllerEnv, tt.flag)
 			spec := tt.build(config.Config{}, "unit", tt.shape)
 
-			if len(spec.ControlPlane.Pools) != tt.wantPools {
-				t.Fatalf("ControlPlane.Pools = %d pools, want %d", len(spec.ControlPlane.Pools), tt.wantPools)
-			}
-			if !reflect.DeepEqual(spec.ControlPlane.Config, tt.wantConfig) {
-				t.Fatalf("ControlPlane.Config = %+v, want %+v", spec.ControlPlane.Config, tt.wantConfig)
-			}
-			if len(spec.Workers) != len(tt.shape.workerPools) {
-				t.Fatalf("Workers = %d pools, want %d", len(spec.Workers), len(tt.shape.workerPools))
-			}
+			require.Len(t, spec.ControlPlane.Pools, tt.wantPools)
+			require.Equal(t, tt.wantConfig, spec.ControlPlane.Config)
+			require.Len(t, spec.Workers, len(tt.shape.workerPools))
 		})
 	}
 }
@@ -1191,10 +1187,10 @@ func capdNodePoolSpecs(pools []nke.NodePoolSpec, defaultName, defaultNodeNamePre
 
 func capdNodePoolSpec(pool nke.NodePoolSpec, defaultName, defaultNodeNamePrefix string) nke.NodePoolSpec {
 	return nke.NodePoolSpec{
-		Name:                 defaultString(pool.Name, defaultName),
-		NodeNamePrefix:       defaultString(pool.NodeNamePrefix, defaultNodeNamePrefix),
+		Name:                 cmp.Or(pool.Name, defaultName),
+		NodeNamePrefix:       cmp.Or(pool.NodeNamePrefix, defaultNodeNamePrefix),
 		DesiredNodeCount:     pool.DesiredNodeCount,
-		SystemReservedMemory: defaultString(pool.SystemReservedMemory, "1Gi"),
+		SystemReservedMemory: cmp.Or(pool.SystemReservedMemory, "1Gi"),
 	}
 }
 
@@ -1219,8 +1215,8 @@ func nicoSpec(_ config.Config, name string, shape clusterShape) nke.ClusterSpec 
 	return applyControlPlaneMode(nke.ClusterSpec{
 		Name:              name,
 		Backend:           nke.BackendNicoContainers,
-		KubernetesVersion: defaultString(shape.kubernetesVersion, defaultKubernetesVersion),
-		CNIPlugin:         defaultString(shape.cniPlugin, CNIPluginCalico),
+		KubernetesVersion: cmp.Or(shape.kubernetesVersion, defaultKubernetesVersion),
+		CNIPlugin:         cmp.Or(shape.cniPlugin, CNIPluginCalico),
 		SiteID:            nicoSiteID,
 		VpcID:             nicoVpcID,
 		ControlPlane: nke.ControlPlane{
@@ -1237,11 +1233,11 @@ func nicoNodePoolSpecs(pools []nke.NodePoolSpec, defaultName, defaultNodeNamePre
 	out := make([]nke.NodePoolSpec, 0, len(pools))
 	for _, pool := range pools {
 		out = append(out, nke.NodePoolSpec{
-			Name:                 defaultString(pool.Name, defaultName),
-			NodeNamePrefix:       defaultString(pool.NodeNamePrefix, defaultNodeNamePrefix),
+			Name:                 cmp.Or(pool.Name, defaultName),
+			NodeNamePrefix:       cmp.Or(pool.NodeNamePrefix, defaultNodeNamePrefix),
 			DesiredNodeCount:     pool.DesiredNodeCount,
-			SystemReservedMemory: defaultString(pool.SystemReservedMemory, "1Gi"),
-			InstanceTypeID:       defaultString(pool.InstanceTypeID, nicoInstanceTypeID),
+			SystemReservedMemory: cmp.Or(pool.SystemReservedMemory, "1Gi"),
+			InstanceTypeID:       cmp.Or(pool.InstanceTypeID, nicoInstanceTypeID),
 			SubnetIDs:            defaultStrings(pool.SubnetIDs, nicoSubnetID),
 			SSHKeyGroupIDs:       defaultStrings(pool.SSHKeyGroupIDs, nicoSSHKeyGroupID),
 		})
@@ -1277,9 +1273,9 @@ func nicoVMSSpec(_ config.Config, name string, shape clusterShape) nke.ClusterSp
 	return applyControlPlaneMode(nke.ClusterSpec{
 		Name:              name,
 		Backend:           nke.BackendNicoVMS,
-		KubernetesVersion: defaultString(shape.kubernetesVersion, defaultKubernetesVersion),
+		KubernetesVersion: cmp.Or(shape.kubernetesVersion, defaultKubernetesVersion),
 		// OVN-Kubernetes unless the entry pins a CNI or NKE_E2E_NICO_VMS_CNI overrides it.
-		CNIPlugin: defaultString(shape.cniPlugin, defaultString(os.Getenv("NKE_E2E_NICO_VMS_CNI"), CNIPluginOVN)),
+		CNIPlugin: cmp.Or(shape.cniPlugin, os.Getenv("NKE_E2E_NICO_VMS_CNI"), CNIPluginOVN),
 		OrgID:     nicoVMSOrgID,
 		SiteID:    nicoVMSSiteID,
 		VpcID:     nicoVMSVpcID,
@@ -1304,7 +1300,7 @@ func nicoVMSSpec(_ config.Config, name string, shape clusterShape) nke.ClusterSp
 func withDefaultInstanceType(pools []nke.NodePoolSpec, instanceTypeID string) []nke.NodePoolSpec {
 	out := make([]nke.NodePoolSpec, len(pools))
 	for i, pool := range pools {
-		pool.InstanceTypeID = defaultString(pool.InstanceTypeID, instanceTypeID)
+		pool.InstanceTypeID = cmp.Or(pool.InstanceTypeID, instanceTypeID)
 		out[i] = pool
 	}
 	return out
@@ -1320,25 +1316,18 @@ func nicoVMSNodePoolSpecs(pools []nke.NodePoolSpec, defaultName, defaultNodeName
 
 func nicoVMSNodePoolSpec(pool nke.NodePoolSpec, defaultName, defaultNodeNamePrefix, defaultOSProfile, defaultConfigProfile string) nke.NodePoolSpec {
 	return nke.NodePoolSpec{
-		Name:                  defaultString(pool.Name, defaultName),
-		NodeNamePrefix:        defaultString(pool.NodeNamePrefix, defaultNodeNamePrefix),
+		Name:                  cmp.Or(pool.Name, defaultName),
+		NodeNamePrefix:        cmp.Or(pool.NodeNamePrefix, defaultNodeNamePrefix),
 		DesiredNodeCount:      pool.DesiredNodeCount,
-		SystemReservedMemory:  defaultString(pool.SystemReservedMemory, "250Mi"),
-		KubeReservedMemory:    defaultString(pool.KubeReservedMemory, "250Mi"),
-		InstanceTypeID:        defaultString(pool.InstanceTypeID, nicoVMSInstanceTypeID),
+		SystemReservedMemory:  cmp.Or(pool.SystemReservedMemory, "250Mi"),
+		KubeReservedMemory:    cmp.Or(pool.KubeReservedMemory, "250Mi"),
+		InstanceTypeID:        cmp.Or(pool.InstanceTypeID, nicoVMSInstanceTypeID),
 		VpcPrefixIDs:          defaultStrings(pool.VpcPrefixIDs, nicoVMSVpcPrefixID),
 		SSHKeyGroupIDs:        defaultStrings(pool.SSHKeyGroupIDs, nicoVMSSSHKeyGroupID),
-		OSProfile:             defaultString(pool.OSProfile, defaultOSProfile),
-		ConfigProfile:         defaultString(pool.ConfigProfile, defaultConfigProfile),
-		DiskSelectionStrategy: defaultString(pool.DiskSelectionStrategy, "smallest"),
+		OSProfile:             cmp.Or(pool.OSProfile, defaultOSProfile),
+		ConfigProfile:         cmp.Or(pool.ConfigProfile, defaultConfigProfile),
+		DiskSelectionStrategy: cmp.Or(pool.DiskSelectionStrategy, "smallest"),
 	}
-}
-
-func defaultString(s, defaultValue string) string {
-	if s == "" {
-		return defaultValue
-	}
-	return s
 }
 
 func defaultStrings(s []string, defaultValue string) []string {

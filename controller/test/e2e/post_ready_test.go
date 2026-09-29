@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -277,7 +278,7 @@ func assertSystemReservedMemory(ctx context.Context, tenantClient client.Client,
 
 func expectedNodeMemoryReservation(spec nke.ClusterSpec) (resource.Quantity, error) {
 	systemReserved := ""
-	pools := append(append([]nke.NodePoolSpec{}, spec.ControlPlane.Pools...), spec.Workers...)
+	pools := slices.Concat(spec.ControlPlane.Pools, spec.Workers)
 	if cp := spec.ControlPlane.Config; cp != nil {
 		pools = append(pools, nke.NodePoolSpec{Name: "control-plane", SystemReservedMemory: cp.SystemReservedMemory})
 	}

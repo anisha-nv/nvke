@@ -139,8 +139,7 @@ func assertKubeadmKubernetesVersion(ctx context.Context, tenantClient client.Cli
 func expectControlPlanePool(ctx context.Context, test *tenantTest) api.NodePool {
 	GinkgoHelper()
 
-	pools, err := test.nke.ListNodePools(ctx, test.cluster.ID)
-	Expect(err).NotTo(HaveOccurred(), "should list node pools")
+	pools := expectSucceed(test.nke.ListNodePools(ctx, test.cluster.ID))
 	for i := range pools {
 		if pools[i].ControlPlane {
 			return pools[i]

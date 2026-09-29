@@ -299,8 +299,7 @@ type poolScale struct {
 func expectWorkerPool(ctx context.Context, test *tenantTest) api.NodePool {
 	GinkgoHelper()
 
-	pools, err := test.nke.ListNodePools(ctx, test.cluster.ID)
-	Expect(err).NotTo(HaveOccurred(), "should list node pools")
+	pools := expectSucceed(test.nke.ListNodePools(ctx, test.cluster.ID))
 
 	var workerPool *api.NodePool
 	for i := range pools {
