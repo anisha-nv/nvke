@@ -22,6 +22,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"k8s.io/apimachinery/pkg/api/resource"
+	"sigs.k8s.io/yaml"
+
 	"github.com/dsx-ai-factory/nke/controller/api"
 	"github.com/dsx-ai-factory/nke/controller/test/e2e/internal/config"
 	"github.com/dsx-ai-factory/nke/controller/test/e2e/internal/kube"
@@ -933,7 +936,11 @@ func applyControlPlaneMode(spec nke.ClusterSpec) nke.ClusterSpec {
 }
 
 // controlPlaneConfigFromPools converts a control plane described as one
-// defaulted node pool into the cluster-level config for the same nodes.
+// defaulted node pool into the cluster-level config for the same nodes. The
+// create API's controlPlaneConfig has no kubeReservedMemory, so a pool's
+// override is not carried and CWE reserves its default for the kubelet; the
+// control plane's instance has to leave room for that (see
+// withDefaultInstanceType).
 func controlPlaneConfigFromPools(pools []nke.NodePoolSpec) *nke.ControlPlaneConfigSpec {
 	if len(pools) != 1 {
 		panic(fmt.Sprintf("a cluster-level control plane has one shape; got %d control-plane pools", len(pools)))
@@ -1093,6 +1100,87 @@ func TestUnit_ApplyControlPlaneMode(t *testing.T) {
 	}
 }
 
+// cweDefaultKubeReservedMemory is what CWE reserves for the kubelet when a
+// node's config sets nothing (controller/internal/kubeadmconfig/render.go). A
+// controller-managed control plane always gets it, because the create API's
+// controlPlaneConfig has no kubeReservedMemory.
+const cweDefaultKubeReservedMemory = "2Gi"
+
+func TestUnit_NicoVMSControlPlaneFitsKubeletReservation(t *testing.T) {
+	t.Setenv(controlPlaneControllerEnv, "true")
+	memory := nicoSimInstanceMemory(t)
+
+	fits := func(t *testing.T, instanceTypeID, systemReserved string) bool {
+		t.Helper()
+		capacity, ok := memory[instanceTypeID]
+		if !ok {
+			t.Fatalf("instance type %q is not in the nico-sim seed", instanceTypeID)
+		}
+		reserved := resource.MustParse(cweDefaultKubeReservedMemory)
+		reserved.Add(resource.MustParse(systemReserved))
+		return reserved.Cmp(capacity) < 0
+	}
+
+	shapes := map[string]clusterShape{
+		"control plane with no instance type": {controlPlanePools: []nke.NodePoolSpec{{DesiredNodeCount: 1}}},
+		"OS profile matrix row":               nicoVMSOSProfileTestSpec(nicoVMSOSProfileEntry{name: "unit-profile"}, 0).shape,
+	}
+	for name, shape := range shapes {
+		t.Run(name, func(t *testing.T) {
+			cp := nicoVMSSpec(config.Config{}, "unit", shape).ControlPlane.Config
+			if cp == nil {
+				t.Fatal("a flag-on nico-vms spec carries no controlPlaneConfig")
+			}
+			if !fits(t, cp.InstanceTypeID, cp.SystemReservedMemory) {
+				t.Fatalf("instance %s cannot hold %s kube-reserved plus %s system-reserved",
+					cp.InstanceTypeID, cweDefaultKubeReservedMemory, cp.SystemReservedMemory)
+			}
+		})
+	}
+
+	t.Run("the default 2 GiB instance cannot hold a controller-managed control plane", func(t *testing.T) {
+		if fits(t, nicoVMSInstanceTypeID, "250Mi") {
+			t.Fatalf("instance %s now fits; the large-instance default for control planes may be unnecessary", nicoVMSInstanceTypeID)
+		}
+	})
+}
+
+// nicoSimInstanceMemory reads each instance type's memory from the seed the
+// nico-vms lane boots nico-sim with.
+func nicoSimInstanceMemory(t *testing.T) map[string]resource.Quantity {
+	t.Helper()
+	raw, err := os.ReadFile("../../nico-sim/internal/seed/default-seed.yaml")
+	if err != nil {
+		t.Fatalf("reading the nico-sim seed: %v", err)
+	}
+	var seed struct {
+		InstanceTypes []struct {
+			ID        string `json:"id"`
+			MemoryGiB int64  `json:"memory_gib"`
+		} `json:"instance_types"`
+	}
+	if err := yaml.Unmarshal(raw, &seed); err != nil {
+		t.Fatalf("parsing the nico-sim seed: %v", err)
+	}
+	memory := make(map[string]resource.Quantity, len(seed.InstanceTypes))
+	for _, it := range seed.InstanceTypes {
+		memory[it.ID] = *resource.NewQuantity(it.MemoryGiB<<30, resource.BinarySI)
+	}
+	return memory
+}
+
+// builtControlPlaneInstanceType returns the instance type spec's control plane
+// runs on, in either control-plane shape.
+func builtControlPlaneInstanceType(spec nke.ClusterSpec) string {
+	if spec.ControlPlane.Config != nil {
+		return spec.ControlPlane.Config.InstanceTypeID
+	}
+	if len(spec.ControlPlane.Pools) > 0 {
+		return spec.ControlPlane.Pools[0].InstanceTypeID
+	}
+	return ""
+}
+
 func capdNodePoolSpecs(pools []nke.NodePoolSpec, defaultName, defaultNodeNamePrefix string) []nke.NodePoolSpec {
 	out := make([]nke.NodePoolSpec, 0, len(pools))
 	for _, pool := range pools {
@@ -1196,13 +1284,30 @@ func nicoVMSSpec(_ config.Config, name string, shape clusterShape) nke.ClusterSp
 		SiteID:    nicoVMSSiteID,
 		VpcID:     nicoVMSVpcID,
 		ControlPlane: nke.ControlPlane{
-			Pools:           nicoVMSNodePoolSpecs(shape.controlPlanePools, "control-plane", "cp", nicoVMSOSProfile, nicoVMSCPConfigProfile),
+			Pools: nicoVMSNodePoolSpecs(
+				withDefaultInstanceType(shape.controlPlanePools, nicoVMSLargeInstanceID),
+				"control-plane", "cp", nicoVMSOSProfile, nicoVMSCPConfigProfile,
+			),
 			ControlPlaneVIP: shape.controlPlaneVIP,
 			EtcdEncrypted:   shape.etcdEncrypted,
 			Config:          shape.controlPlaneConfig,
 		},
 		Workers: nicoVMSNodePoolSpecs(shape.workerPools, "worker", "w", nicoVMSOSProfile, nicoVMSWConfigProfile),
 	})
+}
+
+// withDefaultInstanceType sets instanceTypeID on each pool that leaves it
+// unset. nico-vms control planes default to the large instance: a flag-on CWE
+// gives a controller-managed control plane its default 2Gi kube-reserved
+// memory, because controlPlaneConfig cannot carry the pool's 250Mi override,
+// and that does not fit on the default 2 GiB instance.
+func withDefaultInstanceType(pools []nke.NodePoolSpec, instanceTypeID string) []nke.NodePoolSpec {
+	out := make([]nke.NodePoolSpec, len(pools))
+	for i, pool := range pools {
+		pool.InstanceTypeID = defaultString(pool.InstanceTypeID, instanceTypeID)
+		out[i] = pool
+	}
+	return out
 }
 
 func nicoVMSNodePoolSpecs(pools []nke.NodePoolSpec, defaultName, defaultNodeNamePrefix, defaultOSProfile, defaultConfigProfile string) []nke.NodePoolSpec {
