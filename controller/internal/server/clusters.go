@@ -1118,6 +1118,10 @@ func APIClusterFromDB(dbCluster *db.Cluster) api.Cluster {
 		updateFailed := apiConditionFromDB(*dbCluster.Conditions.UpdateFailed)
 		conditions.UpdateFailed = &updateFailed
 	}
+	if dbCluster.Conditions.APIServerReachable != nil {
+		reachable := apiConditionFromDB(*dbCluster.Conditions.APIServerReachable)
+		conditions.APIServerReachable = &reachable
+	}
 
 	return api.Cluster{
 		ID:                            dbCluster.ID,

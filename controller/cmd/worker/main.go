@@ -28,6 +28,7 @@ import (
 	"github.com/dsx-ai-factory/nke/controller/internal/controllers/automode"
 	"github.com/dsx-ai-factory/nke/controller/internal/controllers/capi"
 	"github.com/dsx-ai-factory/nke/controller/internal/controllers/certrenewal"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllers/clusterreachability"
 	"github.com/dsx-ai-factory/nke/controller/internal/controllers/controlplane"
 	"github.com/dsx-ai-factory/nke/controller/internal/controllers/controlplanenodescheduler"
 	"github.com/dsx-ai-factory/nke/controller/internal/controllers/dbreconcile/dbwrapper"
@@ -258,6 +259,12 @@ func main() {
 			logger.Error("Failed to set up node provisioning monitor controller", "error", err)
 			os.Exit(1)
 		}
+	}
+
+	reachabilityController := clusterreachability.NewController(logger, dbInstance, clusterreachability.NewProber(k8sControllerManager.GetAPIReader()))
+	if err := reachabilityController.SetupWithManager(k8sControllerManager); err != nil {
+		logger.Error("Failed to set up cluster API reachability controller", "error", err)
+		os.Exit(1)
 	}
 
 	if !cfg.NodeHealthCheckDisabled {

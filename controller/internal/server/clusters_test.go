@@ -5,6 +5,7 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -2284,4 +2285,27 @@ func TestApiClusterFromDB_OmitsMissingProviderPayload(t *testing.T) {
 	}
 	got := server.APIClusterFromDB(&cluster)
 	assert.Nil(t, got.Nico)
+}
+
+func TestAPIClusterReachabilityProjection(t *testing.T) {
+	for _, status := range []db.ConditionStatus{"", db.ConditionStatusTrue, db.ConditionStatusFalse, db.ConditionStatusUnknown} {
+		t.Run(string(status), func(t *testing.T) {
+			row := db.Cluster{ID: uuid.New(), Name: "reachability-projection"}
+			if status != "" {
+				row.Conditions.APIServerReachable = &db.Condition{Status: status, Message: "Observation", LastTransitionTime: time.Now().UTC()}
+			}
+			projected := server.APIClusterFromDB(&row)
+			encoded, err := json.Marshal(projected)
+			require.NoError(t, err)
+			if status == "" {
+				require.Nil(t, projected.Conditions.APIServerReachable)
+				require.NotContains(t, string(encoded), "apiServerReachable")
+				return
+			}
+			require.NotNil(t, projected.Conditions.APIServerReachable)
+			require.Equal(t, string(status), string(projected.Conditions.APIServerReachable.Status))
+			require.Equal(t, row.Conditions.APIServerReachable.Message, projected.Conditions.APIServerReachable.Message)
+			require.True(t, row.Conditions.APIServerReachable.LastTransitionTime.Equal(projected.Conditions.APIServerReachable.LastTransitionTime))
+		})
+	}
 }
