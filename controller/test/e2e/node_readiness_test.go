@@ -24,12 +24,10 @@ import (
 func validateNodeReadinessPostCreate(test *tenantTest) {
 	It("brings every desired node to Ready", func(ctx context.Context) {
 		expectedPools := expectedNodeCounts(test.spec)
-		expectedNodeCount := totalExpectedNodes(expectedPools)
+		expectedNodeCount := expectedNodeTotal(test.spec)
 
 		By("Asserting CWE reports KubernetesReady for every desired node")
-		Eventually(func(ctx context.Context) error {
-			return test.nke.AssertNodeConditions(ctx, test.cluster.ID, expectedPools, nke.IsNodeReady)
-		}).WithContext(ctx).WithTimeout(test.timeouts.Provision).WithPolling(1*time.Second).
+		Eventually(test.assertDesiredNodesReady).WithContext(ctx).WithTimeout(test.timeouts.Provision).WithPolling(1*time.Second).
 			Should(Succeed(), "all desired nodes should become ready in CWE")
 
 		By("Asserting the tenant cluster reports Ready for every desired node")
@@ -52,6 +50,9 @@ func validateNodeReadinessPostCreate(test *tenantTest) {
 	}, Label("readiness"), SpecTimeout(45*time.Minute))
 }
 
+// expectedNodeCounts returns the desired node count of every node pool in spec,
+// keyed by pool name. A controller-managed control plane has no pool, so its
+// nodes are not in the map; see controllerControlPlaneCount.
 func expectedNodeCounts(spec nke.ClusterSpec) map[string]int {
 	counts := make(map[string]int, len(spec.ControlPlane.Pools)+len(spec.Workers))
 	for _, pool := range spec.ControlPlane.Pools {
@@ -63,6 +64,32 @@ func expectedNodeCounts(spec nke.ClusterSpec) map[string]int {
 	return counts
 }
 
+// controllerControlPlaneCount returns the control-plane node count spec's
+// cluster-level controlPlaneConfig asks for, or zero when the control plane is a
+// node pool.
+func controllerControlPlaneCount(spec nke.ClusterSpec) int {
+	if spec.ControlPlane.Config == nil {
+		return 0
+	}
+	return spec.ControlPlane.Config.DesiredCount
+}
+
+// expectedControlPlaneCount returns the desired control-plane node count in
+// either control-plane shape.
+func expectedControlPlaneCount(spec nke.ClusterSpec) int {
+	total := controllerControlPlaneCount(spec)
+	for _, pool := range spec.ControlPlane.Pools {
+		total += pool.DesiredNodeCount
+	}
+	return total
+}
+
+// expectedNodeTotal returns the desired count of every node in spec: node-pool
+// nodes plus a controller-managed control plane.
+func expectedNodeTotal(spec nke.ClusterSpec) int {
+	return totalExpectedNodes(expectedNodeCounts(spec)) + controllerControlPlaneCount(spec)
+}
+
 func totalExpectedNodes(expectedPools map[string]int) int {
 	total := 0
 	for _, count := range expectedPools {
@@ -71,8 +98,22 @@ func totalExpectedNodes(expectedPools map[string]int) int {
 	return total
 }
 
-// validateNodesReadyInCluster checks that all the expected nodes are reported Ready in
-// the tenant cluster.
+// assertDesiredNodesReady checks that CWE reports every desired node of the
+// cluster KubernetesReady, including a controller-managed control plane. The
+// caller controls retries.
+func (t *tenantTest) assertDesiredNodesReady(ctx context.Context) error {
+	if err := t.nke.AssertNodeConditions(ctx, t.cluster.ID, expectedNodeCounts(t.spec), nke.IsNodeReady); err != nil {
+		return err
+	}
+	if desired := controllerControlPlaneCount(t.spec); desired > 0 {
+		return t.nke.AssertControlPlaneNodesReady(ctx, t.cluster.ID, desired)
+	}
+	return nil
+}
+
+// validateNodesReadyInCluster checks that the nodes of expectedPools, plus any
+// controller-managed control-plane nodes CWE reports, are Ready in the tenant
+// cluster. It returns their names.
 func validateNodesReadyInCluster(
 	ctx context.Context,
 	test *tenantTest,
@@ -87,6 +128,13 @@ func validateNodesReadyInCluster(
 	expectedNodeNames := make([]string, 0, len(expectedNodes))
 	for _, node := range expectedNodes {
 		expectedNodeNames = append(expectedNodeNames, node.Name)
+	}
+	if test.spec.ControlPlane.Config != nil {
+		controlPlaneNames, err := test.nke.ControlPlaneNodeNames(ctx, test.cluster.ID)
+		if err != nil {
+			return nil, err
+		}
+		expectedNodeNames = append(expectedNodeNames, controlPlaneNames...)
 	}
 	sort.Strings(expectedNodeNames)
 
