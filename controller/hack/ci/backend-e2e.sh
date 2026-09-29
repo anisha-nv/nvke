@@ -402,6 +402,7 @@ ci_e2e_exec() {
   runner_exec env \
     "CWE_EXPECTED_VERSION=${CWE_BUILD_VERSION}" \
     "CWE_PROFILES_DIR=${NKE_E2E_PROFILES_DIR}" \
+    "NKECTL_BIN=/usr/local/bin/nkectl" \
     "NKE_E2E_DSX_IDENTITY_EXCHANGE=${DSX_IDENTITY_EXCHANGE_ENABLED}" \
     "NKE_E2E_BUNDLE_SERVER_URL=${e2e_bundle_server_url}" \
     "E2E_BGP_CONTAINER_NAME=${BGP_CONTAINER_NAME}" \

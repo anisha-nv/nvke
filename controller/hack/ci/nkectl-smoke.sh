@@ -168,7 +168,7 @@ EOF
     log "nkectl smoke: 'get clusters' never succeeded: ${out}" >&2
     return 1
   fi
-  if ! grep -q 'KUBERNETES VERSION' <<<"${out}"; then
+  if ! grep -q 'API REACHABLE' <<<"${out}"; then
     log "nkectl smoke: 'get clusters' printed no table header: ${out}" >&2
     return 1
   fi
@@ -672,6 +672,11 @@ nkectl_smoke_write_assertions() {
   fi
   if ! jq -e --arg n "${name}" 'length == 1 and .[0].name == $n' <<<"${out}" >/dev/null; then
     log "nkectl smoke: 'get clusters ${name} -o json' did not return exactly our cluster: ${out}" >&2
+    return 1
+  fi
+
+  if ! jq -e '.[0].conditions.apiServerReachable == null or .[0].conditions.apiServerReachable.status == "Unknown"' <<<"${out}" >/dev/null; then
+    log "nkectl smoke: unprovisioned fixture must have absent/Unknown reachability" >&2
     return 1
   fi
 

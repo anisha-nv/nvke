@@ -86,3 +86,41 @@ rows**. Then deploy the observer/API version. During a rolling API deployment,
 older serving replicas can omit the field; wait for all replicas to finish before
 comparing API and CLI results. Roll back only to a field-aware writer version if
 stored observations must be preserved.
+
+## Running the demo
+
+From a checkout, with `nkectl`, `jq`, Mike Farah `yq` v4 and Python 3 installed:
+
+```sh
+controller/hack/site-health/demo.sh --site lab --token-file /path/to/cwe-token
+```
+
+The token file contains a valid, allowed CWE bearer token; keep it outside the
+checkout. The configured site URL must be directly reachable by the demo,
+for example through a local port-forward. The demo compares raw API results
+with CLI table/JSON/YAML output and checks missing/invalid credential denial
+using an isolated CLI config that cannot mint replacement credentials. It
+prints `SKIP` for outage/recovery in this observation mode.
+
+Full fault mode requires Docker access, an explicit management context, two
+reachable disposable CAPD tenants, and an explicit target ID/name and sentinel
+ID. Mark the target CAPI Cluster with
+`site-health.nke.nvidia.com/disposable=true` only in your disposable fixture.
+The script validates this marker, CAPD infrastructure, and container ownership
+before staging every target API manifest:
+
+```sh
+controller/hack/site-health/demo.sh --site lab --token-file /path/to/cwe-token \
+  --inject-outage --target TARGET_UUID --sentinel SENTINEL_UUID \
+  --disposable-target TARGET_NAME --management-context MANAGEMENT
+```
+
+The target must become False while the sentinel stays True and both remain
+listed, then return to True after restoration. Each settle check has a five-minute
+test budget. EXIT/INT/TERM cleanup restores staged manifests through Docker and
+verifies recovery before reporting success. A failed assertion or recovery exits
+nonzero. On a disposable fixture, `SITE_HEALTH_DEMO_FAIL_AFTER_STAGING=true`
+exercises restoration after a forced assertion failure; its expected exit is
+nonzero with a successful cleanup line. SIGKILL/host loss cannot run a trap; the
+printed target endpoints and `/etc/kubernetes/site-health-demo-kube-apiserver.yaml`
+backup identify the manual recovery path.

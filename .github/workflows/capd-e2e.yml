@@ -127,7 +127,7 @@ jobs:
       # satisfy the required input and document what that leg runs. `health` and
       # the authn specs ride along there -- both need a deployed, enforcing NKE.
       # authn-spire is excluded (needs SPIRE pod attestation not wired in CAPD).
-      label-filter: ${{ github.event_name == 'push' && startsWith(github.ref_name, 'pull-request/') && 'core-docker || health' || '((capd || health) && !cp-controller) || (authn && !authn-spire) || authn-permissive' }}
+      label-filter: ${{ github.event_name == 'push' && startsWith(github.ref_name, 'pull-request/') && 'core-docker || health || site-health' || '((capd || health) && !cp-controller) || (authn && !authn-spire) || authn-permissive' }}
       providers: '["capi_core", "bgp-containers", "capd", "capd-reboot-controller"]'
       # Keep diagnostic headroom above the 15-minute pull-request target. Full
       # runs still need room for two modes and every extended CAPD scenario.
