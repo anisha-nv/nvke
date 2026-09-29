@@ -23,7 +23,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"k8s.io/apimachinery/pkg/api/resource"
-	"sigs.k8s.io/yaml"
 
 	"github.com/stretchr/testify/require"
 
@@ -1099,14 +1098,14 @@ const cweDefaultKubeReservedMemory = "2Gi"
 
 func TestUnit_NicoVMSControlPlaneFitsKubeletReservation(t *testing.T) {
 	t.Setenv(controlPlaneControllerEnv, "true")
-	memory := nicoSimInstanceMemory(t)
 
 	fits := func(t *testing.T, instanceTypeID, systemReserved string) bool {
 		t.Helper()
-		capacity, ok := memory[instanceTypeID]
+		memory, ok := nicoVMSInstanceMemory[instanceTypeID]
 		if !ok {
-			t.Fatalf("instance type %q is not in the nico-sim seed", instanceTypeID)
+			t.Fatalf("instance type %q has no memory in nicoVMSInstanceMemory", instanceTypeID)
 		}
+		capacity := resource.MustParse(memory)
 		reserved := resource.MustParse(cweDefaultKubeReservedMemory)
 		reserved.Add(resource.MustParse(systemReserved))
 		return reserved.Cmp(capacity) < 0
@@ -1134,30 +1133,6 @@ func TestUnit_NicoVMSControlPlaneFitsKubeletReservation(t *testing.T) {
 			t.Fatalf("instance %s now fits; the large-instance default for control planes may be unnecessary", nicoVMSInstanceTypeID)
 		}
 	})
-}
-
-// nicoSimInstanceMemory reads each instance type's memory from nico-sim's
-// default seed.
-func nicoSimInstanceMemory(t *testing.T) map[string]resource.Quantity {
-	t.Helper()
-	raw, err := os.ReadFile("../../nico-sim/internal/seed/default-seed.yaml")
-	if err != nil {
-		t.Fatalf("reading the nico-sim seed: %v", err)
-	}
-	var seed struct {
-		InstanceTypes []struct {
-			ID        string `json:"id"`
-			MemoryGiB int64  `json:"memory_gib"`
-		} `json:"instance_types"`
-	}
-	if err := yaml.Unmarshal(raw, &seed); err != nil {
-		t.Fatalf("parsing the nico-sim seed: %v", err)
-	}
-	memory := make(map[string]resource.Quantity, len(seed.InstanceTypes))
-	for _, it := range seed.InstanceTypes {
-		memory[it.ID] = *resource.NewQuantity(it.MemoryGiB<<30, resource.BinarySI)
-	}
-	return memory
 }
 
 // builtControlPlaneInstanceType returns the instance type spec's control plane
@@ -1255,6 +1230,13 @@ const (
 	nicoVMSWConfigProfile  = "nico-vms-worker"
 	nicoVMSControlPlaneVIP = "172.31.0.10"
 )
+
+// nicoVMSInstanceMemory is the memory of the nico-vms instance types the specs
+// use, mirroring memory_gib in the same seed.
+var nicoVMSInstanceMemory = map[string]string{
+	nicoVMSInstanceTypeID:  "2Gi",
+	nicoVMSLargeInstanceID: "6Gi",
+}
 
 // nicoVMSOSProfile is the profile the nico-vms specs boot. nico-sim takes the
 // guest architecture from the host it runs on, never from the profile, so the
