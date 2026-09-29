@@ -354,8 +354,9 @@ func buildCAPDRequest(spec ClusterSpec) (api.CreateClusterRequest, error) {
 
 // buildCAPDControlPlaneConfig stamps the embedded control-plane-config skeleton
 // (a DockerMachineTemplate carrying the CAPD node image) with the caller's
-// desired count, surge and system-reserved memory. It is used for control-plane-controller provisioning,
-// where the control plane has no owning node pool.
+// desired count, surge and system-reserved memory. It is used for
+// control-plane-controller provisioning, where the control plane has no owning
+// node pool.
 func buildCAPDControlPlaneConfig(spec ClusterSpec) (*api.CreateClusterControlPlaneConfig, error) {
 	var cfg api.CreateClusterControlPlaneConfig
 	if err := json.Unmarshal(capdControlPlaneConfigJSON, &cfg); err != nil {

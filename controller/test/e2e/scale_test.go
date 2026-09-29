@@ -28,10 +28,10 @@ import (
 
 const drainProbeLabel = "e2e.nvidia.com/drain-probe"
 
-// validateNodePoolScale scales every node pool of the cluster up by one node and
-// back down. The worker pool comes first; a control-plane pool follows when the
-// control plane is one. A controller-managed control plane has no node pool:
-// the cp-controller entries scale it through the cluster-level config instead.
+// validateNodePoolScale scales each node pool up by one node and back down: the
+// worker pool, then the control-plane pool when the control plane is one. A
+// controller-managed control plane has no pool; the cp-controller entries scale
+// it instead.
 func validateNodePoolScale(test *tenantTest) {
 	It("scales the node pools up and down", func(ctx context.Context) {
 		pools := []api.NodePool{expectWorkerPool(ctx, test)}
@@ -82,7 +82,7 @@ func validateNodePoolScale(test *tenantTest) {
 	}, Label("lifecycle", "scale"), NodeTimeout(2*time.Hour))
 }
 
-// poolScales returns a scale target of each pool's desired count plus delta.
+// poolScales returns, for each pool, a target of its desired count plus delta.
 func poolScales(pools []api.NodePool, delta int) []poolScale {
 	scales := make([]poolScale, 0, len(pools))
 	for _, pool := range pools {

@@ -85,9 +85,8 @@ var _ = DescribeTableSubtree("NKE with backend", withNicoVMSOSProfileEntries(
 		AfterEach(func() { failed = failed || CurrentSpecReport().Failed() })
 
 		It("creates the cluster", func(ctx context.Context) {
-			// Each CWE accepts only one control-plane shape. Skip an entry whose
-			// validations need the other shape rather than fail its create; CI
-			// keeps such entries out of lanes deployed with the wrong flag.
+			// A CWE accepts only one control-plane shape, so skip an entry that
+			// needs the other one rather than fail its create.
 			if (spec.validate.controlPlaneController || spec.validate.controlPlaneControllerUpdate ||
 				spec.validate.controlPlaneControllerRollingUpdate || spec.validate.controlPlaneControllerDelete) &&
 				!controlPlaneControllerEnabled() {
@@ -353,10 +352,8 @@ var _ = DescribeTableSubtree("NKE with backend", withNicoVMSOSProfileEntries(
 	}),
 	// Opt-in via the "cp-controller" label: it exercises cluster-level
 	// control-plane-controller provisioning (no control-plane node pool) and its
-	// update, rolling-update and delete specs, so it only passes against a CWE
-	// with PROVISION_CONTROL_PLANE_WITH_CONTROL_PLANE_CONTROLLER on. The CAPD E2E
-	// workflow runs it in a dedicated flag-on lane; the entry also self-skips
-	// against a flag-off CWE (belt-and-suspenders).
+	// update, rolling-update and delete specs, so it needs a flag-on CWE and
+	// self-skips on a flag-off one.
 	Entry("CAPD control-plane controller (no CP node pool)", Ordered, ContinueOnFailure, Label("capd", "cp-controller"), testSpec{
 		buildSpec: capdSpec,
 		shape: clusterShape{
@@ -916,9 +913,9 @@ func (t *tenantTest) availableControlPlaneVIP(ctx context.Context, preferred str
 const controlPlaneControllerEnv = "PROVISION_CONTROL_PLANE_WITH_CONTROL_PLANE_CONTROLLER"
 
 // controlPlaneControllerEnabled reports whether the CWE under test provisions
-// control planes through the control-plane controller. It mirrors CWE's own
-// default, so an unset or unparsable value means on; lanes that deploy CWE
-// flag-off pass the same value to the suite.
+// control planes through the control-plane controller. Like CWE, it treats an
+// unset or unparsable value as on, so the suite must see the value CWE was
+// deployed with.
 func controlPlaneControllerEnabled() bool {
 	enabled, err := strconv.ParseBool(os.Getenv(controlPlaneControllerEnv))
 	return err != nil || enabled
@@ -939,10 +936,8 @@ func applyControlPlaneMode(spec nke.ClusterSpec) nke.ClusterSpec {
 
 // controlPlaneConfigFromPools converts a control plane described as one
 // defaulted node pool into the cluster-level config for the same nodes. The
-// create API's controlPlaneConfig has no kubeReservedMemory, so a pool's
-// override is not carried and CWE reserves its default for the kubelet; the
-// control plane's instance has to leave room for that (see
-// withDefaultInstanceType).
+// pool's kubeReservedMemory is not carried: the create API has no such field,
+// so CWE applies its default (see nicoVMSSpec).
 func controlPlaneConfigFromPools(pools []nke.NodePoolSpec) *nke.ControlPlaneConfigSpec {
 	if len(pools) != 1 {
 		panic(fmt.Sprintf("a cluster-level control plane has one shape; got %d control-plane pools", len(pools)))
@@ -979,9 +974,9 @@ func capdSpec(cfg config.Config, name string, shape clusterShape) nke.ClusterSpe
 	})
 }
 
-// nicoControlPlaneControllerSpec is the same for the container-backed NICo
-// topology, filling the mock's seeded identifiers the entry leaves unset.
-// Requires a flag-on CWE.
+// nicoControlPlaneControllerSpec builds a NICo container topology whose control
+// plane is shape.controlPlaneConfig, filling in the mock's seed identifiers the
+// entry leaves unset. Requires a flag-on CWE.
 func nicoControlPlaneControllerSpec(cfg config.Config, name string, shape clusterShape) nke.ClusterSpec {
 	spec := nicoSpec(cfg, name, shape)
 	if spec.ControlPlane.Config != nil {
@@ -1141,8 +1136,8 @@ func TestUnit_NicoVMSControlPlaneFitsKubeletReservation(t *testing.T) {
 	})
 }
 
-// nicoSimInstanceMemory reads each instance type's memory from the seed the
-// nico-vms lane boots nico-sim with.
+// nicoSimInstanceMemory reads each instance type's memory from nico-sim's
+// default seed.
 func nicoSimInstanceMemory(t *testing.T) map[string]resource.Quantity {
 	t.Helper()
 	raw, err := os.ReadFile("../../nico-sim/internal/seed/default-seed.yaml")
@@ -1280,6 +1275,9 @@ func nicoVMSSpec(_ config.Config, name string, shape clusterShape) nke.ClusterSp
 		SiteID:    nicoVMSSiteID,
 		VpcID:     nicoVMSVpcID,
 		ControlPlane: nke.ControlPlane{
+			// Control planes default to the large instance. A flag-on CWE reserves
+			// its default 2Gi for the kubelet on them, since controlPlaneConfig
+			// cannot carry the pool's 250Mi, and that does not fit in 2 GiB.
 			Pools: nicoVMSNodePoolSpecs(
 				withDefaultInstanceType(shape.controlPlanePools, nicoVMSLargeInstanceID),
 				"control-plane", "cp", nicoVMSOSProfile, nicoVMSCPConfigProfile,
@@ -1292,11 +1290,8 @@ func nicoVMSSpec(_ config.Config, name string, shape clusterShape) nke.ClusterSp
 	})
 }
 
-// withDefaultInstanceType sets instanceTypeID on each pool that leaves it
-// unset. nico-vms control planes default to the large instance: a flag-on CWE
-// gives a controller-managed control plane its default 2Gi kube-reserved
-// memory, because controlPlaneConfig cannot carry the pool's 250Mi override,
-// and that does not fit on the default 2 GiB instance.
+// withDefaultInstanceType returns a copy of pools with instanceTypeID set on
+// each pool that leaves it unset.
 func withDefaultInstanceType(pools []nke.NodePoolSpec, instanceTypeID string) []nke.NodePoolSpec {
 	out := make([]nke.NodePoolSpec, len(pools))
 	for i, pool := range pools {
