@@ -38,6 +38,22 @@ func Status(cl *api.Cluster) string {
 // IsProvisioned reports whether the cluster finished provisioning.
 func IsProvisioned(cl *api.Cluster) bool { return IsTrue(&cl.Conditions.Provisioned) }
 
+// Reachability returns the last observed tenant API status for display.
+// Missing and unrecognized conditions display Unknown.
+func Reachability(cl *api.Cluster) string {
+	if cl == nil || cl.Conditions.APIServerReachable == nil {
+		return "Unknown"
+	}
+	switch cl.Conditions.APIServerReachable.Status {
+	case api.ConditionStatusTrue:
+		return "True"
+	case api.ConditionStatusFalse:
+		return "False"
+	default:
+		return "Unknown"
+	}
+}
+
 // IsTrue reports whether an optional condition is present and true.
 func IsTrue(condition *api.Condition) bool {
 	return condition != nil && condition.Status == api.ConditionStatusTrue

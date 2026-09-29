@@ -110,15 +110,16 @@ func clusterStatus(cl *api.Cluster) string { return clusterstate.Status(cl) }
 // printClusters writes a tabular summary of clusters to out.
 func printClusters(out io.Writer, clusters []api.Cluster) {
 	w := tabwriter.NewWriter(out, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "NAME\tKUBERNETES VERSION\tCNI\tSTATUS\tID\tAGE")
+	fmt.Fprintln(w, "NAME\tKUBERNETES VERSION\tCNI\tSTATUS\tID\tAGE\tAPI REACHABLE")
 	for _, cl := range clusters {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			cl.Name,
 			cl.ControlPlaneKubernetesVersion,
 			cl.CniPlugin,
 			clusterStatus(&cl),
 			cl.ID,
 			util.FormatAge(cl.CreatedAt),
+			clusterstate.Reachability(&cl),
 		)
 	}
 	w.Flush()

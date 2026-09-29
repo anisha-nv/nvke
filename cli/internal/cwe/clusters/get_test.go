@@ -7,6 +7,10 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"sigs.k8s.io/yaml"
 
 	api "github.com/dsx-ai-factory/nke/controller/api"
 )
@@ -88,6 +92,49 @@ func TestGetClustersJSONRoundTrips(t *testing.T) {
 	}
 	if got[0].CniPlugin != "calico" {
 		t.Errorf("cniPlugin = %q, want calico", got[0].CniPlugin)
+	}
+}
+
+func TestGetClustersReachabilityFormats(t *testing.T) {
+	for _, status := range []api.ConditionStatus{"", api.ConditionStatusTrue, api.ConditionStatusFalse, api.ConditionStatusUnknown, "FutureStatus"} {
+		t.Run(string(status), func(t *testing.T) {
+			cluster := seedCluster("reachability")
+			cluster.CreatedAt = time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+			if status != "" {
+				cluster.Conditions.APIServerReachable = &api.Condition{
+					Status: status, Message: "Last observation", LastTransitionTime: cluster.CreatedAt,
+				}
+			}
+			_, clientFn := newFakeCWE(t, cluster)
+			out, err := run(t, NewGetCmd(clientFn))
+			require.NoError(t, err)
+			table := rows(out)
+			require.Len(t, table, 2)
+			require.True(t, strings.HasSuffix(strings.TrimSpace(strings.Split(out, "\n")[0]), "API REACHABLE"))
+			require.Len(t, table[1], 7)
+			require.Equal(t, []string{cluster.Name, cluster.ControlPlaneKubernetesVersion, cluster.CniPlugin, "Provisioned", cluster.ID.String()}, table[1][:5])
+			want := "Unknown"
+			if status == api.ConditionStatusTrue || status == api.ConditionStatusFalse {
+				want = string(status)
+			}
+			require.Equal(t, want, table[1][6])
+			for _, format := range []string{"json", "yaml"} {
+				out, err := run(t, NewGetCmd(clientFn), "-o", format)
+				require.NoError(t, err)
+				data := []byte(out)
+				if format == "yaml" {
+					data, err = yaml.YAMLToJSON(data)
+					require.NoError(t, err)
+				}
+				var got []api.Cluster
+				require.NoError(t, json.Unmarshal(data, &got))
+				require.Len(t, got, 1)
+				require.Equal(t, cluster.Conditions.APIServerReachable, got[0].Conditions.APIServerReachable)
+				if status == "" {
+					require.NotContains(t, out, "apiServerReachable")
+				}
+			}
+		})
 	}
 }
 
