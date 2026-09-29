@@ -63,9 +63,10 @@ jobs:
     timeout-minutes: 15
     needs: [license-checks]
     permissions:
-      security-events: write  # the malware scan uploads SARIF
-      id-token: write         # the OIDC token the attestation is signed against
-      attestations: write     # writes the provenance attestation
+      contents: read           # actions/checkout, since the top-level default is {}
+      security-events: write   # the malware scan uploads SARIF
+      id-token: write          # the OIDC token the attestation is signed against
+      attestations: write      # writes the provenance attestation
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
