@@ -24,9 +24,10 @@ include ../make/golangci.mk
 help: ## List management engine development targets.
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z][a-z0-9-]*:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-build: ## Build the manager and API packages.
+build: ## Build the manager, the OS profile converter, and API packages.
 	$(GO) build ./...
 	CGO_ENABLED=0 $(GO) build -buildvcs=false -trimpath -ldflags "$(MANAGER_LDFLAGS)" -o $(BIN_DIR)/management-engine ./cmd/manager
+	CGO_ENABLED=0 $(GO) build -buildvcs=false -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(BIN_DIR)/osprofile-convert ./cmd/osprofile-convert
 
 run: build ## Run against the management API selected by MANAGER_ARGS.
 	$(BIN_DIR)/management-engine $(MANAGER_ARGS)

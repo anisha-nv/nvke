@@ -284,3 +284,42 @@ spec:
   lifecycle: # mutable fields
     deprecated: false
 ```
+
+## Convert OS profiles
+
+[osprofile-convert](cmd/osprofile-convert/main.go) reads a profiles directory in the
+controller layout: `osProfiles/metadata.yaml`, optional `osProfiles/deprecated.yaml`,
+and each profile's `ipxeScript` and `userData.tmpl`. For every profile it writes
+three cluster-scoped manifests:
+
+| Output | Kind |
+| --- | --- |
+| `machineimages/<profile>.yaml` | `MachineImage` |
+| `clusterreleases/<profile>.yaml` | `ClusterRelease` |
+| `nodepoolreleases/<profile>.yaml` | `NodePoolRelease` |
+
+The manifest name is the profile name. That is the same string existing
+`osProfile` selections store, so a cluster pinned to a profile name keeps
+resolving after the profiles move into these resources.
+
+A profile listed in `deprecated.yaml` is emitted with `spec.lifecycle.deprecated:
+true` on both releases. Regeneration may update that field on a manifest that is
+already in the output directory. The machine image spec, the release image
+reference, the user data, and the Kubernetes-version annotations stay as first
+published. The annotations are
+`internal.nke.nvidia.com/machine-init-kubernetes-version` and
+`internal.nke.nvidia.com/machine-init-kubernetes-version-injected`, recording the
+fixed-versus-injected compatibility the profile metadata carries today.
+`--check` writes nothing and fails when the output directory is stale or a
+published spec would change.
+
+```sh
+make -C management-engine build
+management-engine/bin/osprofile-convert \
+  --profiles /path/to/profiles \
+  --output /path/to/engine-config
+management-engine/bin/osprofile-convert \
+  --profiles /path/to/profiles \
+  --output /path/to/engine-config \
+  --check
+```
