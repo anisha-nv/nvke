@@ -627,9 +627,10 @@ type clusterShape struct {
 	workerPools       []nke.NodePoolSpec
 	etcdEncrypted     bool
 	controlPlaneVIP   string
-	// controlPlaneConfig, when set, provisions the control plane through the
-	// cluster-level control-plane controller regardless of controlPlanePools.
-	// The cp-controller entries use it to set controller-only fields.
+	// controlPlaneConfig provisions the control plane through the cluster-level
+	// control-plane controller. Set it instead of controlPlanePools, never both:
+	// the cp-controller entries use it for controller-only fields, and the
+	// builders leave a spec that already carries a config unconverted.
 	controlPlaneConfig *nke.ControlPlaneConfigSpec
 }
 
@@ -918,19 +919,16 @@ func controlPlaneControllerEnabled() bool {
 	return err != nil || enabled
 }
 
-// applyControlPlaneMode puts spec's control plane in the shape the CWE under
-// test accepts. An explicit shape.controlPlaneConfig always wins. Otherwise a
-// flag-on CWE gets the control-plane pool as the equivalent cluster-level
-// controlPlaneConfig, since it rejects a control-plane node pool.
-func applyControlPlaneMode(spec nke.ClusterSpec, shape clusterShape) nke.ClusterSpec {
-	switch {
-	case shape.controlPlaneConfig != nil:
-		spec.ControlPlane.Pools = nil
-		spec.ControlPlane.Config = shape.controlPlaneConfig
-	case controlPlaneControllerEnabled() && len(spec.ControlPlane.Pools) > 0:
-		spec.ControlPlane.Config = controlPlaneConfigFromPools(spec.ControlPlane.Pools)
-		spec.ControlPlane.Pools = nil
+// applyControlPlaneMode sends spec's control-plane pool as the equivalent
+// cluster-level controlPlaneConfig when the CWE under test is flag-on, since it
+// rejects a control-plane node pool. A spec that already carries a
+// controlPlaneConfig is left as it is.
+func applyControlPlaneMode(spec nke.ClusterSpec) nke.ClusterSpec {
+	if spec.ControlPlane.Config != nil || len(spec.ControlPlane.Pools) == 0 || !controlPlaneControllerEnabled() {
+		return spec
 	}
+	spec.ControlPlane.Config = controlPlaneConfigFromPools(spec.ControlPlane.Pools)
+	spec.ControlPlane.Pools = nil
 	return spec
 }
 
@@ -966,9 +964,10 @@ func capdSpec(cfg config.Config, name string, shape clusterShape) nke.ClusterSpe
 			Pools:           capdNodePoolSpecs(shape.controlPlanePools, "control-plane", "cp"),
 			EtcdEncrypted:   shape.etcdEncrypted,
 			ControlPlaneVIP: shape.controlPlaneVIP,
+			Config:          shape.controlPlaneConfig,
 		},
 		Workers: capdNodePoolSpecs(shape.workerPools, "worker", "w"),
-	}, shape)
+	})
 }
 
 // nicoControlPlaneControllerSpec is the same for the container-backed NICo
@@ -1140,9 +1139,10 @@ func nicoSpec(_ config.Config, name string, shape clusterShape) nke.ClusterSpec 
 			Pools:           nicoNodePoolSpecs(shape.controlPlanePools, "control-plane", "cp"),
 			EtcdEncrypted:   shape.etcdEncrypted,
 			ControlPlaneVIP: shape.controlPlaneVIP,
+			Config:          shape.controlPlaneConfig,
 		},
 		Workers: nicoNodePoolSpecs(shape.workerPools, "worker", "w"),
-	}, shape)
+	})
 }
 
 func nicoNodePoolSpecs(pools []nke.NodePoolSpec, defaultName, defaultNodeNamePrefix string) []nke.NodePoolSpec {
@@ -1199,9 +1199,10 @@ func nicoVMSSpec(_ config.Config, name string, shape clusterShape) nke.ClusterSp
 			Pools:           nicoVMSNodePoolSpecs(shape.controlPlanePools, "control-plane", "cp", nicoVMSOSProfile, nicoVMSCPConfigProfile),
 			ControlPlaneVIP: shape.controlPlaneVIP,
 			EtcdEncrypted:   shape.etcdEncrypted,
+			Config:          shape.controlPlaneConfig,
 		},
 		Workers: nicoVMSNodePoolSpecs(shape.workerPools, "worker", "w", nicoVMSOSProfile, nicoVMSWConfigProfile),
-	}, shape)
+	})
 }
 
 func nicoVMSNodePoolSpecs(pools []nke.NodePoolSpec, defaultName, defaultNodeNamePrefix, defaultOSProfile, defaultConfigProfile string) []nke.NodePoolSpec {
