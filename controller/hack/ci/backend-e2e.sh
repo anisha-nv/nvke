@@ -1261,6 +1261,7 @@ for controller in \
     /opt/spiffe/bin/k8s-spiffe-workload-jwt-exec-auth --help >/dev/null 2>&1
 done
 runner_exec kubectl -n cloud-workflow-engine rollout status deployment/cloud-workflow-engine --timeout=5m
+runner_exec bash /workspace/cloud-workflow-engine/hack/ci/check-probe-exec-timeout.sh
 for env_name in TENANT_ACCESS_ENABLED NKE_OIDC_AUTH_ENABLED; do
   env_value="$(runner_exec kubectl -n cloud-workflow-engine get deployment/cloud-workflow-engine \
     -o "jsonpath={.spec.template.spec.containers[0].env[?(@.name==\"${env_name}\")].value}")"
