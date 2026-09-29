@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	openapi_types "github.com/oapi-codegen/runtime/types"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -49,11 +50,11 @@ func upgradeControlPlaneTo(test *tenantTest, targetVersion string) func(context.
 		currentVersion := test.cluster.ControlPlaneKubernetesVersion
 		Expect(currentVersion).NotTo(Equal(targetVersion), "upgrade validation requires the cluster to be below the target version")
 
-		controlPlanePool, err := expectControlPlanePool(ctx, test)
-		Expect(err).NotTo(HaveOccurred(), "should find the control-plane pool")
-
-		originalDesiredCount := controlPlanePool.DesiredNodeCount
-		originalControlPlaneNodes := expectNodeIDs(ctx, test, controlPlanePool.ID)
+		originalNodes, originalDesiredCount := expectControlPlaneNodes(ctx, test)
+		originalControlPlaneNodes := make(map[openapi_types.UUID]struct{}, len(originalNodes))
+		for _, node := range originalNodes {
+			originalControlPlaneNodes[node.ID] = struct{}{}
+		}
 
 		By(fmt.Sprintf("Upgrading the control plane from %s to %s", currentVersion, targetVersion))
 		upgraded, err := test.nke.UpgradeClusterControlPlane(ctx, test.cluster.ID, targetVersion)
@@ -76,9 +77,12 @@ func upgradeControlPlaneTo(test *tenantTest, targetVersion string) func(context.
 		test.cluster = cluster
 
 		By("Verifying recycled control-plane nodes were replaced")
-		currentControlPlaneNodes, err := test.nke.ListNodePoolNodes(ctx, controlPlanePool.ID)
-		Expect(err).NotTo(HaveOccurred(), "should list control-plane nodes after upgrade")
-		Expect(currentControlPlaneNodes).To(HaveLen(originalDesiredCount), "control-plane pool should retain its desired node count")
+		if test.spec.ControlPlane.Config != nil {
+			Expect(test.nke.WaitForControlPlaneNodesRolled(ctx, test.cluster.ID, originalDesiredCount, originalControlPlaneNodes)).
+				To(Succeed(), "controller-managed control plane should finish rolling onto replacement nodes")
+		}
+		currentControlPlaneNodes, _ := expectControlPlaneNodes(ctx, test)
+		Expect(currentControlPlaneNodes).To(HaveLen(originalDesiredCount), "control plane should retain its desired node count")
 
 		for _, node := range currentControlPlaneNodes {
 			if _, existed := originalControlPlaneNodes[node.ID]; existed {
@@ -128,6 +132,22 @@ func assertKubeadmKubernetesVersion(ctx context.Context, tenantClient client.Cli
 		return fmt.Errorf("kubeadm-config kubernetesVersion = %q, want %q", config.KubernetesVersion, expected)
 	}
 	return nil
+}
+
+// expectControlPlaneNodes returns the cluster's control-plane nodes and their
+// desired count, in either control-plane shape.
+func expectControlPlaneNodes(ctx context.Context, test *tenantTest) ([]api.Node, int) {
+	GinkgoHelper()
+
+	if test.spec.ControlPlane.Config != nil {
+		controlPlane := expectSucceed(test.nke.GetClusterControlPlane(ctx, test.cluster.ID))
+		nodes := expectSucceed(test.nke.ListClusterNodesByControlPlane(ctx, test.cluster.ID, true))
+		return nodes, controlPlane.Config.DesiredCount
+	}
+	pool, err := expectControlPlanePool(ctx, test)
+	Expect(err).NotTo(HaveOccurred(), "should find the control-plane pool")
+	nodes := expectSucceed(test.nke.ListNodePoolNodes(ctx, pool.ID))
+	return nodes, pool.DesiredNodeCount
 }
 
 func expectControlPlanePool(ctx context.Context, test *tenantTest) (api.NodePool, error) {

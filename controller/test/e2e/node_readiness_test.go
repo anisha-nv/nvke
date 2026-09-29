@@ -71,8 +71,9 @@ func totalExpectedNodes(expectedPools map[string]int) int {
 	return total
 }
 
-// validateNodesReadyInCluster checks that all the expected nodes are reported Ready in
-// the tenant cluster.
+// validateNodesReadyInCluster checks that the nodes of expectedPools, plus any
+// controller-managed control-plane nodes CWE reports, are Ready in the tenant
+// cluster. It returns their names.
 func validateNodesReadyInCluster(
 	ctx context.Context,
 	test *tenantTest,
@@ -87,6 +88,13 @@ func validateNodesReadyInCluster(
 	expectedNodeNames := make([]string, 0, len(expectedNodes))
 	for _, node := range expectedNodes {
 		expectedNodeNames = append(expectedNodeNames, node.Name)
+	}
+	if test.spec.ControlPlane.Config != nil {
+		controlPlaneNames, err := test.nke.ControlPlaneNodeNames(ctx, test.cluster.ID)
+		if err != nil {
+			return nil, err
+		}
+		expectedNodeNames = append(expectedNodeNames, controlPlaneNames...)
 	}
 	sort.Strings(expectedNodeNames)
 
