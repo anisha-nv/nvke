@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # CAPD integration test using controller and agent source from this commit.
-# Pull-request mirror branches run a bounded core lifecycle. Main, scheduled,
+# Pull-request mirror branches run a core lifecycle and site-health scenario. Main, scheduled,
 # and manual runs retain the comprehensive two-mode suite.
 #
 # The body lives in backend-e2e.yml, shared with nico-e2e.yml. This file is the
@@ -119,7 +119,7 @@ jobs:
       backend: capd
       arch: ${{ matrix.arch }}
       runner: ${{ matrix.runner }}
-      # Mirror branches select only the bounded core entry and health probes.
+      # Mirror branches select the core entry, management health and site-health.
       # Ignored under single-runner-control-plane-modes on comprehensive runs:
       # the CI script drives
       # each leg's label filter itself (cp-controller+health first, then
@@ -134,8 +134,9 @@ jobs:
       timeout-minutes: ${{ github.event_name == 'push' && startsWith(github.ref_name, 'pull-request/') && 20 || 150 }}
       # Turn "authentication is not deployed" from a per-spec skip into a failure:
       # the authn specs run on the node-pool leg, and without this a broken auth
-      # deployment would leave them silently skipped and the job green.
-      require-authn: ${{ github.event_name != 'push' || !startsWith(github.ref_name, 'pull-request/') }}
+      # deployment would leave them silently skipped and the job green. The PR
+      # site-health scenario also requires enforcement and never skips it.
+      require-authn: true
       nkectl-smoke: true
       needs-capnico-source: true
       single-runner-control-plane-modes: ${{ github.event_name != 'push' || !startsWith(github.ref_name, 'pull-request/') }}
