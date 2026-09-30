@@ -488,8 +488,12 @@ jobs:
             ARCH=${{ matrix.arch }} UBUNTU_RELEASE=${{ matrix.ubuntu_release }})"
           key="s3://${BUILD_CACHE_BUCKET}/${BUILD_CACHE_ISO_PREFIX}/${iso_url##*/}"
           mkdir -p os-image/packer/iso-cache
+          start="$(date +%s.%N)"
           if s5cmd cp "${key}" os-image/packer/iso-cache/; then
-            echo "::notice::restored ${key}"
+            speed="$(awk -v b="$(stat -c %s "os-image/packer/iso-cache/${iso_url##*/}")" \
+              -v s="$(date +%s.%N)" -v t="${start}" \
+              'BEGIN { m = b / 1048576; d = s - t; printf "%d MiB in %.1fs, %.0f MiB/s", m, d, m / d }')"
+            echo "::notice::restored ${key}: ${speed}"
           else
             echo "::notice::${key} is not in the build cache; the build downloads it from Ubuntu"
           fi
