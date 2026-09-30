@@ -512,7 +512,7 @@ jobs:
         # The disk is a few GiB; same reasoning as the ISO restore's timeout.
         timeout-minutes: 15
         env:
-          BUCKET: ${{ vars.NKE_GHA_CACHE_BUCKET }}
+          BUCKET: ${{ env.BUILD_CACHE_BUCKET }}
         run: |
           set -euo pipefail
           key_var="INSTALLED_DISK_CACHE_KEY_$(printf '%s' "${{ matrix.variant }}" | tr 'a-z-' 'A-Z_')"

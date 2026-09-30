@@ -256,7 +256,7 @@ jobs:
       - name: Configure AWS credentials for the build cache
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.NKE_GHA_CACHE_WRITE_ROLE_ARN }}
+          role-to-assume: ${{ env.BUILD_CACHE_WRITE_ROLE }}
           aws-region: ${{ env.BUILD_CACHE_REGION }}
 
       - name: Compute the installed-disk cache key
@@ -273,7 +273,7 @@ jobs:
       - name: Check whether the cache entry is fresh
         id: freshness
         env:
-          BUCKET: ${{ vars.NKE_GHA_CACHE_BUCKET }}
+          BUCKET: ${{ env.BUILD_CACHE_BUCKET }}
           KEY: ${{ steps.key.outputs.key }}
         run: |
           set -euo pipefail
@@ -305,7 +305,7 @@ jobs:
       - name: Upload to the build cache
         if: steps.freshness.outputs.fresh == 'false'
         env:
-          BUCKET: ${{ vars.NKE_GHA_CACHE_BUCKET }}
+          BUCKET: ${{ env.BUILD_CACHE_BUCKET }}
           KEY: ${{ steps.key.outputs.key }}
         run: |
           set -euo pipefail
