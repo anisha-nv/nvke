@@ -477,7 +477,7 @@ jobs:
               'BEGIN { m = b / 1048576; d = s - t; printf "%d MiB in %.1fs, %.0f MiB/s", m, d, m / d }')"
             echo "::notice::restored ${key}: ${speed}"
           else
-            echo "::notice::${key} is not in the build cache; the build downloads it from Ubuntu"
+            echo "::notice::could not restore ${key} from the build cache; the build downloads it from Ubuntu"
           fi
 
       # Self-timeout, 30s inside the job's real timeout-minutes deadline (see
