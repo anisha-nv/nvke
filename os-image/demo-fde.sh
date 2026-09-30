@@ -264,16 +264,6 @@ stop_vm() {
   rm -rf "${VM_RUNWORK}"
 }
 
-# Convenience wrapper for scenarios that don't need to run extra ssh_guest
-# commands between boot and teardown.
-boot_and_wait() {
-  start_vm "$1"
-  local state
-  state="$(wait_ssh)"
-  stop_vm
-  echo "${state}"
-}
-
 echo "=== Scenario: host volumes are LUKS2, sealed to the node TPM ==="
 TPM_A="${WORKDIR}/tpm-a"
 mkdir -p "${TPM_A}"
@@ -327,12 +317,18 @@ case "${STATE}" in
 esac
 
 echo "=== Scenario: encryption survives node replacement (fresh boot, same TPM, still unlocks) ==="
-STATE="$(boot_and_wait "${TPM_A}")"
-if [[ "${STATE}" == "up" ]]; then
-  report "replacement-node-fresh-seal" "PASS" "a later boot against the original TPM still auto-unlocks (stand-in for a replacement node sealing its own key)"
-else
-  report "replacement-node-fresh-seal" "FAIL" "a later boot against the original TPM failed to auto-unlock within ${BOOT_TIMEOUT}s"
-fi
+# Also the control for the scenario above, whose early pass assumes a real
+# unlock lands within LOCKED_GRACE of the prompt. Watching this boot the same
+# way checks that assumption instead of trusting it.
+start_vm "${TPM_A}"
+STATE="$(wait_locked)"
+[[ "${STATE}" == "unlocked" ]] && STATE="$(wait_ssh)"
+stop_vm
+case "${STATE}" in
+  up) report "replacement-node-fresh-seal" "PASS" "a later boot against the original TPM still auto-unlocks (stand-in for a replacement node sealing its own key)" ;;
+  locked) report "replacement-node-fresh-seal" "FAIL" "a boot against the original TPM sat at the passphrase prompt for ${LOCKED_GRACE}s; either the binding is broken or LOCKED_GRACE is too short to tell a wrong TPM from a slow unlock, so moved-to-different-tpm-fails proves nothing" ;;
+  *) report "replacement-node-fresh-seal" "FAIL" "a later boot against the original TPM failed to auto-unlock within ${BOOT_TIMEOUT}s" ;;
+esac
 
 echo
 echo "=== Summary ==="
