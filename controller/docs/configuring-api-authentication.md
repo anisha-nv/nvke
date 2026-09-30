@@ -24,7 +24,9 @@ verifies, it names your deployment in its `aud` claim, it has not expired, and
 its subject matches a rule you wrote. The first four failing gives a 401. The
 last one gives a 403 — the token was real, the caller just is not on the list.
 
-NKE does no authorization. Every admitted caller can call every endpoint.
+With authorization off, the default, every admitted caller can call every
+endpoint. [Configuring NKE API Authorization](configuring-api-authorization.md)
+limits what each caller can do.
 
 ## Before you start
 

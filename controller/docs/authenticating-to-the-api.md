@@ -180,7 +180,8 @@ Steps 1–4 are *authentication*: is this token real. Step 5 is *admission*: is
 this caller allowed in. They fail differently, which is why the status codes
 differ — see the table below.
 
-NKE does no authorization beyond that. Every admitted caller can do everything.
+With authorization on, NKE then checks what the caller may do; see
+[Configuring NKE API Authorization](configuring-api-authorization.md).
 
 ## When it doesn't work
 

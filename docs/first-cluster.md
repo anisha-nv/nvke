@@ -70,6 +70,8 @@ make -C controller run-local
 - `curl http://localhost:8080/api/clusters` → `{"clusters":[]}`. No token here.
 - Temporal — http://localhost:8233
 
+Authentication and authorization are both off here. [Mock NICo](#mock-nico) runs with both on.
+
 ## Mock NICo
 
 The same stack a real site runs: real CAPNICo, with **nico-mock** answering the
@@ -373,7 +375,9 @@ authentication on. The CLI always mints for `nke-clients/nke-client` and reads
 the audience from `cloud-workflow-engine/nke-auth-config`. Create that service
 account, admit it, and grant the kubeconfig identity the permissions in
 [Configuring NKE API Authentication](../controller/docs/configuring-api-authentication.md).
-Without them, `get clusters` fails at minting or CWE returns 403.
+Without them, `get clusters` fails at minting or CWE returns 403. To limit what
+each caller can do, grant roles as in
+[Configuring NKE API Authorization](../controller/docs/configuring-api-authorization.md).
 
 With the site registered, `nkectl` can report on the provider you installed in
 step 5:

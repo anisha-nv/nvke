@@ -47,6 +47,7 @@ indexes both.
 | [tenant-clusters/oidc-authentication.md](tenant-clusters/oidc-authentication.md) | Turning on OIDC authentication for tenant clusters, site-wide or per cluster |
 | [../controller/docs/authenticating-to-the-api.md](../controller/docs/authenticating-to-the-api.md) | Authenticating to the API |
 | [../controller/docs/configuring-api-authentication.md](../controller/docs/configuring-api-authentication.md) | Turning API authentication on, including RBAC for `nkectl` |
+| [../controller/docs/configuring-api-authorization.md](../controller/docs/configuring-api-authorization.md) | Turning API authorization on, and granting callers roles in `roleMappings.json` |
 | [../controller/docs/byo-os.md](../controller/docs/byo-os.md) | Bringing your own OS image |
 
 ## Operating a site
