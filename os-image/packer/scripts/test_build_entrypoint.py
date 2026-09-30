@@ -146,12 +146,15 @@ else:
                 # Only the install stage renders the autoinstall template, so
                 # only it uses the firmware Make discovered (OVMF_CODE /
                 # OVMF_VARS_TEMPLATE); the provision stage boots with the
-                # installed-disk cache entry's own efivars.fd instead (see
-                # _os-image-fde's OVMF_VARS_TEMPLATE override in the Makefile).
+                # installed-disk cache entry's own efivars.fd instead, with the
+                # same firmware code (see EFI_VARS in the Makefile).
                 self.assertIn(f"efi_firmware_code={self.env['OVMF_CODE']}", install)
                 self.assertIn(f"efi_firmware_vars={self.env['OVMF_VARS_TEMPLATE']}", install)
-                self.assertIn("efi_firmware_code=", " ".join(provision))
-                self.assertNotIn(f"efi_firmware_vars={self.env['OVMF_VARS_TEMPLATE']}", provision)
+                self.assertIn(f"efi_firmware_code={self.env['OVMF_CODE']}", provision)
+                self.assertTrue(
+                    any(a.startswith("efi_firmware_vars=") and a.endswith("/efivars.fd") for a in provision),
+                    provision,
+                )
                 # Only the provision stage's provisioners consume root_fs_label.
                 self.assertIn("root_fs_label=cloudimg-rootfs", provision)
                 self.assertNotIn("root_fs_label=cloudimg-rootfs", install)

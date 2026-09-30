@@ -214,11 +214,13 @@ BOOT_WAIT ?= $(if $(filter kvm,$(ACCELERATOR)),10s,30s)
 # QEMU's firmware directory on hosts without /usr/share/OVMF or AAVMF. The
 # wrapper receives the whole `packer build ... TEMPLATE` command and inserts the
 # firmware -var flags in front of the template, which Packer requires last.
+# EFI_VARS is the provision stage's install-time efivars.fd. It is separate from
+# OVMF_VARS_TEMPLATE, which qemu-arch.sh requires to come paired with OVMF_CODE.
 PACKER_BUILD = ARCH=$(ARCH) ACCELERATOR=$(ACCELERATOR) REQUIRE_ACCELERATION=$(REQUIRE_ACCELERATION) \
 	bash -ec '. ./scripts/qemu-arch.sh; nke_qemu_env "$$ARCH"; \
 	template=$${@: -1}; set -- "$${@:1:$$\#-1}"; \
 	exec "$$@" -var "efi_firmware_code=$${OVMF_CODE:-$$EFI_CODE_DEFAULT}" \
-	-var "efi_firmware_vars=$${OVMF_VARS_TEMPLATE:-$$EFI_VARS_DEFAULT}" "$$template"' \
+	-var "efi_firmware_vars=$${EFI_VARS:-$${OVMF_VARS_TEMPLATE:-$$EFI_VARS_DEFAULT}}" "$$template"' \
 	bash $(PACKER) build
 
 .PHONY: os-image-fde os-image-non-fde _os-image-fde _os-image-non-fde prepare-installed-disk-fde prepare-installed-disk-non-fde preflight init-packer init-fde init-non-fde validate-packer ssh-key prepare-ssh-key prepare-image-build prepare-installer-iso prepare-installer-manifest prepare-artifacts prepare-packer-inputs clean clean-packer-scratch clean-fde-output clean-non-fde-output clean-installed-cache check-deps check-source collect-qcow2-fde collect-qcow2-non-fde check-acceleration
@@ -639,7 +641,7 @@ prepare-installed-disk-fde: prepare-ssh-key init-packer prepare-installer-manife
 # prepare-installed-disk-fde just built) as a thin overlay and runs the nke
 # provisioners, so it needs the full material manifest prepare-image-build
 # builds (installer-iso and image-inputs) -- prepare-installed-disk-fde only
-# needed the ISO. Its own -var ssh_*_key_file and OVMF_VARS_TEMPLATE point at
+# needed the ISO. Its own -var ssh_*_key_file and EFI_VARS point at
 # that cache entry's keypair and efivars.fd, not the fresh ones
 # prepare-ssh-key manages -- those belong to the install stage only.
 _os-image-fde: prepare-installed-disk-fde prepare-image-build
@@ -655,7 +657,7 @@ _os-image-fde: prepare-installed-disk-fde prepare-image-build
 	MATERIAL_MANIFEST="$(MATERIAL_MANIFEST)" \
 	INSTALLED_DISK_QCOW2="$$cache/nke-node-installed.qcow2" \
 		"$(PACKER_ROOT)/scripts/add-installed-disk-material.sh"; \
-	OVMF_VARS_TEMPLATE="$$cache/efivars.fd" \
+	EFI_VARS="$$cache/efivars.fd" \
 	PKR_VAR_luks_passphrase=$(LUKS_PASSPHRASE) \
 	$(PACKER_BUILD) \
 		-only=$(PACKER_BUILD_FDE_PROVISION) \
@@ -747,7 +749,7 @@ _os-image-non-fde: prepare-installed-disk-non-fde prepare-image-build
 	MATERIAL_MANIFEST="$(MATERIAL_MANIFEST)" \
 	INSTALLED_DISK_QCOW2="$$cache/nke-node-installed.qcow2" \
 		"$(PACKER_ROOT)/scripts/add-installed-disk-material.sh"; \
-	OVMF_VARS_TEMPLATE="$$cache/efivars.fd" \
+	EFI_VARS="$$cache/efivars.fd" \
 	$(PACKER_BUILD) \
 		-only=$(PACKER_BUILD_NON_FDE_PROVISION) \
 		-var "architecture=$(ARCH)" \
