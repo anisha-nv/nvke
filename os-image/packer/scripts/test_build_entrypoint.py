@@ -31,6 +31,13 @@ class BuildEntrypointTest(unittest.TestCase):
         )
         for name in ("code.fd", "vars.fd"):
             (self.root / name).touch()
+        # Real prepare-installer-iso.sh downloads and needs xorriso/7z;
+        # prepare-installer-manifest (install stage's lean manifest) now
+        # depends on it directly, so fake it here too.
+        (self.packer_dir / "scripts/prepare-installer-iso.sh").write_text(
+            '#!/bin/sh\nset -eu\nmkdir -p "${OUT_DIR:?}"\n'
+            'printf "patched installer iso\\n" > "${OUT_DIR}/${ISO_URL##*/}.patched.iso"\n'
+        )
         self.script("uname", '#!/bin/sh\ncase "$1" in -m) echo aarch64;; -s) echo Linux;; esac\n')
         # nke_qemu_env resolves the QEMU binary by name off PATH; check-deps
         # looks for qemu-img, which the macOS CI runner lacks.
@@ -44,6 +51,8 @@ class BuildEntrypointTest(unittest.TestCase):
         self.script("packer", '''#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
+if sys.argv[1] != 'build':
+    sys.exit(0)
 values = dict(arg.split('=', 1) for arg in sys.argv[1:] if '=' in arg)
 only = values.get('-only', '')
 stage = 'install' if only.endswith('-install') else 'provision'
@@ -60,11 +69,11 @@ if stage == 'install':
 else:
     (output / 'nke-node.qcow2').touch()
 ''')
-        # The real script resolves the ISO's digest over the network, which
-        # this offline suite must not depend on; a fixed key is enough since
-        # nothing here asserts on its value.
+        # The real script hashes install-stage inputs this fixture does not
+        # create; a fixed (but sha256-shaped, per H5's fail-loudly check) key
+        # per variant is enough since nothing here asserts on its value.
         (self.packer_dir / "scripts/print-installed-disk-cache-key.sh").write_text(
-            "#!/bin/sh\nprintf 'argv-test-key-%s\\n' \"${VARIANT:?}\"\n"
+            "#!/bin/sh\nprintf 'argv-test-key-%s' \"${VARIANT:?}\" | sha256sum | cut -d' ' -f1\n"
         )
         (self.packer_dir / "scripts/print-installed-disk-cache-key.sh").chmod(0o755)
         # skip_build_setup below bypasses prepare-image-build (via `make -o`),
@@ -108,7 +117,11 @@ else:
     def make(self, target, *extra, skip_build_setup=False):
         args = [os.environ.get("MAKE", "make"), "--no-print-directory", "-C", str(self.packer_dir)]
         if skip_build_setup:
-            args += ["-o", "prepare-image-build"]
+            # prepare-installed-disk-* depends on prepare-ssh-key and
+            # preflight directly (not only through prepare-image-build), so
+            # all three need -o: this suite fakes a keypair's paths and a
+            # fixture checkout, not real key bytes or a real git repo.
+            args += ["-o", "prepare-image-build", "-o", "prepare-ssh-key", "-o", "preflight"]
             target = "_" + target
         args += [target, "ARCH=arm64", "ACCELERATOR=tcg", f"PACKER={self.root / 'packer'}",
                  f"ARTIFACTS_DIR={self.root / 'artifacts'}", f"BUILD_LOGS={self.root / 'logs'}", *extra]

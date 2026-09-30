@@ -97,28 +97,44 @@ Packer validates against `^tty[A-Za-z0-9]+$`. That is a boundary, not a typo
 check: the value reaches a shell command in the autoinstall late-commands.
 
 `make os-image-fde`/`os-image-non-fde` each run two Packer builds, not one.
-The **install** stage boots the Ubuntu installer, runs autoinstall, and shuts
-down — no nke provisioners. The **provision** stage boots that disk as a thin
-qcow2 overlay and runs the nke provisioners (`nke-agent`, SPIRE, CNI, FDE/LVM
-setup) unchanged. Autoinstall is most of a bake's wall time, so Make caches
-the install stage's output in `packer/installed-cache/<key>/` (a qcow2, its
-`efivars.fd`, and the SSH keypair baked into `authorized_keys` — the only copy
-of that keypair, since the provision stage's `provision.sh` strips it from the
-final image) and reuses it on a hit instead of re-running the install stage.
-The key is a sha256 over the ISO's digest, `UBUNTU_SNAPSHOT`, `ARCH`,
-`UBUNTU_RELEASE`, the variant, and every file that shapes the install stage
+The **install** stage needs only the ISO -- not the Go agent build, debs, or
+crane pulls `prepare-artifacts` does -- boots the Ubuntu installer, runs
+autoinstall, and shuts down once cloud-init's own first-boot run finishes; no
+nke provisioners. The **provision** stage needs the staged artifacts too; it
+boots the install stage's disk as a thin qcow2 overlay and runs the nke
+provisioners (`nke-agent`, SPIRE, CNI, FDE/LVM setup) unchanged. Autoinstall is
+most of a bake's wall time, so Make caches the install stage's output in
+`packer/installed-cache/<key>/` (a qcow2, its `efivars.fd`, and the SSH
+keypair baked into `authorized_keys` -- the only copy of that keypair, since
+the provision stage's `provision.sh` strips it from the final image) and
+reuses it on a hit instead of re-running the install stage. The key is a
+sha256 over the ISO's basename (`prepare-installer-iso.sh` still verifies its
+bytes; the key does not need to), `UBUNTU_SNAPSHOT`, `ARCH`, `UBUNTU_RELEASE`,
+the variant, a hash of `LUKS_PASSPHRASE` (never the passphrase itself),
+`SERIAL_CONSOLE`, `DISK_SIZE`, and every file that shapes the install stage
 (see `scripts/print-installed-disk-cache-key.sh`, and `make print-%`, e.g.
 `make -C os-image/packer print-INSTALLED_DISK_CACHE_KEY_FDE`). CI populates
 this cache from `.github/workflows/os-image-cache.yml`'s `installed-disk` job
-and restores it in `os-image-artifact.yml`; `make clean-installed-cache`
-drops a local copy (plain `make clean` does not, unlike `iso-cache/`).
+and restores it in `os-image-artifact.yml` -- tag builds included, since a
+cached disk is exactly as valid as a fresh one for as long as its key matches;
+a tagged release is then built on a base disk `os-image-cache.yml` produced on
+`main` in a separate run. `make clean-installed-cache` drops a local copy
+(plain `make clean` does not, unlike `iso-cache/`).
+
+The installed-disk material's digest (see the manifest contract below) only
+proves the disk did not change between being staged and being booted; it is
+not provenance. Nothing here verifies a cached disk actually came from a real
+install stage rather than some other file placed at that path.
 
 `UBUNTU_SNAPSHOT` (format `YYYYMMDDTHHMMSSZ`) pins the install stage's apt
 sources to one immutable [snapshot.ubuntu.com](https://snapshot.ubuntu.com)
 timestamp instead of the live archive (see `apt:` in
 `cidata/autoinstall-lvm.pkrtpl`), so a cached installed disk stays valid for
 as long as nothing else in the cache key changes. It is bumped by hand for
-now.
+now. The published image's apt sources stay on that snapshot -- this repo does
+not repoint them to the live archive at any point -- so an operator who wants
+later package updates needs to repoint `/etc/apt/sources.list` on the node
+themselves.
 
 Image baking uses the existing package Make targets.
 `NKE_PACKAGE_BUILDER=auto|host|nix` picks the package builder: `auto` builds on

@@ -28,39 +28,46 @@ variable "material_manifest" {
     error_message = "The material manifest must use schemaVersion nke.dev/os-image-materials/v1."
   }
 
+  # installer-iso is required by every invocation -- the install stage
+  # dereferences it directly. image-inputs (provision only) and
+  # installed-disk (provision only) are optional here, since the install
+  # stage's own manifest has neither, but each must be well-formed and
+  # architecture-matched to installer-iso whenever present.
   validation {
     condition = try(
       length([
         for material in jsondecode(file(var.material_manifest)).materials : material
-        if material.binding == "installer-iso" && material.path == "materials/installer-iso"
-      ]) == 1 &&
-      length([
-        for material in jsondecode(file(var.material_manifest)).materials : material
-        if material.binding == "image-inputs" && material.path == "materials/image-inputs"
+        if material.binding == "installer-iso"
       ]) == 1 &&
       length([
         for material in jsondecode(file(var.material_manifest)).materials : material
         if material.binding == "installer-iso" && material.kind == "disk-image" && material.path == "materials/installer-iso" && contains(["amd64", "arm64"], material.architecture) && can(regex("^sha256:[0-9a-f]{64}$", material.digest))
-      ]) == 1 &&
-      length([
-        for material in jsondecode(file(var.material_manifest)).materials : material
-        if material.binding == "image-inputs" && material.kind == "archive" && material.path == "materials/image-inputs" && contains(["amd64", "arm64"], material.architecture) && can(regex("^sha256:[0-9a-f]{64}$", material.digest))
-      ]) == 1 &&
-      [
-        for material in jsondecode(file(var.material_manifest)).materials : material.architecture
-        if material.binding == "installer-iso" && material.path == "materials/installer-iso"
-        ][0] == [
-        for material in jsondecode(file(var.material_manifest)).materials : material.architecture
-        if material.binding == "image-inputs" && material.path == "materials/image-inputs"
-      ][0],
+      ]) == 1,
       false,
     )
-    error_message = "The material manifest must contain one installer-iso and one image-inputs record with matching amd64 or arm64 architecture and lowercase sha256 digests."
+    error_message = "The material manifest must contain exactly one well-formed installer-iso record."
   }
 
-  # The provision build's disk input, authenticated the same way as the ISO
-  # above. Optional at this variable's level -- an install-stage invocation's
-  # manifest has none yet -- but well-formed whenever present.
+  validation {
+    condition = try(
+      length([
+        for material in jsondecode(file(var.material_manifest)).materials : material
+        if material.binding == "image-inputs"
+      ]) <= 1 &&
+      length([
+        for material in jsondecode(file(var.material_manifest)).materials : material
+        if material.binding == "image-inputs" && material.kind == "archive" && material.path == "materials/image-inputs" && material.architecture == [
+          for m in jsondecode(file(var.material_manifest)).materials : m.architecture if m.binding == "installer-iso"
+        ][0] && can(regex("^sha256:[0-9a-f]{64}$", material.digest))
+        ]) == length([
+        for material in jsondecode(file(var.material_manifest)).materials : material
+        if material.binding == "image-inputs"
+      ]),
+      false,
+    )
+    error_message = "The material manifest must contain at most one image-inputs record, matching installer-iso's architecture and well-formed if present."
+  }
+
   validation {
     condition = try(
       length([
@@ -69,14 +76,16 @@ variable "material_manifest" {
       ]) <= 1 &&
       length([
         for material in jsondecode(file(var.material_manifest)).materials : material
-        if material.binding == "installed-disk"
+        if material.binding == "installed-disk" && material.kind == "disk-image" && material.path == "materials/installed-disk" && material.architecture == [
+          for m in jsondecode(file(var.material_manifest)).materials : m.architecture if m.binding == "installer-iso"
+        ][0] && can(regex("^sha256:[0-9a-f]{64}$", material.digest))
         ]) == length([
         for material in jsondecode(file(var.material_manifest)).materials : material
-        if material.binding == "installed-disk" && material.kind == "disk-image" && material.path == "materials/installed-disk" && contains(["amd64", "arm64"], material.architecture) && can(regex("^sha256:[0-9a-f]{64}$", material.digest))
+        if material.binding == "installed-disk"
       ]),
       false,
     )
-    error_message = "The material manifest must contain at most one installed-disk record, and it must be well-formed if present."
+    error_message = "The material manifest must contain at most one installed-disk record, matching installer-iso's architecture and well-formed if present."
   }
 }
 

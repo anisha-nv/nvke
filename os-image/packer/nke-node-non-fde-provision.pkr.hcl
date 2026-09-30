@@ -4,9 +4,9 @@
 # Provision stage of the non-FDE variant: boots the disk
 # nke-node-non-fde-install.pkr.hcl produced (fresh, or restored from the
 # installed-disk build cache) as a thin qcow2 overlay, then runs the nke
-# provisioners unchanged. cloud-init's persisted NoCloud seed re-applies the
-# installed disk's authorized_keys on every boot (until provision.sh's own
-# `cloud-init clean` at the very end), so this SSHes in with the exact
+# provisioners unchanged. The disk still has the plain
+# /home/ubuntu/.ssh/authorized_keys file curtin wrote at install time (until
+# provision.sh removes it at the very end), so this SSHes in with the exact
 # keypair nke-node-non-fde-install.pkr.hcl used -- Make passes a matching
 # ssh_private_key_file/ssh_public_key_file pair, cached alongside the disk.
 # Shared input, architecture, and QEMU configuration is declared once in
@@ -14,8 +14,11 @@
 
 source "qemu" "nke-non-fde-provision" {
   iso_url = local.installed_disk_path
-  # Recheck the staged installed disk against the digest in the authenticated
-  # manifest, the same way the install stage rechecks the installer ISO.
+  # Recheck the staged installed disk against the digest in the manifest,
+  # the same way the install stage rechecks the installer ISO. This proves
+  # only that the bytes are unchanged between staging and boot -- it is not
+  # provenance; nothing here verifies the disk actually came from a trusted
+  # install stage rather than an arbitrary file placed at this path.
   iso_checksum = local.installed_disk_checksum
   disk_image   = true
   # A thin overlay, not a copy: the cached (or just-built) installed disk is

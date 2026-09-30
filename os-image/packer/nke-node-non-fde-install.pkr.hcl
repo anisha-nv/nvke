@@ -1,14 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Install stage of the non-FDE variant: boots the Ubuntu Server installer,
-# runs autoinstall to lay down the LVM layout, and shuts down as soon as SSH
-# into the installed system succeeds -- no provisioners here. Its output is
-# the reusable "installed disk" the Makefile's installed-disk build cache
-# keys on (see INSTALLED_DIR / print-INSTALLED_DISK_CACHE_KEY_NON_FDE in
-# Makefile) and nke-node-non-fde-provision.pkr.hcl boots as a thin overlay to
-# run the actual nke provisioners. Shared input, architecture, and QEMU
-# configuration is declared once in variables.pkr.hcl and locals.pkr.hcl.
+# Install stage of the non-FDE variant: boots the Ubuntu Server installer and
+# runs autoinstall to lay down the LVM layout. Its output is the reusable
+# "installed disk" the Makefile's installed-disk build cache keys on (see
+# prepare-installed-disk-non-fde in Makefile); nke-node-non-fde-provision.pkr.hcl
+# boots it as a thin overlay to run the actual nke provisioners. Shared
+# input, architecture, and QEMU configuration is declared once in
+# variables.pkr.hcl and locals.pkr.hcl.
 
 source "qemu" "nke-non-fde-install" {
   iso_url = local.installer_iso
@@ -31,12 +30,10 @@ source "qemu" "nke-non-fde-install" {
 
   efi_firmware_code = var.efi_firmware_code
   efi_firmware_vars = var.efi_firmware_vars
-  # Keep this build's own NVRAM state (unlike the provision stage below):
-  # the provision build boots this same disk as its own QEMU guest and needs
-  # whatever boot entry the installer's grub-install actually registered.
-  # Dropped efivars is execution state Packer discards; keeping it here is
-  # what makes it a published, cacheable half of the installed-disk pair (see
-  # the Makefile's INSTALLED_DIR layout and prepare-installer-disk).
+  # Keep this build's own NVRAM state, unlike the provision stage: it boots
+  # this disk as its own guest and needs the boot entry grub-install wrote.
+  # Dropped efivars is normally execution state Packer discards; keeping it
+  # is what makes it the other cacheable half of the installed-disk pair.
   efi_drop_efivars = false
   efi_boot         = true
 
@@ -84,6 +81,11 @@ source "qemu" "nke-non-fde-install" {
 build {
   name    = "nke-node-non-fde-install"
   sources = ["source.qemu.nke-non-fde-install"]
-  # No provisioners: this stage's only job is autoinstall. shutdown_command
-  # above fires as soon as SSH connects, since there is nothing else to run.
+
+  # No nke provisioners: this stage's only job is autoinstall. Wait for
+  # cloud-init to finish its own first-boot run before shutdown, so the
+  # cached disk never captures it mid-write.
+  provisioner "shell" {
+    inline = ["sudo cloud-init status --wait"]
+  }
 }

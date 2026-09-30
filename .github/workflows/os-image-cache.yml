@@ -38,6 +38,8 @@ on:
       - os-image/packer/variables.pkr.hcl
       - os-image/packer/versions.pkr.hcl
       - os-image/packer/nke-node-*-install.pkr.hcl
+      - os-image/packer/scripts/print-installed-disk-cache-key.sh
+      - os-image/packer/scripts/prepare-installer-iso.sh
       - .github/workflows/os-image-cache.yml
   # The bucket expires objects 30 days after they are written. The ISO side
   # rewrites anything two weeks old on this weekly run, well inside expiry;
@@ -178,14 +180,15 @@ jobs:
             echo "s5cmd_sha256_arm64=$(make --no-print-directory print-S5CMD_SHA256_ARM64)"
           } >> "$GITHUB_OUTPUT"
 
-      # Same reasoning as os-image-artifact.yml's identically named step:
-      # matching Linux KVM runners build kubeadm-distro debs locally, so
-      # package-builder.sh needs no separate NixOS package-builder VM here.
-      - name: Install QEMU, cloud-localds, swtpm, OVMF/AAVMF, 7z, xorriso, and dpkg-dev
+      # Narrower than os-image-artifact.yml's identically named step: the
+      # install stage alone needs no cloud-localds/genisoimage (demo-fde.sh
+      # and the boot-smoke tools only) and no dpkg-dev (fetch-artifacts.sh's
+      # CNI deb indexing, which the install stage never runs -- see C1).
+      - name: Install QEMU, swtpm, OVMF/AAVMF, unzip, 7z, and xorriso
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-system-x86 qemu-system-arm qemu-utils cloud-image-utils genisoimage unzip swtpm ovmf qemu-efi-aarch64 p7zip-full xorriso dpkg-dev
+          sudo apt-get install -y -qq qemu-system-x86 qemu-system-arm qemu-utils unzip swtpm ovmf qemu-efi-aarch64 p7zip-full xorriso
 
       # Same as os-image-artifact.yml's "Enable KVM access": the install
       # stage needs real KVM, not tcg fallback.
@@ -259,7 +262,11 @@ jobs:
           role-to-assume: ${{ env.BUILD_CACHE_WRITE_ROLE }}
           aws-region: ${{ env.BUILD_CACHE_REGION }}
 
-      - name: Compute the installed-disk cache key
+      # One object per key: a tar, zstd-compressed where the runner has
+      # zstd. Both this step and the bake's restore decide the extension the
+      # same way (command -v zstd), independently but consistently, since
+      # both run on the same ARC KVM runner images.
+      - name: Compute the installed-disk cache key and object name
         id: key
         env:
           ARCH: ${{ matrix.arch }}
@@ -267,51 +274,89 @@ jobs:
         run: |
           set -euo pipefail
           key_var="INSTALLED_DISK_CACHE_KEY_$(printf '%s' "${{ matrix.variant }}" | tr 'a-z-' 'A-Z_')"
-          echo "key=$(make --no-print-directory -C os-image/packer "print-${key_var}" \
-            ARCH="${ARCH}" UBUNTU_RELEASE="${UBUNTU_RELEASE}")" >> "$GITHUB_OUTPUT"
+          key="$(make --no-print-directory -C os-image/packer "print-${key_var}" \
+            ARCH="${ARCH}" UBUNTU_RELEASE="${UBUNTU_RELEASE}")"
+          ext=tar
+          command -v zstd >/dev/null 2>&1 && ext=tar.zst
+          {
+            echo "key=${key}"
+            echo "object=${BUILD_CACHE_INSTALLED_PREFIX}/${key}.${ext}"
+          } >> "$GITHUB_OUTPUT"
 
+      # The KVM runners have no aws CLI, only the s5cmd already installed
+      # above. s5cmd ls prints "<date> <time> <size> <key>"; anything under
+      # 14 days old needs nothing. The read role gates on the exact key, not
+      # ListBucket, so this resolves the same single key the restore side
+      # (and the refresh/build/upload steps below) use.
       - name: Check whether the cache entry is fresh
         id: freshness
         env:
-          BUCKET: ${{ env.BUILD_CACHE_BUCKET }}
-          KEY: ${{ steps.key.outputs.key }}
+          OBJECT: ${{ steps.key.outputs.object }}
         run: |
           set -euo pipefail
-          object="${BUILD_CACHE_INSTALLED_PREFIX}/${KEY}/nke-node-installed.qcow2"
-          written="$(aws s3api head-object --bucket "${BUCKET}" --key "${object}" \
-            --query LastModified --output text 2>/dev/null || true)"
-          if [[ -n "${written}" ]] &&
-            (( $(date +%s) - $(date -d "${written}" +%s) < 14 * 86400 )); then
-            echo "s3://${BUCKET}/${object} was written ${written}; nothing to do"
-            echo "fresh=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "fresh=false" >> "$GITHUB_OUTPUT"
+          line="$(s5cmd ls "s3://${BUILD_CACHE_BUCKET}/${OBJECT}" 2>/dev/null | tail -n1 || true)"
+          if [[ -z "${line}" ]]; then
+            echo "mode=miss" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          written="$(awk '{print $1, $2}' <<<"${line}" | tr '/' '-')"
+          if (( $(date +%s) - $(date -d "${written}" +%s) < 14 * 86400 )); then
+            echo "s3://${BUILD_CACHE_BUCKET}/${OBJECT} was written ${written}; nothing to do"
+            echo "mode=fresh" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=stale" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The snapshot pin (UBUNTU_SNAPSHOT) makes an aging entry exactly as
+      # valid as a fresh rebuild would be, so an aging-but-present entry
+      # gets its S3 clock reset with a copy, not a rebuild. Same-key copies
+      # are not valid S3 requests without a metadata change, so this goes
+      # through a temp key instead.
+      - name: Refresh an aging entry without rebuilding
+        if: steps.freshness.outputs.mode == 'stale'
+        env:
+          OBJECT: ${{ steps.key.outputs.object }}
+        run: |
+          set -euo pipefail
+          object="s3://${BUILD_CACHE_BUCKET}/${OBJECT}"
+          tmp="${object}.refresh"
+          s5cmd cp "${object}" "${tmp}"
+          s5cmd cp "${tmp}" "${object}"
+          s5cmd rm "${tmp}"
+          echo "::notice::refreshed ${object}"
 
       # Runs the install stage only (see the packer Makefile's
       # prepare-installed-disk-fde/non-fde), never the provision stage: the
       # provision stage's nke content (nke-agent, SPIRE, CNI) is built and
       # verified by the bake itself, not cached here.
       - name: Build the installed disk
-        if: steps.freshness.outputs.fresh == 'false'
+        if: steps.freshness.outputs.mode == 'miss'
         env:
           ARCH: ${{ matrix.arch }}
           UBUNTU_RELEASE: ${{ matrix.ubuntu_release }}
+          PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           make -C os-image/packer "prepare-installed-disk-${{ matrix.variant }}" \
             ARCH="${ARCH}" ACCELERATOR=kvm UBUNTU_RELEASE="${UBUNTU_RELEASE}"
 
       - name: Upload to the build cache
-        if: steps.freshness.outputs.fresh == 'false'
+        if: steps.freshness.outputs.mode == 'miss'
         env:
-          BUCKET: ${{ env.BUILD_CACHE_BUCKET }}
           KEY: ${{ steps.key.outputs.key }}
+          OBJECT: ${{ steps.key.outputs.object }}
         run: |
           set -euo pipefail
           src="os-image/packer/installed-cache/${KEY}"
           for f in nke-node-installed.qcow2 efivars.fd id_ed25519 id_ed25519.pub; do
             [[ -f "${src}/${f}" ]] || { echo "::error::missing ${src}/${f}" >&2; exit 1; }
           done
-          s5cmd cp "${src}/*" "s3://${BUCKET}/${BUILD_CACHE_INSTALLED_PREFIX}/${KEY}/"
-          echo "::notice::cached installed disk for ${{ matrix.arch }}/${{ matrix.ubuntu_release }}/${{ matrix.variant }} as s3://${BUCKET}/${BUILD_CACHE_INSTALLED_PREFIX}/${KEY}/"
+          archive="$(mktemp)"
+          if [[ "${OBJECT}" == *.tar.zst ]]; then
+            tar -cf - -C "${src}" . | zstd -c > "${archive}"
+          else
+            tar -cf "${archive}" -C "${src}" .
+          fi
+          s5cmd cp "${archive}" "s3://${BUILD_CACHE_BUCKET}/${OBJECT}"
+          rm -f "${archive}"
+          echo "::notice::cached installed disk for ${{ matrix.arch }}/${{ matrix.ubuntu_release }}/${{ matrix.variant }} as s3://${BUILD_CACHE_BUCKET}/${OBJECT}"

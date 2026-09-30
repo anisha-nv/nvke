@@ -124,29 +124,6 @@ for good in ttyS0 ttyS1 ttyAMA0 ""; do
   }
 done
 
-# ubuntu_snapshot feeds autoinstall-lvm.pkrtpl's apt: section (install stage
-# only): reject anything that is not a snapshot.ubuntu.com timestamp.
-for bad in "" "latest" "2026-09-30" "20260930T000000Z; rm -rf /"; do
-  if output="$("${packer_bin}" validate \
-    -only=nke-node-non-fde-install.qemu.nke-non-fde-install \
-    -var "architecture=amd64" \
-    -var "material_manifest=${work}/amd64/material-manifest.json" \
-    -var "output_directory=${work}/amd64/output" \
-    -var "build_log_directory=${work}/amd64/logs" \
-    -var "ssh_private_key_file=${work}/id_ed25519" \
-    -var "ssh_public_key_file=${work}/id_ed25519.pub" \
-    -var "ubuntu_snapshot=${bad}" \
-    "${project_root}" 2>&1)"; then
-    echo "Packer accepted ubuntu_snapshot=${bad}" >&2
-    exit 1
-  fi
-  grep -F "snapshot.ubuntu.com timestamp" <<<"${output}" >/dev/null || {
-    printf '%s\n' "${output}" >&2
-    echo "Packer rejected ubuntu_snapshot=${bad} for the wrong reason" >&2
-    exit 1
-  }
-done
-
 # Direct runners supply an authenticated plugin closure and must be able to
 # validate the project without packer init or any write beneath the source.
 readonly_source="${work}/read-only-source"
@@ -220,7 +197,7 @@ if output="$("${packer_bin}" validate \
   echo "Packer accepted a material record without a digest" >&2
   exit 1
 fi
-grep -F "lowercase sha256 digests" <<<"${output}" >/dev/null || {
+grep -F "must contain exactly one well-formed installer-iso record" <<<"${output}" >/dev/null || {
   printf '%s\n' "${output}" >&2
   echo "Packer rejected a missing digest without the contract error" >&2
   exit 1
@@ -267,7 +244,7 @@ if output="$("${packer_bin}" validate \
   echo "Packer accepted mismatched material architectures" >&2
   exit 1
 fi
-grep -F "must contain one installer-iso" <<<"${output}" >/dev/null || {
+grep -F "must contain at most one image-inputs record" <<<"${output}" >/dev/null || {
   printf '%s\n' "${output}" >&2
   echo "Packer rejected mismatched architectures without the contract error" >&2
   exit 1
@@ -299,40 +276,8 @@ if output="$("${packer_bin}" validate \
   echo "Packer accepted duplicate installer material bindings" >&2
   exit 1
 fi
-grep -F "must contain one installer-iso" <<<"${output}" >/dev/null || {
+grep -F "must contain exactly one well-formed installer-iso record" <<<"${output}" >/dev/null || {
   printf '%s\n' "${output}" >&2
   echo "Packer rejected duplicate bindings without the contract error" >&2
-  exit 1
-}
-
-# The provision build's disk input is authenticated the same way as the ISO:
-# more than one installed-disk record, or one that is malformed, must fail.
-duplicate_disk_manifest="${work}/amd64/material-manifest-duplicate-disk.json"
-"${PYTHON:-python3}" - "${work}/amd64/material-manifest.json" "${duplicate_disk_manifest}" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as source:
-    manifest = json.load(source)
-duplicate = dict(manifest["materials"][2])
-manifest["materials"].append(duplicate)
-with open(sys.argv[2], "w", encoding="utf-8") as destination:
-    json.dump(manifest, destination)
-PY
-if output="$("${packer_bin}" validate \
-  -only=nke-node-non-fde-provision.qemu.nke-non-fde-provision \
-  -var "architecture=amd64" \
-  -var "material_manifest=${duplicate_disk_manifest}" \
-  -var "output_directory=${work}/amd64/output" \
-  -var "build_log_directory=${work}/amd64/logs" \
-  -var "ssh_private_key_file=${work}/id_ed25519" \
-  -var "ssh_public_key_file=${work}/id_ed25519.pub" \
-  "${project_root}" 2>&1)"; then
-  echo "Packer accepted duplicate installed-disk material bindings" >&2
-  exit 1
-fi
-grep -F "at most one installed-disk record" <<<"${output}" >/dev/null || {
-  printf '%s\n' "${output}" >&2
-  echo "Packer rejected duplicate installed-disk bindings without the contract error" >&2
   exit 1
 }

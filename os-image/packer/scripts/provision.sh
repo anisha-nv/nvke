@@ -83,6 +83,18 @@ if [[ -f /etc/machine-id ]]; then
 fi
 sudo rm -f /var/lib/dbus/machine-id
 sudo rm -f /home/ubuntu/.ssh/authorized_keys
+# Subiquity's autoinstall identity/ssh config is also written to
+# /etc/cloud/cloud.cfg.d/99-installer.cfg, a real config file `cloud-init
+# clean` does not touch (that only clears the seed and instance state).
+# cloud-init is deliberately kept enabled on this image (see
+# cidata/autoinstall-lvm.pkrtpl's removal of /etc/cloud/cloud-init.disabled,
+# for later SPIFFE trust-bundle delivery), so if left in place this file's
+# ssh_authorized_keys would be reapplied by cc_ssh on every future boot of
+# every node built from this image -- not just this build VM. Now that the
+# install stage's SSH keypair is cached in S3 for reuse across builds, that
+# private key is no longer build-local; removing this file here is what
+# keeps it from being a standing credential on deployed nodes.
+sudo rm -f /etc/cloud/cloud.cfg.d/99-installer.cfg
 
 # cidata/autoinstall-lvm.pkrtpl sets kernel.package to the NVIDIA-tuned
 # flavor specifically so, per its own comment, "there's no generic kernel to

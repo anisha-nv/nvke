@@ -11,34 +11,36 @@ locals {
   installer_records = [for material in local.material_description.materials : material
     if material.binding == "installer-iso" && material.path == "materials/installer-iso"
   ]
+  installer_record = local.installer_records[0]
+  # image-inputs and installed-disk are only consumed by the provision
+  # build, and installed-disk only once the install stage has produced a
+  # disk -- both absent from an install-stage invocation's manifest.
+  # Guarded with length() rather than indexed directly: HCL locals are
+  # evaluated regardless of which build `-only` selects (only builds/sources
+  # are pruned, not top-level locals), so an unconditional [0] would fail
+  # validation even on an install-only invocation that never uses the result.
   image_input_records = [for material in local.material_description.materials : material
     if material.binding == "image-inputs" && material.path == "materials/image-inputs"
   ]
-  installer_record   = local.installer_records[0]
-  image_input_record = local.image_input_records[0]
-  # Only the provision build consumes this, and only after the install stage
-  # (fresh or cache-restored) has produced a disk -- absent for an
-  # install-stage invocation. Guarded with length() rather than indexed
-  # directly: an install-stage `-only` selection still evaluates these
-  # locals (HCL locals are not pruned by -only, only builds/sources are), so
-  # an unconditional [0] would fail validation even though nothing
-  # dereferences the result.
+  image_inputs        = length(local.image_input_records) > 0 ? "${local.material_root}/${local.image_input_records[0].path}" : ""
+  image_inputs_digest = length(local.image_input_records) > 0 ? local.image_input_records[0].digest : "none"
   installed_disk_records = [for material in local.material_description.materials : material
     if material.binding == "installed-disk" && material.path == "materials/installed-disk"
   ]
   installed_disk_path     = length(local.installed_disk_records) > 0 ? "${local.material_root}/${local.installed_disk_records[0].path}" : ""
   installed_disk_checksum = length(local.installed_disk_records) > 0 ? local.installed_disk_records[0].digest : "none"
+  # Bound off installer-iso alone: it is the only material every invocation
+  # carries. image-inputs and installed-disk, when present, are separately
+  # checked in variables.pkr.hcl against this same architecture.
   material_bound_architectures = {
     for candidate in ["amd64", "arm64"] : candidate => candidate
-    if local.installer_record.architecture == candidate && local.image_input_record.architecture == candidate
+    if local.installer_record.architecture == candidate
   }
   # Indexing the material-bound set makes Packer validation fail closed when the
-  # requested architecture does not match both authenticated material records.
-  architecture        = local.material_bound_architectures[var.architecture]
-  installer_iso       = "${local.material_root}/${local.installer_record.path}"
-  installer_checksum  = local.installer_record.digest
-  image_inputs        = "${local.material_root}/${local.image_input_record.path}"
-  image_inputs_digest = local.image_input_record.digest
+  # requested architecture does not match the authenticated installer-iso record.
+  architecture       = local.material_bound_architectures[var.architecture]
+  installer_iso      = "${local.material_root}/${local.installer_record.path}"
+  installer_checksum = local.installer_record.digest
   staged_image_inputs = {
     fde     = "${var.output_directory}/fde/.image-inputs"
     non_fde = "${var.output_directory}/non-fde/.image-inputs"

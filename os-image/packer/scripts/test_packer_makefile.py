@@ -141,23 +141,19 @@ class PackerMakefileTest(unittest.TestCase):
         scripts.mkdir()
         shutil.copy2(PACKER_DIR / "scripts" / "qemu-arch.sh", scripts / "qemu-arch.sh")
         shutil.copy2(PACKER_DIR / "scripts" / "package-builder.sh", scripts / "package-builder.sh")
-        # The real script's cache key hashes install-stage inputs and resolves
-        # the ISO's digest over the network; stub it so image-build tests stay
-        # offline and deterministic, matching how prepare-installer-iso.sh is
-        # faked below.
+        # The real script hashes install-stage inputs (cidata/, the install
+        # pkr.hcl, ...) this fixture does not create; stub it so image-build
+        # tests stay self-contained, matching how prepare-installer-iso.sh is
+        # faked below. print-installed-disk-cache-key.sh itself is exercised
+        # directly, against the real project, by test_installed_disk_cache_key.py.
         self.write_executable(
             scripts / "print-installed-disk-cache-key.sh",
             """#!/bin/sh
 set -eu
-printf 'test-cache-key-%s\\n' "${VARIANT:?}"
+printf 'test-cache-key-%s' "${VARIANT:?}" | sha256sum | cut -d' ' -f1
 """,
         )
-        # These two touch only local files (no network); the real scripts are
-        # exercised directly.
-        shutil.copy2(
-            PACKER_DIR / "scripts" / "cache-installed-disk.sh",
-            scripts / "cache-installed-disk.sh",
-        )
+        # Touches only local files (no network); exercised directly.
         shutil.copy2(
             PACKER_DIR / "scripts" / "add-installed-disk-material.sh",
             scripts / "add-installed-disk-material.sh",
@@ -207,8 +203,6 @@ set -eu
 printf 'packer:%s\\n' "$1" >> "${EVENT_LOG:?}"
 printf 'packer-args|%s\\n' "$*" >> "${EVENT_LOG:?}"
 if [ "$1" = "build" ]; then
-  test -f "${EXPECTED_ARTIFACTS_DIR:?}/ready"
-  test ! -e "${EXPECTED_ARTIFACTS_DIR}/stale"
   output_directory=""
   variant=""
   stage=""
@@ -229,6 +223,9 @@ if [ "$1" = "build" ]; then
     printf 'installed qcow2 bytes\n' > "${output_directory}/${variant}/nke-node-installed.qcow2"
     printf 'efi vars\n' > "${output_directory}/${variant}/efivars.fd"
   else
+    # Only the provision stage needs staged artifacts (see prepare-image-build).
+    test -f "${EXPECTED_ARTIFACTS_DIR:?}/ready"
+    test ! -e "${EXPECTED_ARTIFACTS_DIR}/stale"
     printf 'qcow2 bytes\n' > "${output_directory}/${variant}/nke-node.qcow2"
   fi
 fi
@@ -672,11 +669,23 @@ exec "${REAL_MV:?}" "$@"
             )
 
     def test_source_preflight_runs_before_any_packer_command(self):
+        # The install stage needs only the ISO, not artifact staging (the Go
+        # agent build, debs, crane pulls) -- it runs, and completes, before
+        # fetch-artifacts.sh. The provision stage needs the fetched
+        # artifacts, so it runs after.
         cases = (
-            ("os-image-fde", "nke-node-fde-install.qemu.nke-fde-install"),
-            ("os-image-non-fde", "nke-node-non-fde-install.qemu.nke-non-fde-install"),
+            (
+                "os-image-fde",
+                "nke-node-fde-install.qemu.nke-fde-install",
+                "nke-node-fde-provision.qemu.nke-fde-provision",
+            ),
+            (
+                "os-image-non-fde",
+                "nke-node-non-fde-install.qemu.nke-non-fde-install",
+                "nke-node-non-fde-provision.qemu.nke-non-fde-provision",
+            ),
         )
-        for target, selector in cases:
+        for target, install_selector, provision_selector in cases:
             with self.subTest(target=target):
                 output = self.dry_run(target)
                 source_check = output.index('git -C "$SOURCE_ROOT" rev-parse')
@@ -684,18 +693,17 @@ exec "${REAL_MV:?}" "$@"
                 packer_init = output.index("/tmp/nkd-packer init ")
                 fetch_command = str(PACKER_DIR / "scripts" / "fetch-artifacts.sh")
                 artifact_fetch = output.index(fetch_command)
-                packer_build = output.index("/tmp/nkd-packer build")
+                install_build = output.index(f"-only={install_selector}")
+                provision_build = output.index(f"-only={provision_selector}")
 
-                self.assertIn(str(PACKER_DIR), output[packer_init:].splitlines()[0])
-                build_command = output[packer_build:]
-                self.assertIn(f"-only={selector}", build_command)
-                self.assertIn(str(PACKER_DIR), build_command)
+                self.assertIn(str(PACKER_DIR), output[install_build:])
+                self.assertIn(str(PACKER_DIR), output[provision_build:])
                 self.assertEqual(output.count(fetch_command), 1)
                 self.assertLess(source_check, packer_init)
                 self.assertLess(dependency_check, packer_init)
-                self.assertLess(source_check, artifact_fetch)
-                self.assertLess(dependency_check, artifact_fetch)
-                self.assertLess(artifact_fetch, packer_build)
+                self.assertLess(packer_init, install_build)
+                self.assertLess(install_build, artifact_fetch)
+                self.assertLess(artifact_fetch, provision_build)
 
     def test_each_image_build_stages_clean_artifacts_once_before_packer_build(self):
         cases = (
@@ -722,7 +730,11 @@ exec "${REAL_MV:?}" "$@"
                 fetch_event, stage = self.assert_single_staging_fetch(
                     events, artifacts, expected_fields
                 )
-                self.assertLess(events.index(fetch_event), events.index("packer:build"))
+                # Two packer:build events now (install, then provision); the
+                # fetch only has to precede the provision stage, which needs
+                # the staged artifacts -- the install stage runs before it.
+                last_build = max(i for i, e in enumerate(events) if e == "packer:build")
+                self.assertLess(events.index(fetch_event), last_build)
                 self.assertTrue((artifacts / "ready").is_file())
                 self.assertFalse((artifacts / "stale").exists())
                 self.assertFalse(stage.exists())
@@ -760,10 +772,11 @@ exec "${REAL_MV:?}" "$@"
                     install_build,
                 )
                 # The provision stage uses the installed-disk cache entry's own
-                # keypair (cache-installed-disk.sh copies it there), not the
+                # keypair (prepare-installed-disk-* copies it there), not the
                 # fresh one above -- it must match whatever authorized_keys
                 # the install stage's disk actually has baked in.
-                cache_dir = f"{artifacts.parent}/installed-cache/test-cache-key-{variant}"
+                fake_key = hashlib.sha256(f"test-cache-key-{variant}".encode()).hexdigest()
+                cache_dir = f"{artifacts.parent}/installed-cache/{fake_key}"
                 self.assertIn(
                     f"-var ssh_private_key_file={cache_dir}/id_ed25519",
                     provision_build,
@@ -826,7 +839,10 @@ exec "${REAL_MV:?}" "$@"
                 _, stage = self.assert_single_staging_fetch(
                     events, artifacts, expected_fields
                 )
-                self.assertNotIn("packer:build", events)
+                # The install stage needs no staged artifacts, so it still
+                # ran (one packer:build); the provision stage, which does,
+                # never got that far -- a second one never appears.
+                self.assertEqual(events.count("packer:build"), 1)
                 self.assertEqual((artifacts / "stale").read_text(), "stale\n")
                 self.assertFalse((artifacts / "partial").exists())
                 self.assertFalse(stage.exists())
@@ -1011,7 +1027,9 @@ exec "${REAL_MV:?}" "$@"
             _, stage = self.assert_single_staging_fetch(
                 events, artifacts, expected_fields
             )
-            self.assertNotIn("packer:build", events)
+            # See test_failed_artifact_staging_prevents_packer_build: the
+            # install stage still ran; the provision stage never got there.
+            self.assertEqual(events.count("packer:build"), 1)
             self.assertEqual((artifacts / "stale").read_text(), "stale\n")
             self.assertFalse((artifacts / "partial").exists())
             self.assertFalse(stage.exists())
@@ -1078,7 +1096,8 @@ exec "${REAL_MV:?}" "$@"
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("refusing unsafe artifact staging path", result.stderr)
             self.assertFalse(any(event.startswith("fetch|") for event in events))
-            self.assertNotIn("packer:build", events)
+            # The install stage needs no staged artifacts, so it still ran.
+            self.assertEqual(events.count("packer:build"), 1)
             self.assertTrue(artifacts.is_symlink())
             self.assertEqual(
                 (artifacts / "keep").read_text(encoding="utf-8"), "caller data\n"
@@ -1129,15 +1148,17 @@ exec "${REAL_MV:?}" "$@"
                 )
 
     def test_install_stage_templates_run_no_nke_provisioners(self):
-        # The install stage's only job is autoinstall; everything that stages
-        # or provisions nke content belongs to the provision stage above.
+        # The install stage's only job is autoinstall, plus waiting for
+        # cloud-init to finish before shutdown; everything that stages or
+        # provisions nke content belongs to the provision stage above.
         for template in (
             "nke-node-fde-install.pkr.hcl",
             "nke-node-non-fde-install.pkr.hcl",
         ):
             with self.subTest(template=template):
                 contents = (PACKER_DIR / template).read_text(encoding="utf-8")
-                self.assertNotIn('provisioner "shell"', contents)
+                self.assertEqual(contents.count('provisioner "shell"'), 1)
+                self.assertIn("cloud-init status --wait", contents)
                 self.assertNotIn('provisioner "shell-local"', contents)
                 self.assertNotIn('provisioner "file"', contents)
                 self.assertIn("efi_drop_efivars = false", contents)

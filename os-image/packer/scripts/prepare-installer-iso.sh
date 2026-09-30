@@ -43,15 +43,17 @@ OUT_DIR="${OUT_DIR:?OUT_DIR is required}"
 command -v xorriso >/dev/null 2>&1 || { echo "prepare-installer-iso: xorriso is required" >&2; exit 1; }
 command -v 7z >/dev/null 2>&1 || { echo "prepare-installer-iso: 7z (p7zip-full) is required" >&2; exit 1; }
 
-# shellcheck source=./iso-checksum.sh
-. "$(dirname "${BASH_SOURCE[0]}")/iso-checksum.sh"
-
 mkdir -p "${OUT_DIR}"
 ISO_NAME="$(basename "${ISO_URL}")"
 ISO_PATH="${OUT_DIR}/${ISO_NAME}"
 PATCHED_PATH="${ISO_PATH}.patched.iso"
 
-EXPECTED_SHA256="$(nke_resolve_iso_sha256 "${ISO_URL}" "${ISO_CHECKSUM}")"
+CHECKSUM_URL="${ISO_CHECKSUM#file:}"
+EXPECTED_SHA256="$(curl -fsSL "${CHECKSUM_URL}" | grep -E " \*?${ISO_NAME}\$" | awk '{print $1}' | head -1)"
+if [[ -z "${EXPECTED_SHA256}" ]]; then
+  echo "prepare-installer-iso: no checksum for ${ISO_NAME} found in ${CHECKSUM_URL}" >&2
+  exit 1
+fi
 
 verify_iso() {
   [[ -f "${ISO_PATH}" ]] && echo "${EXPECTED_SHA256}  ${ISO_PATH}" | sha256sum -c - >/dev/null 2>&1

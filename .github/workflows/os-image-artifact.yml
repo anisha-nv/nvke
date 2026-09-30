@@ -500,12 +500,17 @@ jobs:
       # bake) is the same regardless of tag or branch as long as
       # UBUNTU_SNAPSHOT, the ISO and the install-stage inputs match --
       # os-image-cache.yml keeps one populated per (arch, Ubuntu flavor,
-      # variant). A miss here is not a failure: `make os-image-fde|non-fde`
-      # below runs the install stage itself and just costs the full bake
-      # time. Restored alongside the ISO above rather than instead of it --
-      # the material manifest still stages the ISO as an authenticated input
-      # either way, so skipping that download on a hit would only save
-      # network time, not build time.
+      # variant) on main, so a release build here runs against a base disk
+      # produced there in a separate run. A miss here is not a failure:
+      # `make os-image-fde|non-fde` below runs the install stage itself and
+      # just costs the full bake time. Restored alongside the ISO above
+      # rather than instead of it -- the material manifest still stages the
+      # ISO as an authenticated input either way, so skipping that download
+      # on a hit would only save network time, not build time. One object
+      # per key (a tar, zstd-compressed where available), fetched by its
+      # exact key: the read role may not have s3:ListBucket, so a wildcard
+      # copy is not an option here the way it is for the ISO above (a single
+      # well-known filename, not a key-derived one).
       - name: Restore the installed disk from the build cache
         if: steps.s5cmd.outcome == 'success'
         continue-on-error: true
@@ -518,18 +523,27 @@ jobs:
           key_var="INSTALLED_DISK_CACHE_KEY_$(printf '%s' "${{ matrix.variant }}" | tr 'a-z-' 'A-Z_')"
           cache_key="$(make --no-print-directory -C os-image/packer "print-${key_var}" \
             ARCH=${{ matrix.arch }} UBUNTU_RELEASE=${{ matrix.ubuntu_release }})"
-          prefix="s3://${BUCKET}/${BUILD_CACHE_INSTALLED_PREFIX}/${cache_key}"
+          ext=tar
+          command -v zstd >/dev/null 2>&1 && ext=tar.zst
+          object="s3://${BUCKET}/${BUILD_CACHE_INSTALLED_PREFIX}/${cache_key}.${ext}"
           dest="os-image/packer/installed-cache/${cache_key}"
-          mkdir -p "${dest}"
-          s5cmd cp "${prefix}/*" "${dest}/" || true
-          # s5cmd copies each object in the glob independently; only trust the
-          # restore if every file the provision stage needs actually landed --
-          # a partial set is worse than a clean miss (see cache-installed-disk.sh).
+          archive="$(mktemp)"
+          if s5cmd cp "${object}" "${archive}"; then
+            mkdir -p "${dest}"
+            if [[ "${ext}" == tar.zst ]]; then
+              zstd -dc "${archive}" | tar -xf - -C "${dest}"
+            else
+              tar -xf "${archive}" -C "${dest}"
+            fi
+          fi
+          rm -f "${archive}"
+          # Only trust the restore if every file the provision stage needs
+          # actually landed -- a partial set is worse than a clean miss.
           if [[ -f "${dest}/nke-node-installed.qcow2" && -f "${dest}/efivars.fd" &&
                 -f "${dest}/id_ed25519" && -f "${dest}/id_ed25519.pub" ]]; then
-            echo "::notice::restored ${prefix} (key ${cache_key})"
+            echo "::notice::restored ${object} (key ${cache_key})"
           else
-            echo "::notice::${prefix} is not (fully) in the build cache; the build runs the install stage itself"
+            echo "::notice::${object} is not (fully) in the build cache; the build runs the install stage itself"
             rm -rf "${dest}"
           fi
 
@@ -551,11 +565,13 @@ jobs:
             echo "::error::no time left before the job's ${{ matrix.timeout_minutes }}m timeout; skipping the FDE build"
             exit 1
           fi
-          # Stream guest progress while Packer waits for SSH.
+          # Stream guest progress while Packer waits for SSH, across both
+          # the install and provision stages' own serial consoles.
           mkdir -p os-image/packer/build-logs
-          console_log=os-image/packer/build-logs/fde-install-console.log
-          touch "${console_log}"
-          tail -n +1 -F "${console_log}" &
+          install_log=os-image/packer/build-logs/fde-install-console.log
+          provision_log=os-image/packer/build-logs/fde-provision-console.log
+          touch "${install_log}" "${provision_log}"
+          tail -n +1 -F "${install_log}" "${provision_log}" &
           console_pid=$!
           trap 'kill "${console_pid}"; wait "${console_pid}" || true' EXIT
           status=0
@@ -600,11 +616,13 @@ jobs:
             echo "::error::no time left before the job's ${{ matrix.timeout_minutes }}m timeout; skipping the non-FDE build"
             exit 1
           fi
-          # Stream guest progress while Packer waits for SSH.
+          # Stream guest progress while Packer waits for SSH, across both
+          # the install and provision stages' own serial consoles.
           mkdir -p os-image/packer/build-logs
-          console_log=os-image/packer/build-logs/non-fde-install-console.log
-          touch "${console_log}"
-          tail -n +1 -F "${console_log}" &
+          install_log=os-image/packer/build-logs/non-fde-install-console.log
+          provision_log=os-image/packer/build-logs/non-fde-provision-console.log
+          touch "${install_log}" "${provision_log}"
+          tail -n +1 -F "${install_log}" "${provision_log}" &
           console_pid=$!
           trap 'kill "${console_pid}"; wait "${console_pid}" || true' EXIT
           status=0
