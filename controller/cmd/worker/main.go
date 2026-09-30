@@ -149,6 +149,9 @@ func main() {
 		Recorder:               metrics.RecordAuthzRequest,
 		GroupOnlyWriteRecorder: metrics.SetAuthzGroupOnlyWriteActions,
 		IssuerNames:            authenticator.IssuerNames(),
+		ReloadInterval:         cfg.AuthzReloadInterval,
+		ReloadRecorder:         metrics.RecordAuthzReload,
+		BundleChangeRecorder:   metrics.RecordAuthzBundleChanged,
 	}, logger)
 	if err != nil {
 		logger.Error("Failed to set up API authorization", "error", err)
