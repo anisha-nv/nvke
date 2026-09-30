@@ -141,6 +141,27 @@ class PackerMakefileTest(unittest.TestCase):
         scripts.mkdir()
         shutil.copy2(PACKER_DIR / "scripts" / "qemu-arch.sh", scripts / "qemu-arch.sh")
         shutil.copy2(PACKER_DIR / "scripts" / "package-builder.sh", scripts / "package-builder.sh")
+        # The real script's cache key hashes install-stage inputs and resolves
+        # the ISO's digest over the network; stub it so image-build tests stay
+        # offline and deterministic, matching how prepare-installer-iso.sh is
+        # faked below.
+        self.write_executable(
+            scripts / "print-installed-disk-cache-key.sh",
+            """#!/bin/sh
+set -eu
+printf 'test-cache-key-%s\\n' "${VARIANT:?}"
+""",
+        )
+        # These two touch only local files (no network); the real scripts are
+        # exercised directly.
+        shutil.copy2(
+            PACKER_DIR / "scripts" / "cache-installed-disk.sh",
+            scripts / "cache-installed-disk.sh",
+        )
+        shutil.copy2(
+            PACKER_DIR / "scripts" / "add-installed-disk-material.sh",
+            scripts / "add-installed-disk-material.sh",
+        )
         events = root / "events.log"
         artifacts = workspace / "artifacts"
         if unsafe_artifacts:
@@ -190,18 +211,26 @@ if [ "$1" = "build" ]; then
   test ! -e "${EXPECTED_ARTIFACTS_DIR}/stale"
   output_directory=""
   variant=""
+  stage=""
   for argument in "$@"; do
     case "${argument}" in
       output_directory=*) output_directory="${argument#output_directory=}" ;;
-      -only=nke-node-fde.qemu.nke-fde) variant=fde ;;
-      -only=nke-node-non-fde.qemu.nke-non-fde) variant=non-fde ;;
+      -only=nke-node-fde-install.qemu.nke-fde-install) variant=fde; stage=install ;;
+      -only=nke-node-fde-provision.qemu.nke-fde-provision) variant=fde; stage=provision ;;
+      -only=nke-node-non-fde-install.qemu.nke-non-fde-install) variant=non-fde; stage=install ;;
+      -only=nke-node-non-fde-provision.qemu.nke-non-fde-provision) variant=non-fde; stage=provision ;;
     esac
   done
   test -n "${output_directory}"
   test -n "${variant}"
+  test -n "${stage}"
   mkdir -p "${output_directory}/${variant}"
-  printf 'qcow2 bytes\n' > "${output_directory}/${variant}/nke-node.qcow2"
-  printf 'efi vars\n' > "${output_directory}/${variant}/efivars.fd"
+  if [ "${stage}" = "install" ]; then
+    printf 'installed qcow2 bytes\n' > "${output_directory}/${variant}/nke-node-installed.qcow2"
+    printf 'efi vars\n' > "${output_directory}/${variant}/efivars.fd"
+  else
+    printf 'qcow2 bytes\n' > "${output_directory}/${variant}/nke-node.qcow2"
+  fi
 fi
 """,
         )
@@ -250,8 +279,10 @@ printf '%s\n' 'ssh-ed25519 generated-key generated' > "${key}.pub"
             "versions.pkr.hcl",
             "variables.pkr.hcl",
             "locals.pkr.hcl",
-            "nke-node-fde.pkr.hcl",
-            "nke-node-non-fde.pkr.hcl",
+            "nke-node-fde-install.pkr.hcl",
+            "nke-node-fde-provision.pkr.hcl",
+            "nke-node-non-fde-install.pkr.hcl",
+            "nke-node-non-fde-provision.pkr.hcl",
         ):
             (workspace / template).write_text("# test fixture\n", encoding="utf-8")
 
@@ -642,8 +673,8 @@ exec "${REAL_MV:?}" "$@"
 
     def test_source_preflight_runs_before_any_packer_command(self):
         cases = (
-            ("os-image-fde", "nke-node-fde.qemu.nke-fde"),
-            ("os-image-non-fde", "nke-node-non-fde.qemu.nke-non-fde"),
+            ("os-image-fde", "nke-node-fde-install.qemu.nke-fde-install"),
+            ("os-image-non-fde", "nke-node-non-fde-install.qemu.nke-non-fde-install"),
         )
         for target, selector in cases:
             with self.subTest(target=target):
@@ -668,17 +699,17 @@ exec "${REAL_MV:?}" "$@"
 
     def test_each_image_build_stages_clean_artifacts_once_before_packer_build(self):
         cases = (
-            ("os-image-fde", "amd64", "nke-node-fde.qemu.nke-fde"),
-            ("os-image-fde", "arm64", "nke-node-fde.qemu.nke-fde"),
+            ("os-image-fde", "amd64", "nke-node-fde-provision.qemu.nke-fde-provision"),
+            ("os-image-fde", "arm64", "nke-node-fde-provision.qemu.nke-fde-provision"),
             (
                 "os-image-non-fde",
                 "amd64",
-                "nke-node-non-fde.qemu.nke-non-fde",
+                "nke-node-non-fde-provision.qemu.nke-non-fde-provision",
             ),
             (
                 "os-image-non-fde",
                 "arm64",
-                "nke-node-non-fde.qemu.nke-non-fde",
+                "nke-node-non-fde-provision.qemu.nke-non-fde-provision",
             ),
         )
         for target, arch, selector in cases:
@@ -702,28 +733,45 @@ exec "${REAL_MV:?}" "$@"
                     for event in events
                     if event.startswith("packer-args|build ")
                 ]
-                self.assertEqual(len(build_events), 1)
-                build = build_events[0]
+                # One per stage: install, then provision.
+                self.assertEqual(len(build_events), 2)
                 variant = "fde" if target == "os-image-fde" else "non-fde"
-                self.assertIn(f"-only={selector}", build)
-                self.assertIn(f"-var architecture={arch}", build)
-                self.assertIn(
-                    f"-var material_manifest={artifacts.parent}/.packer-inputs/material-manifest.json",
-                    build,
-                )
-                self.assertIn(
-                    f"-var output_directory={artifacts.parent}/.packer-output-{variant}",
-                    build,
-                )
+                install_selector = f"nke-node-{variant}-install.qemu.nke-{variant}-install"
+                install_build = next(b for b in build_events if install_selector in b)
+                provision_build = next(b for b in build_events if selector in b)
+                for build in (install_build, provision_build):
+                    self.assertIn(f"-var architecture={arch}", build)
+                    self.assertIn(
+                        f"-var material_manifest={artifacts.parent}/.packer-inputs/material-manifest.json",
+                        build,
+                    )
+                    self.assertIn(
+                        f"-var output_directory={artifacts.parent}/.packer-output-{variant}",
+                        build,
+                    )
+                    self.assertTrue(build.endswith(str(artifacts.parent)))
+                # The install stage uses the fresh (Make-generated) keypair.
                 self.assertIn(
                     f"-var ssh_private_key_file={artifacts.parent}/.ssh/id_ed25519",
-                    build,
+                    install_build,
                 )
                 self.assertIn(
                     f"-var ssh_public_key_file={artifacts.parent}/.ssh/id_ed25519.pub",
-                    build,
+                    install_build,
                 )
-                self.assertTrue(build.endswith(str(artifacts.parent)))
+                # The provision stage uses the installed-disk cache entry's own
+                # keypair (cache-installed-disk.sh copies it there), not the
+                # fresh one above -- it must match whatever authorized_keys
+                # the install stage's disk actually has baked in.
+                cache_dir = f"{artifacts.parent}/installed-cache/test-cache-key-{variant}"
+                self.assertIn(
+                    f"-var ssh_private_key_file={cache_dir}/id_ed25519",
+                    provision_build,
+                )
+                self.assertIn(
+                    f"-var ssh_public_key_file={cache_dir}/id_ed25519.pub",
+                    provision_build,
+                )
 
                 output_name = (
                     f"nke-node-{variant}-ubuntu-26.04.1-{arch}.qcow2"
@@ -1056,7 +1104,10 @@ exec "${REAL_MV:?}" "$@"
                 self.assertEqual((artifacts / "stale").read_text(), "stale\n")
 
     def test_packer_templates_do_not_fetch_host_artifacts(self):
-        for template in ("nke-node-fde.pkr.hcl", "nke-node-non-fde.pkr.hcl"):
+        for template in (
+            "nke-node-fde-provision.pkr.hcl",
+            "nke-node-non-fde-provision.pkr.hcl",
+        ):
             with self.subTest(template=template):
                 contents = (PACKER_DIR / template).read_text(encoding="utf-8")
                 self.assertNotIn("fetch-artifacts.sh", contents)
@@ -1076,6 +1127,20 @@ exec "${REAL_MV:?}" "$@"
                     contents.index('provisioner "file"'),
                     contents.rindex('"MODE=clean"'),
                 )
+
+    def test_install_stage_templates_run_no_nke_provisioners(self):
+        # The install stage's only job is autoinstall; everything that stages
+        # or provisions nke content belongs to the provision stage above.
+        for template in (
+            "nke-node-fde-install.pkr.hcl",
+            "nke-node-non-fde-install.pkr.hcl",
+        ):
+            with self.subTest(template=template):
+                contents = (PACKER_DIR / template).read_text(encoding="utf-8")
+                self.assertNotIn('provisioner "shell"', contents)
+                self.assertNotIn('provisioner "shell-local"', contents)
+                self.assertNotIn('provisioner "file"', contents)
+                self.assertIn("efi_drop_efivars = false", contents)
 
     def test_existing_output_or_scratch_blocks_packer_without_destroying_state(self):
         cases = (
@@ -1360,16 +1425,21 @@ exec "${REAL_MV:?}" "$@"
         )
         self.assertEqual(
             project.count('can(regex("^sha256:[0-9a-f]{64}$", material.digest))'),
-            2,
+            3,
         )
-        self.assertIn('source "qemu" "nke-fde"', project)
-        self.assertIn('source "qemu" "nke-non-fde"', project)
-        self.assertRegex(project, r'name\s*=\s*"nke-node-fde"')
-        self.assertRegex(project, r'name\s*=\s*"nke-node-non-fde"')
+        self.assertIn('source "qemu" "nke-fde-install"', project)
+        self.assertIn('source "qemu" "nke-fde-provision"', project)
+        self.assertIn('source "qemu" "nke-non-fde-install"', project)
+        self.assertIn('source "qemu" "nke-non-fde-provision"', project)
+        self.assertRegex(project, r'name\s*=\s*"nke-node-fde-install"')
+        self.assertRegex(project, r'name\s*=\s*"nke-node-fde-provision"')
+        self.assertRegex(project, r'name\s*=\s*"nke-node-non-fde-install"')
+        self.assertRegex(project, r'name\s*=\s*"nke-node-non-fde-provision"')
         self.assertEqual(
             len(re.findall(r"ssh_private_key_file\s*=\s*var\.ssh_private_key_file", project)),
-            2,
+            4,
         )
+        # Only the install sources render the autoinstall templatefile.
         self.assertEqual(
             len(re.findall(r"ssh_public_key\s*=\s*local\.ssh_public_key", project)),
             2,
@@ -1383,8 +1453,12 @@ exec "${REAL_MV:?}" "$@"
         )
         self.assertEqual(len(re.findall(r"generated\s*=\s*true", project)), 2)
         self.assertNotIn("/tmp/nke-image-inputs.tar", project)
-        self.assertEqual(len(re.findall(r"skip_compaction\s*=\s*true", project)), 2)
-        self.assertEqual(len(re.findall(r"disk_compression\s*=\s*false", project)), 2)
+        # All four sources (install + provision, both variants) set these.
+        self.assertEqual(len(re.findall(r"skip_compaction\s*=\s*true", project)), 4)
+        self.assertEqual(len(re.findall(r"disk_compression\s*=\s*false", project)), 4)
+        # Install keeps its own efivars.fd (cached alongside the disk);
+        # provision discards its transient copy once the boot is done.
+        self.assertEqual(len(re.findall(r"efi_drop_efivars\s*=\s*false", project)), 2)
         self.assertEqual(len(re.findall(r"efi_drop_efivars\s*=\s*true", project)), 2)
         self.assertNotIn('${path.root}/artifacts', project)
         self.assertNotIn('${path.root}/.ssh', project)

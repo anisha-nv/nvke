@@ -28,6 +28,7 @@ os-image/packer/.packer-output/
 os-image/packer/.packer-output-fde/
 os-image/packer/.packer-output-non-fde/
 os-image/packer/iso-cache/
+os-image/packer/installed-cache/
 os-image/packer/build-logs/
 os-image/packer/.ssh/
 

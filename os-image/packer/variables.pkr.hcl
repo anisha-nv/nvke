@@ -57,6 +57,37 @@ variable "material_manifest" {
     )
     error_message = "The material manifest must contain one installer-iso and one image-inputs record with matching amd64 or arm64 architecture and lowercase sha256 digests."
   }
+
+  # The provision build's disk input, authenticated the same way as the ISO
+  # above. Optional at this variable's level -- an install-stage invocation's
+  # manifest has none yet -- but well-formed whenever present.
+  validation {
+    condition = try(
+      length([
+        for material in jsondecode(file(var.material_manifest)).materials : material
+        if material.binding == "installed-disk"
+      ]) <= 1 &&
+      length([
+        for material in jsondecode(file(var.material_manifest)).materials : material
+        if material.binding == "installed-disk"
+        ]) == length([
+        for material in jsondecode(file(var.material_manifest)).materials : material
+        if material.binding == "installed-disk" && material.kind == "disk-image" && material.path == "materials/installed-disk" && contains(["amd64", "arm64"], material.architecture) && can(regex("^sha256:[0-9a-f]{64}$", material.digest))
+      ]),
+      false,
+    )
+    error_message = "The material manifest must contain at most one installed-disk record, and it must be well-formed if present."
+  }
+}
+
+variable "ubuntu_snapshot" {
+  type        = string
+  description = "snapshot.ubuntu.com timestamp (YYYYMMDDTHHMMSSZ) the installed system's apt sources pin to, so a cached installed disk stays reproducible. See UBUNTU_SNAPSHOT in the Makefile."
+
+  validation {
+    condition     = can(regex("^[0-9]{8}T[0-9]{6}Z$", var.ubuntu_snapshot))
+    error_message = "The ubuntu_snapshot value must be a snapshot.ubuntu.com timestamp in YYYYMMDDTHHMMSSZ form."
+  }
 }
 
 variable "output_directory" {

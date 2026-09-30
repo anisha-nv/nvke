@@ -30,6 +30,14 @@ override PACKER_OUTPUT_DIRECTORY_NON_FDE := $(PACKER_ROOT)/.packer-output-non-fd
 # directory for guest provisioning. The multi-gigabyte installer ISO must stay
 # outside the archive and is staged as its own Packer material.
 ISO_CACHE   := $(CURDIR)/iso-cache
+# Reusable across builds and CI runs: the install stage's own qcow2, the
+# efivars.fd it left NVRAM state in, and the SSH keypair baked into the
+# installed disk (provision.sh strips authorized_keys from the final image,
+# so that keypair exists nowhere else once this stage is done). Keyed so a
+# stale hit is impossible -- see print-installed-disk-cache-key.sh. Same
+# lifecycle as ISO_CACHE: `make clean` removes the local copy, and nothing
+# here expires an S3 upload except os-image-cache.yml's own age check.
+INSTALLED_DIR := $(CURDIR)/installed-cache
 # Keep Packer's build/download cache in the existing ignored build cache
 # instead of its default ./.packer_cache, which would make the checkout dirty
 # and fail the source-cleanliness gates. Callers may still supply their own
@@ -43,8 +51,19 @@ export PACKER_CACHE_DIR
 # output) gets captured, for CI to upload as an artifact on failure -- no
 # VNC/monitor access there to inspect a stuck build interactively.
 BUILD_LOGS  := $(CURDIR)/build-logs
-PACKER_BUILD_FDE := nke-node-fde.qemu.nke-fde
-PACKER_BUILD_NON_FDE := nke-node-non-fde.qemu.nke-non-fde
+PACKER_BUILD_FDE_INSTALL := nke-node-fde-install.qemu.nke-fde-install
+PACKER_BUILD_FDE_PROVISION := nke-node-fde-provision.qemu.nke-fde-provision
+PACKER_BUILD_NON_FDE_INSTALL := nke-node-non-fde-install.qemu.nke-non-fde-install
+PACKER_BUILD_NON_FDE_PROVISION := nke-node-non-fde-provision.qemu.nke-non-fde-provision
+
+# Cache key for the installed disk: sha256 over the ISO's own digest,
+# UBUNTU_SNAPSHOT, ARCH, UBUNTU_RELEASE, the variant, and the exact bytes of
+# everything that shapes the install stage. Printable via the print-% rule,
+# e.g. `make print-INSTALLED_DISK_CACHE_KEY_FDE`. Lazily evaluated (recursive
+# `=`, not `:=`): only resolved -- and only then hitting the network for the
+# ISO's published checksum -- when a recipe below actually references it.
+INSTALLED_DISK_CACHE_KEY_FDE = $(shell ARCH=$(ARCH) UBUNTU_RELEASE=$(UBUNTU_RELEASE) UBUNTU_SNAPSHOT=$(UBUNTU_SNAPSHOT) VARIANT=fde ISO_URL=$(ISO_URL) ISO_CHECKSUM=$(ISO_CHECKSUM) PACKER_ROOT=$(PACKER_ROOT) $(PACKER_ROOT)/scripts/print-installed-disk-cache-key.sh)
+INSTALLED_DISK_CACHE_KEY_NON_FDE = $(shell ARCH=$(ARCH) UBUNTU_RELEASE=$(UBUNTU_RELEASE) UBUNTU_SNAPSHOT=$(UBUNTU_SNAPSHOT) VARIANT=non-fde ISO_URL=$(ISO_URL) ISO_CHECKSUM=$(ISO_CHECKSUM) PACKER_ROOT=$(PACKER_ROOT) $(PACKER_ROOT)/scripts/print-installed-disk-cache-key.sh)
 SOURCE_ROOT ?= $(abspath ../..)
 QCOW2_DIST_DIR ?=
 EXPECTED_SOURCE_COMMIT ?=
@@ -103,6 +122,15 @@ else
   ISO_CHECKSUM ?= file:https://releases.ubuntu.com/$(UBUNTU_SERIES)/SHA256SUMS
 endif
 override UBUNTU_VERSION := $(patsubst ubuntu-%-live-server-$(ARCH).iso,%,$(notdir $(ISO_URL)))
+
+# snapshot.ubuntu.com timestamp the install stage's apt sources pin to
+# (autoinstall-lvm.pkrtpl's apt: section), instead of the live, ever-changing
+# archive. Keeps a given (ISO, UBUNTU_SNAPSHOT, ARCH, variant, install-stage
+# inputs) combination reproducible, which is what makes the installed-disk
+# build cache below safe to reuse rather than a source of silent drift.
+# Bumped by hand for now; nothing here automates picking a new one.
+UBUNTU_SNAPSHOT ?= 20260930T000000Z
+export UBUNTU_SNAPSHOT
 
 # uname -m spelling of ARCH, to compare against the host below. KVM only
 # virtualizes the host's own architecture -- an x86_64 host cannot
@@ -179,7 +207,7 @@ PACKER_BUILD = ARCH=$(ARCH) ACCELERATOR=$(ACCELERATOR) REQUIRE_ACCELERATION=$(RE
 	-var "efi_firmware_vars=$${OVMF_VARS_TEMPLATE:-$$EFI_VARS_DEFAULT}" "$$template"' \
 	bash $(PACKER) build
 
-.PHONY: os-image-fde os-image-non-fde _os-image-fde _os-image-non-fde preflight init-packer init-fde init-non-fde validate-packer ssh-key prepare-ssh-key prepare-image-build prepare-installer-iso prepare-artifacts prepare-packer-inputs clean clean-packer-scratch clean-fde-output clean-non-fde-output check-deps check-source collect-qcow2-fde collect-qcow2-non-fde check-acceleration
+.PHONY: os-image-fde os-image-non-fde _os-image-fde _os-image-non-fde prepare-installed-disk-fde prepare-installed-disk-non-fde preflight init-packer init-fde init-non-fde validate-packer ssh-key prepare-ssh-key prepare-image-build prepare-installer-iso prepare-artifacts prepare-packer-inputs clean clean-packer-scratch clean-fde-output clean-non-fde-output clean-installed-cache check-deps check-source collect-qcow2-fde collect-qcow2-non-fde check-acceleration
 
 prepare-ssh-key:
 	@command -v ssh-keygen >/dev/null 2>&1 || { \
@@ -520,14 +548,26 @@ os-image-fde:
 	fi
 	@$(MAKE) --no-print-directory --file "$(PACKER_MAKEFILE)" _os-image-fde
 
-_os-image-fde: prepare-image-build
-	mkdir -p "$(BUILD_LOGS)" "$(PACKER_OUTPUT_DIRECTORY_FDE)"
-	@if [ "$(ACCELERATOR)" = "tcg" ]; then \
+# Install stage: reuses $(INSTALLED_DIR)/<key> when the computed
+# installed-disk cache key already has an entry, otherwise runs the install
+# stage (autoinstall only, no nke provisioners -- see
+# nke-node-fde-install.pkr.hcl) and populates the cache for next time. Either
+# way this leaves $(INSTALLED_DIR)/<key>/{nke-node-installed.qcow2,
+# efivars.fd,id_ed25519,id_ed25519.pub} in place for the provision stage.
+prepare-installed-disk-fde: prepare-image-build
+	@key="$(INSTALLED_DISK_CACHE_KEY_FDE)"; \
+	dest="$(INSTALLED_DIR)/$$key"; \
+	if [ -f "$$dest/nke-node-installed.qcow2" ]; then \
+		echo "installed-disk cache hit for fde ($$key)"; \
+		exit 0; \
+	fi; \
+	echo "installed-disk cache miss for fde ($$key); running the install stage"; \
+	mkdir -p "$(BUILD_LOGS)" "$(PACKER_OUTPUT_DIRECTORY_FDE)"; \
+	if [ "$(ACCELERATOR)" = "tcg" ]; then \
 		echo "no usable /dev/kvm: building with software emulation, which is far slower"; \
-	fi
-	PKR_VAR_luks_passphrase=$(LUKS_PASSPHRASE) \
+	fi; \
 	$(PACKER_BUILD) \
-		-only=$(PACKER_BUILD_FDE) \
+		-only=$(PACKER_BUILD_FDE_INSTALL) \
 		-var "architecture=$(ARCH)" \
 		-var "material_manifest=$(MATERIAL_MANIFEST)" \
 		-var "output_directory=$(PACKER_OUTPUT_DIRECTORY_FDE)" \
@@ -539,8 +579,48 @@ _os-image-fde: prepare-image-build
 		-var "cpus=$(CPUS)" \
 		-var "ssh_timeout=$(SSH_TIMEOUT)" \
 		-var "boot_wait=$(BOOT_WAIT)" \
-		-var "root_fs_label=$(ROOT_FS_LABEL)" \
 		-var "serial_console=$(SERIAL_CONSOLE)" \
+		-var "ubuntu_snapshot=$(UBUNTU_SNAPSHOT)" \
+		"$(PACKER_PROJECT)"; \
+	SOURCE_QCOW2="$(PACKER_OUTPUT_DIRECTORY_FDE)/fde/nke-node-installed.qcow2" \
+	SOURCE_EFIVARS="$(PACKER_OUTPUT_DIRECTORY_FDE)/fde/efivars.fd" \
+	SSH_PRIVATE_KEY_FILE="$(PACKER_SSH_PRIVATE_KEY_FILE)" \
+	SSH_PUBLIC_KEY_FILE="$(PACKER_SSH_PUBLIC_KEY_FILE)" \
+	DEST_DIR="$$dest" \
+		"$(PACKER_ROOT)/scripts/cache-installed-disk.sh"; \
+	rm -rf -- "$(PACKER_OUTPUT_DIRECTORY_FDE)"
+
+# Provision stage: boots $(INSTALLED_DIR)/<key>'s disk (cache hit or the one
+# prepare-installed-disk-fde just built) as a thin overlay and runs the nke
+# provisioners. Its own -var ssh_*_key_file and OVMF_VARS_TEMPLATE point at
+# that cache entry's keypair and efivars.fd, not the fresh ones
+# prepare-ssh-key manages -- those belong to the install stage only.
+_os-image-fde: prepare-installed-disk-fde
+	mkdir -p "$(BUILD_LOGS)" "$(PACKER_OUTPUT_DIRECTORY_FDE)"
+	@if [ "$(ACCELERATOR)" = "tcg" ]; then \
+		echo "no usable /dev/kvm: building with software emulation, which is far slower"; \
+	fi
+	@cache="$(INSTALLED_DIR)/$(INSTALLED_DISK_CACHE_KEY_FDE)"; \
+	ARCH="$(ARCH)" PYTHON="$(PYTHON)" \
+	MATERIAL_MANIFEST="$(MATERIAL_MANIFEST)" \
+	INSTALLED_DISK_QCOW2="$$cache/nke-node-installed.qcow2" \
+		"$(PACKER_ROOT)/scripts/add-installed-disk-material.sh"; \
+	OVMF_VARS_TEMPLATE="$$cache/efivars.fd" \
+	PKR_VAR_luks_passphrase=$(LUKS_PASSPHRASE) \
+	$(PACKER_BUILD) \
+		-only=$(PACKER_BUILD_FDE_PROVISION) \
+		-var "architecture=$(ARCH)" \
+		-var "material_manifest=$(MATERIAL_MANIFEST)" \
+		-var "output_directory=$(PACKER_OUTPUT_DIRECTORY_FDE)" \
+		-var "build_log_directory=$(BUILD_LOGS)" \
+		-var "ssh_private_key_file=$$cache/id_ed25519" \
+		-var "ssh_public_key_file=$$cache/id_ed25519.pub" \
+		-var "accelerator=$(ACCELERATOR)" \
+		-var "cpu_model=$(CPU_MODEL)" \
+		-var "cpus=$(CPUS)" \
+		-var "ssh_timeout=$(SSH_TIMEOUT)" \
+		-var "root_fs_label=$(ROOT_FS_LABEL)" \
+		-var "ubuntu_snapshot=$(UBUNTU_SNAPSHOT)" \
 		"$(PACKER_PROJECT)"
 	mkdir "$(CURDIR)/output-fde"
 	mv "$(PACKER_OUTPUT_DIRECTORY_FDE)/fde/nke-node.qcow2" \
@@ -560,13 +640,22 @@ os-image-non-fde:
 	fi
 	@$(MAKE) --no-print-directory --file "$(PACKER_MAKEFILE)" _os-image-non-fde
 
-_os-image-non-fde: prepare-image-build
-	mkdir -p "$(BUILD_LOGS)" "$(PACKER_OUTPUT_DIRECTORY_NON_FDE)"
-	@if [ "$(ACCELERATOR)" = "tcg" ]; then \
+# See prepare-installed-disk-fde's comment; same cache-or-build behavior for
+# the non-FDE variant.
+prepare-installed-disk-non-fde: prepare-image-build
+	@key="$(INSTALLED_DISK_CACHE_KEY_NON_FDE)"; \
+	dest="$(INSTALLED_DIR)/$$key"; \
+	if [ -f "$$dest/nke-node-installed.qcow2" ]; then \
+		echo "installed-disk cache hit for non-fde ($$key)"; \
+		exit 0; \
+	fi; \
+	echo "installed-disk cache miss for non-fde ($$key); running the install stage"; \
+	mkdir -p "$(BUILD_LOGS)" "$(PACKER_OUTPUT_DIRECTORY_NON_FDE)"; \
+	if [ "$(ACCELERATOR)" = "tcg" ]; then \
 		echo "no usable /dev/kvm: building with software emulation, which is far slower"; \
-	fi
+	fi; \
 	$(PACKER_BUILD) \
-		-only=$(PACKER_BUILD_NON_FDE) \
+		-only=$(PACKER_BUILD_NON_FDE_INSTALL) \
 		-var "architecture=$(ARCH)" \
 		-var "material_manifest=$(MATERIAL_MANIFEST)" \
 		-var "output_directory=$(PACKER_OUTPUT_DIRECTORY_NON_FDE)" \
@@ -578,8 +667,42 @@ _os-image-non-fde: prepare-image-build
 		-var "cpus=$(CPUS)" \
 		-var "ssh_timeout=$(SSH_TIMEOUT)" \
 		-var "boot_wait=$(BOOT_WAIT)" \
-		-var "root_fs_label=$(ROOT_FS_LABEL)" \
 		-var "serial_console=$(SERIAL_CONSOLE)" \
+		-var "ubuntu_snapshot=$(UBUNTU_SNAPSHOT)" \
+		"$(PACKER_PROJECT)"; \
+	SOURCE_QCOW2="$(PACKER_OUTPUT_DIRECTORY_NON_FDE)/non-fde/nke-node-installed.qcow2" \
+	SOURCE_EFIVARS="$(PACKER_OUTPUT_DIRECTORY_NON_FDE)/non-fde/efivars.fd" \
+	SSH_PRIVATE_KEY_FILE="$(PACKER_SSH_PRIVATE_KEY_FILE)" \
+	SSH_PUBLIC_KEY_FILE="$(PACKER_SSH_PUBLIC_KEY_FILE)" \
+	DEST_DIR="$$dest" \
+		"$(PACKER_ROOT)/scripts/cache-installed-disk.sh"; \
+	rm -rf -- "$(PACKER_OUTPUT_DIRECTORY_NON_FDE)"
+
+_os-image-non-fde: prepare-installed-disk-non-fde
+	mkdir -p "$(BUILD_LOGS)" "$(PACKER_OUTPUT_DIRECTORY_NON_FDE)"
+	@if [ "$(ACCELERATOR)" = "tcg" ]; then \
+		echo "no usable /dev/kvm: building with software emulation, which is far slower"; \
+	fi
+	@cache="$(INSTALLED_DIR)/$(INSTALLED_DISK_CACHE_KEY_NON_FDE)"; \
+	ARCH="$(ARCH)" PYTHON="$(PYTHON)" \
+	MATERIAL_MANIFEST="$(MATERIAL_MANIFEST)" \
+	INSTALLED_DISK_QCOW2="$$cache/nke-node-installed.qcow2" \
+		"$(PACKER_ROOT)/scripts/add-installed-disk-material.sh"; \
+	OVMF_VARS_TEMPLATE="$$cache/efivars.fd" \
+	$(PACKER_BUILD) \
+		-only=$(PACKER_BUILD_NON_FDE_PROVISION) \
+		-var "architecture=$(ARCH)" \
+		-var "material_manifest=$(MATERIAL_MANIFEST)" \
+		-var "output_directory=$(PACKER_OUTPUT_DIRECTORY_NON_FDE)" \
+		-var "build_log_directory=$(BUILD_LOGS)" \
+		-var "ssh_private_key_file=$$cache/id_ed25519" \
+		-var "ssh_public_key_file=$$cache/id_ed25519.pub" \
+		-var "accelerator=$(ACCELERATOR)" \
+		-var "cpu_model=$(CPU_MODEL)" \
+		-var "cpus=$(CPUS)" \
+		-var "ssh_timeout=$(SSH_TIMEOUT)" \
+		-var "root_fs_label=$(ROOT_FS_LABEL)" \
+		-var "ubuntu_snapshot=$(UBUNTU_SNAPSHOT)" \
 		"$(PACKER_PROJECT)"
 	mkdir "$(CURDIR)/output-non-fde"
 	mv "$(PACKER_OUTPUT_DIRECTORY_NON_FDE)/non-fde/nke-node.qcow2" \
@@ -594,6 +717,12 @@ clean-fde-output:
 
 clean-non-fde-output:
 	rm -rf -- "$(CURDIR)/output-non-fde" "$(PACKER_OUTPUT_DIRECTORY_NON_FDE)"
+
+# Separate from clean, like clean-fde-output/clean-non-fde-output: dropping a
+# perfectly good installed-disk cache is a deliberate choice, not something
+# every routine `make clean` should force.
+clean-installed-cache:
+	rm -rf -- "$(INSTALLED_DIR)"
 
 clean:
 	rm -rf -- "$(CURDIR)/output-fde" "$(CURDIR)/output-non-fde" "$(ARTIFACTS)" "$(PACKER_INPUT_ROOT)" "$(PACKER_ROOT)/.packer-output" "$(PACKER_OUTPUT_DIRECTORY_FDE)" "$(PACKER_OUTPUT_DIRECTORY_NON_FDE)" "$(ISO_CACHE)" "$(BUILD_LOGS)"

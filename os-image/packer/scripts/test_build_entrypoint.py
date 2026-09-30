@@ -36,16 +36,69 @@ class BuildEntrypointTest(unittest.TestCase):
         # looks for qemu-img, which the macOS CI runner lacks.
         self.script("qemu-system-aarch64", '#!/bin/sh\nif [ "$1" = -accel ]; then echo tcg; fi\n')
         self.script("qemu-img", '#!/bin/sh\nexit 0\n')
+        # Appends one {"stage": "install"|"provision", "argv": [...]} record
+        # per invocation, since a build now issues two: install, then
+        # provision. Tests that only care about the final published disk can
+        # still read the last record; test_serial_console_... needs the
+        # install-stage one specifically, since only autoinstall consumes it.
         self.script("packer", '''#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
-Path(os.environ['PACKER_ARGS']).write_text(json.dumps(sys.argv[1:]))
 values = dict(arg.split('=', 1) for arg in sys.argv[1:] if '=' in arg)
-variant = 'non-fde' if 'non-fde' in values['-only'] else 'fde'
+only = values.get('-only', '')
+stage = 'install' if only.endswith('-install') else 'provision'
+path = Path(os.environ['PACKER_ARGS'])
+records = json.loads(path.read_text()) if path.exists() else []
+records.append({"stage": stage, "argv": sys.argv[1:]})
+path.write_text(json.dumps(records))
+variant = 'non-fde' if 'non-fde' in only else 'fde'
 output = Path(values['output_directory']) / variant
 output.mkdir(parents=True, exist_ok=True)
-(output / 'nke-node.qcow2').touch()
+if stage == 'install':
+    (output / 'nke-node-installed.qcow2').touch()
+    (output / 'efivars.fd').touch()
+else:
+    (output / 'nke-node.qcow2').touch()
 ''')
+        # The real script resolves the ISO's digest over the network, which
+        # this offline suite must not depend on; a fixed key is enough since
+        # nothing here asserts on its value.
+        (self.packer_dir / "scripts/print-installed-disk-cache-key.sh").write_text(
+            "#!/bin/sh\nprintf 'argv-test-key-%s\\n' \"${VARIANT:?}\"\n"
+        )
+        (self.packer_dir / "scripts/print-installed-disk-cache-key.sh").chmod(0o755)
+        # skip_build_setup below bypasses prepare-image-build (via `make -o`),
+        # so nothing else generates the SSH keypair or the material manifest
+        # -- this suite only exercises argv construction, not real key
+        # generation or material staging, so fake both directly.
+        ssh_dir = self.root / ".ssh"
+        ssh_dir.mkdir()
+        (ssh_dir / "id_ed25519").write_text("fixture\n")
+        (ssh_dir / "id_ed25519.pub").write_text("fixture\n")
+        self.env["SSH_PRIVATE_KEY_FILE"] = str(ssh_dir / "id_ed25519")
+        self.env["SSH_PUBLIC_KEY_FILE"] = str(ssh_dir / "id_ed25519.pub")
+        inputs = self.packer_dir / ".packer-inputs"
+        inputs.mkdir()
+        (inputs / "material-manifest.json").write_text(json.dumps({
+            "schemaVersion": "nke.dev/os-image-materials/v1",
+            "materials": [
+                {"binding": "installer-iso", "component": "fixture", "kind": "disk-image",
+                 "architecture": "arm64", "digest": "sha256:" + "0" * 64, "path": "materials/installer-iso"},
+                {"binding": "image-inputs", "component": "fixture", "kind": "archive",
+                 "architecture": "arm64", "digest": "sha256:" + "1" * 64, "path": "materials/image-inputs"},
+            ],
+        }))
+
+    @staticmethod
+    def install_argv(records):
+        # PACKER_ARGS accumulates across every make() call in a test method
+        # (e.g. one per variant in a subTest loop); the most recent record is
+        # the one that matters.
+        return [r["argv"] for r in records if r["stage"] == "install"][-1]
+
+    @staticmethod
+    def provision_argv(records):
+        return [r["argv"] for r in records if r["stage"] == "provision"][-1]
 
     def script(self, name, text):
         p = self.root / name
@@ -66,19 +119,35 @@ output.mkdir(parents=True, exist_ok=True)
             with self.subTest(variant=variant):
                 result = self.make(f"os-image-{variant}", skip_build_setup=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                args = json.loads(Path(self.env['PACKER_ARGS']).read_text())
-                self.assertEqual(args[0], "build")
-                self.assertEqual(args[-1], str(self.packer_dir))
-                for value in ("accelerator=tcg", "cpu_model=max,pauth-impdef=on", "ssh_timeout=180m",
-                              "root_fs_label=cloudimg-rootfs", f"material_manifest={self.packer_dir / '.packer-inputs/material-manifest.json'}",
-                              f"efi_firmware_code={self.env['OVMF_CODE']}",
-                              f"efi_firmware_vars={self.env['OVMF_VARS_TEMPLATE']}"):
-                    self.assertIn(value, args)
+                records = json.loads(Path(self.env['PACKER_ARGS']).read_text())
+                install = self.install_argv(records)
+                provision = self.provision_argv(records)
+                for args in (install, provision):
+                    self.assertEqual(args[0], "build")
+                    self.assertEqual(args[-1], str(self.packer_dir))
+                    for value in (
+                        "accelerator=tcg", "cpu_model=max,pauth-impdef=on", "ssh_timeout=180m",
+                        f"material_manifest={self.packer_dir / '.packer-inputs/material-manifest.json'}",
+                    ):
+                        self.assertIn(value, args)
+                # Only the install stage renders the autoinstall template, so
+                # only it uses the firmware Make discovered (OVMF_CODE /
+                # OVMF_VARS_TEMPLATE); the provision stage boots with the
+                # installed-disk cache entry's own efivars.fd instead (see
+                # _os-image-fde's OVMF_VARS_TEMPLATE override in the Makefile).
+                self.assertIn(f"efi_firmware_code={self.env['OVMF_CODE']}", install)
+                self.assertIn(f"efi_firmware_vars={self.env['OVMF_VARS_TEMPLATE']}", install)
+                self.assertIn("efi_firmware_code=", " ".join(provision))
+                self.assertNotIn(f"efi_firmware_vars={self.env['OVMF_VARS_TEMPLATE']}", provision)
+                # Only the provision stage's provisioners consume root_fs_label.
+                self.assertIn("root_fs_label=cloudimg-rootfs", provision)
+                self.assertNotIn("root_fs_label=cloudimg-rootfs", install)
 
     def test_serial_console_defaults_to_empty_and_passes_an_override_through(self):
         # Empty means "use the architecture default", resolved in the template
         # rather than in Make. A variant each, not the same one twice: the build
-        # target refuses a pre-existing output directory.
+        # target refuses a pre-existing output directory. Only the install
+        # stage renders autoinstall-lvm.pkrtpl, so this checks its argv.
         for variant, extra, expected in (
             ("non-fde", [], "serial_console="),
             ("fde", ["SERIAL_CONSOLE=ttyS1"], "serial_console=ttyS1"),
@@ -86,8 +155,8 @@ output.mkdir(parents=True, exist_ok=True)
             with self.subTest(variant=variant, extra=extra):
                 result = self.make(f"os-image-{variant}", *extra, skip_build_setup=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                args = json.loads(Path(self.env["PACKER_ARGS"]).read_text())
-                self.assertIn(expected, args)
+                records = json.loads(Path(self.env["PACKER_ARGS"]).read_text())
+                self.assertIn(expected, self.install_argv(records))
 
     def test_native_requirement_rejects_tcg_before_packer_build(self):
         result = self.make("os-image-non-fde", "REQUIRE_ACCELERATION=1", skip_build_setup=True)

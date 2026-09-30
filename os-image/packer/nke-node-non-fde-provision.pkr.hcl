@@ -1,60 +1,57 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Non-FDE image variant. Shared input, architecture, and QEMU configuration is
-# declared once in variables.pkr.hcl and locals.pkr.hcl.
+# Provision stage of the non-FDE variant: boots the disk
+# nke-node-non-fde-install.pkr.hcl produced (fresh, or restored from the
+# installed-disk build cache) as a thin qcow2 overlay, then runs the nke
+# provisioners unchanged. cloud-init's persisted NoCloud seed re-applies the
+# installed disk's authorized_keys on every boot (until provision.sh's own
+# `cloud-init clean` at the very end), so this SSHes in with the exact
+# keypair nke-node-non-fde-install.pkr.hcl used -- Make passes a matching
+# ssh_private_key_file/ssh_public_key_file pair, cached alongside the disk.
+# Shared input, architecture, and QEMU configuration is declared once in
+# variables.pkr.hcl and locals.pkr.hcl.
 
-source "qemu" "nke-non-fde" {
-  iso_url = local.installer_iso
-  # Recheck the staged ISO against the digest in the authenticated manifest.
-  iso_checksum = local.installer_checksum
+source "qemu" "nke-non-fde-provision" {
+  iso_url = local.installed_disk_path
+  # Recheck the staged installed disk against the digest in the authenticated
+  # manifest, the same way the install stage rechecks the installer ISO.
+  iso_checksum = local.installed_disk_checksum
+  disk_image   = true
+  # A thin overlay, not a copy: the cached (or just-built) installed disk is
+  # read-only input here. compress-qcow2.sh's `qemu-img convert -O qcow2`
+  # flattens this and refuses to publish a result that still carries a
+  # backing file (see its header comment), so the overlay never leaks out.
+  use_backing_file = true
 
   qemu_binary    = local.qemu_binary
   machine_type   = local.machine_type
   cpu_model      = var.cpu_model
-  disk_size      = var.disk_size
   disk_interface = "virtio"
   format         = "qcow2"
   accelerator    = var.accelerator
-  # Propagate guest TRIM so provision.sh's fstrim can release unused QCOW2
-  # clusters; without unmap the guest reports success but the image stays large.
-  disk_discard = "unmap"
-  # This is a throwaway build VM that Packer shuts down cleanly. Avoid paying
-  # the runner-storage cost of every package-install fsync.
-  disk_cache = "unsafe"
+  disk_discard   = "unmap"
+  disk_cache     = "unsafe"
 
+  # var.efi_firmware_vars here is the install stage's OWN efivars.fd (Make
+  # passes a different -var per stage), not the pristine OVMF template: this
+  # build must boot with the exact NVRAM state the installed disk's
+  # grub-install left behind, not a blank one.
   efi_firmware_code = var.efi_firmware_code
   efi_firmware_vars = var.efi_firmware_vars
-  # The per-build variable store is execution state, not a published artifact.
-  efi_drop_efivars = true
-  efi_boot         = true
+  efi_drop_efivars  = true
+  efi_boot          = true
 
-  # The source-owned compressor below is the only final QCOW2 conversion.
   skip_compaction  = true
   disk_compression = false
 
-  http_content = {
-    "/user-data" = templatefile("${local.project_root}/cidata/autoinstall-lvm.pkrtpl", {
-      ssh_public_key        = local.ssh_public_key
-      luks_enabled          = false
-      luks_passphrase       = ""
-      nvidia_kernel_package = local.nvidia_kernel_package
-      serial_console        = local.serial_console
-    })
-    "/meta-data" = "instance-id: nke-packer-non-fde\nlocal-hostname: nke-packer-non-fde\n"
-  }
-
-  boot_wait    = var.boot_wait
-  boot_command = local.boot_command
   qemuargs = concat(local.architecture_qemuargs, [
-    ["-serial", "file:${local.build_log_directory}/non-fde-install-console.log"],
+    ["-serial", "file:${local.build_log_directory}/non-fde-provision-console.log"],
   ])
 
-  ssh_username         = "ubuntu"
-  ssh_private_key_file = var.ssh_private_key_file
-  ssh_timeout          = var.ssh_timeout
-  # The live installer may accept and drop many probes before its final reboot;
-  # do not let those expected attempts exhaust Packer's handshake counter.
+  ssh_username           = "ubuntu"
+  ssh_private_key_file   = var.ssh_private_key_file
+  ssh_timeout            = var.ssh_timeout
   ssh_handshake_attempts = 10000
 
   shutdown_command = "sudo shutdown -P now"
@@ -67,8 +64,8 @@ source "qemu" "nke-non-fde" {
 }
 
 build {
-  name    = "nke-node-non-fde"
-  sources = ["source.qemu.nke-non-fde"]
+  name    = "nke-node-non-fde-provision"
+  sources = ["source.qemu.nke-non-fde-provision"]
 
   provisioner "shell-local" {
     environment_vars = [

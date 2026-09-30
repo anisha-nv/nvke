@@ -36,6 +36,10 @@ fi
 echo "Detected LUKS devices: ${LUKS_DEVICES}"
 
 echo "Installing clevis + tpm2-tools..."
+# Reads whatever /etc/apt/sources.list the install stage's autoinstall apt:
+# section wrote (autoinstall-lvm.pkrtpl) -- the snapshot.ubuntu.com pin, not
+# the live archive -- since this runs on the same disk, whether that install
+# happened moments ago or was restored from the installed-disk build cache.
 sudo DEBIAN_FRONTEND=noninteractive apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
     clevis clevis-luks clevis-tpm2 clevis-initramfs tpm2-tools

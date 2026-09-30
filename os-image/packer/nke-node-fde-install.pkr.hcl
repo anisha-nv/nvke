@@ -1,10 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Full-disk-encryption image variant. Shared input, architecture, and QEMU
+# Install stage of the FDE variant: boots the Ubuntu Server installer, runs
+# autoinstall to lay down the LVM-on-LUKS layout, and shuts down as soon as
+# SSH into the installed system succeeds -- no provisioners here. Its output
+# is the reusable "installed disk" the Makefile's installed-disk build cache
+# keys on (see INSTALLED_DIR / print-INSTALLED_DISK_CACHE_KEY_FDE in
+# Makefile) and nke-node-fde-provision.pkr.hcl boots as a thin overlay to run
+# the actual nke provisioners. Shared input, architecture, and QEMU
 # configuration is declared once in variables.pkr.hcl and locals.pkr.hcl.
 
-source "qemu" "nke-fde" {
+source "qemu" "nke-fde-install" {
   iso_url = local.installer_iso
   # Recheck the staged ISO against the digest in the authenticated manifest.
   iso_checksum = local.installer_checksum
@@ -25,11 +31,18 @@ source "qemu" "nke-fde" {
 
   efi_firmware_code = var.efi_firmware_code
   efi_firmware_vars = var.efi_firmware_vars
-  # The per-build variable store is execution state, not a published artifact.
-  efi_drop_efivars = true
+  # Keep this build's own NVRAM state (unlike the provision stage below):
+  # the provision build boots this same disk as its own QEMU guest and needs
+  # whatever boot entry the installer's grub-install actually registered.
+  # Dropped efivars is execution state Packer discards; keeping it here is
+  # what makes it a published, cacheable half of the installed-disk pair (see
+  # the Makefile's INSTALLED_DIR layout and prepare-installer-disk).
+  efi_drop_efivars = false
   efi_boot         = true
 
-  # The source-owned compressor below is the only final QCOW2 conversion.
+  # No final compression here -- the install stage's qcow2 is an internal,
+  # cached intermediate, never a published artifact. compress-qcow2.sh runs
+  # once, on the provision stage's flattened result.
   skip_compaction  = true
   disk_compression = false
 
@@ -40,6 +53,8 @@ source "qemu" "nke-fde" {
       luks_passphrase       = var.luks_passphrase
       nvidia_kernel_package = local.nvidia_kernel_package
       serial_console        = local.serial_console
+      ubuntu_snapshot       = var.ubuntu_snapshot
+      ubuntu_archive_path   = local.ubuntu_archive_path
     })
     "/meta-data" = "instance-id: nke-packer-fde\nlocal-hostname: nke-packer-fde\n"
   }
@@ -58,7 +73,7 @@ source "qemu" "nke-fde" {
   ssh_handshake_attempts = 10000
 
   shutdown_command = "sudo shutdown -P now"
-  vm_name          = "nke-node.qcow2"
+  vm_name          = "nke-node-installed.qcow2"
   output_directory = "${var.output_directory}/fde"
   headless         = true
   memory           = 8192
@@ -67,63 +82,8 @@ source "qemu" "nke-fde" {
 }
 
 build {
-  name    = "nke-node-fde"
-  sources = ["source.qemu.nke-fde"]
-
-  provisioner "shell-local" {
-    environment_vars = [
-      "MODE=stage",
-      "MATERIAL_PATH=${local.image_inputs}",
-      "EXPECTED_DIGEST=${local.image_inputs_digest}",
-      "STAGING_DIRECTORY=${local.staged_image_inputs.fde}",
-    ]
-    script = "${local.project_root}/scripts/prepare-image-inputs.sh"
-  }
-
-  error-cleanup-provisioner "shell-local" {
-    environment_vars = [
-      "MODE=clean",
-      "STAGING_DIRECTORY=${local.staged_image_inputs.fde}",
-    ]
-    script = "${local.project_root}/scripts/prepare-image-inputs.sh"
-  }
-
-  provisioner "shell" {
-    inline = ["mkdir -p /var/tmp/nke-image/luks"]
-  }
-
-  provisioner "file" {
-    source      = "${local.staged_image_inputs.fde}/"
-    destination = "/var/tmp/nke-image/"
-    generated   = true
-  }
-
-  provisioner "shell-local" {
-    environment_vars = [
-      "MODE=clean",
-      "STAGING_DIRECTORY=${local.staged_image_inputs.fde}",
-    ]
-    script = "${local.project_root}/scripts/prepare-image-inputs.sh"
-  }
-
-  provisioner "file" {
-    source      = "${local.project_root}/../files/luks/"
-    destination = "/var/tmp/nke-image/luks/"
-  }
-
-  provisioner "shell" {
-    # Run before provision.sh removes Packer's authorized SSH key.
-    environment_vars = ["LUKS_PASSPHRASE=${var.luks_passphrase}"]
-    script           = "${local.project_root}/scripts/configure-fde.sh"
-  }
-
-  provisioner "shell" {
-    environment_vars = ["ROOT_FS_LABEL=${var.root_fs_label}"]
-    script           = "${local.project_root}/scripts/provision.sh"
-  }
-
-  post-processor "shell-local" {
-    # Keep one source-owned final conversion for Make and direct callers.
-    inline = ["${local.project_root}/scripts/compress-qcow2.sh ${var.output_directory}/fde/nke-node.qcow2"]
-  }
+  name    = "nke-node-fde-install"
+  sources = ["source.qemu.nke-fde-install"]
+  # No provisioners: this stage's only job is autoinstall. shutdown_command
+  # above fires as soon as SSH connects, since there is nothing else to run.
 }

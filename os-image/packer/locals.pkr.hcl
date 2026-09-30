@@ -16,6 +16,18 @@ locals {
   ]
   installer_record   = local.installer_records[0]
   image_input_record = local.image_input_records[0]
+  # Only the provision build consumes this, and only after the install stage
+  # (fresh or cache-restored) has produced a disk -- absent for an
+  # install-stage invocation. Guarded with length() rather than indexed
+  # directly: an install-stage `-only` selection still evaluates these
+  # locals (HCL locals are not pruned by -only, only builds/sources are), so
+  # an unconditional [0] would fail validation even though nothing
+  # dereferences the result.
+  installed_disk_records = [for material in local.material_description.materials : material
+    if material.binding == "installed-disk" && material.path == "materials/installed-disk"
+  ]
+  installed_disk_path     = length(local.installed_disk_records) > 0 ? "${local.material_root}/${local.installed_disk_records[0].path}" : ""
+  installed_disk_checksum = length(local.installed_disk_records) > 0 ? local.installed_disk_records[0].digest : "none"
   material_bound_architectures = {
     for candidate in ["amd64", "arm64"] : candidate => candidate
     if local.installer_record.architecture == candidate && local.image_input_record.architecture == candidate
@@ -39,6 +51,10 @@ locals {
   # ARM uses virt, AAVMF, the PL011 serial console, and the NVIDIA 64K-page
   # kernel. AMD64 uses q35, OVMF, ttyS0, and linux-nvidia.
   nvidia_kernel_package = local.architecture == "arm64" ? "linux-nvidia-64k" : "linux-nvidia"
+  # snapshot.ubuntu.com mirrors the same two archive trees apt itself would
+  # otherwise pick by architecture: ubuntu-ports for anything that isn't
+  # amd64, ubuntu for amd64 -- see autoinstall-lvm.pkrtpl's apt: section.
+  ubuntu_archive_path = local.architecture == "arm64" ? "ubuntu-ports" : "ubuntu"
   # The INSTALLED system's console only. boot_command below keeps the installer
   # on the first UART, because the build VM maps `-serial file:` there and
   # moving it would blank the log used to diagnose a stuck bake. Overridable

@@ -102,6 +102,8 @@ env:
   # os-image-cache.yml, on main, is the only writer.
   BUILD_CACHE_REGION: us-east-1
   BUILD_CACHE_ISO_PREFIX: nke/os-image/iso
+  # Keep in step with os-image-cache.yml, the only writer.
+  BUILD_CACHE_INSTALLED_PREFIX: nke/os-image/installed
 
 jobs:
   # A mirror-branch push carries base-branch commits, so the paths above fire
@@ -495,6 +497,43 @@ jobs:
             echo "::notice::restored ${key}"
           else
             echo "::notice::${key} is not in the build cache; the build downloads it from Ubuntu"
+          fi
+
+      # The install stage (autoinstall only, ~12-15 min of each ~25-32 min
+      # bake) is the same regardless of tag or branch as long as
+      # UBUNTU_SNAPSHOT, the ISO and the install-stage inputs match --
+      # os-image-cache.yml keeps one populated per (arch, Ubuntu flavor,
+      # variant). A miss here is not a failure: `make os-image-fde|non-fde`
+      # below runs the install stage itself and just costs the full bake
+      # time. Restored alongside the ISO above rather than instead of it --
+      # the material manifest still stages the ISO as an authenticated input
+      # either way, so skipping that download on a hit would only save
+      # network time, not build time.
+      - name: Restore the installed disk from the build cache
+        if: steps.s5cmd.outcome == 'success'
+        continue-on-error: true
+        # The disk is a few GiB; same reasoning as the ISO restore's timeout.
+        timeout-minutes: 15
+        env:
+          BUCKET: ${{ vars.NKE_GHA_CACHE_BUCKET }}
+        run: |
+          set -euo pipefail
+          key_var="INSTALLED_DISK_CACHE_KEY_$(printf '%s' "${{ matrix.variant }}" | tr 'a-z-' 'A-Z_')"
+          cache_key="$(make --no-print-directory -C os-image/packer "print-${key_var}" \
+            ARCH=${{ matrix.arch }} UBUNTU_RELEASE=${{ matrix.ubuntu_release }})"
+          prefix="s3://${BUCKET}/${BUILD_CACHE_INSTALLED_PREFIX}/${cache_key}"
+          dest="os-image/packer/installed-cache/${cache_key}"
+          mkdir -p "${dest}"
+          s5cmd cp "${prefix}/*" "${dest}/" || true
+          # s5cmd copies each object in the glob independently; only trust the
+          # restore if every file the provision stage needs actually landed --
+          # a partial set is worse than a clean miss (see cache-installed-disk.sh).
+          if [[ -f "${dest}/nke-node-installed.qcow2" && -f "${dest}/efivars.fd" &&
+                -f "${dest}/id_ed25519" && -f "${dest}/id_ed25519.pub" ]]; then
+            echo "::notice::restored ${prefix} (key ${cache_key})"
+          else
+            echo "::notice::${prefix} is not (fully) in the build cache; the build runs the install stage itself"
+            rm -rf "${dest}"
           fi
 
       # Self-timeout, 30s inside the job's real timeout-minutes deadline (see

@@ -16,6 +16,25 @@ autoinstall:
           name: "e*"
         dhcp4: true
 
+  # Pin the archive to one immutable snapshot.ubuntu.com timestamp (see
+  # UBUNTU_SNAPSHOT in the Makefile) instead of the live, ever-changing
+  # mirrors -- otherwise the same ISO installed a month apart pulls different
+  # package versions through `updates: security` below, and the installed-disk
+  # build cache would be caching a moving target. geoip stays off and
+  # fallback is abort, not offline-install/continue, so a mirror-selection
+  # problem fails the build loudly instead of silently falling back to
+  # whatever live mirror curtin would otherwise have geoip-selected.
+  apt:
+    geoip: false
+    preserve_sources_list: false
+    fallback: abort
+    primary:
+      - arches: [default]
+        uri: https://snapshot.ubuntu.com/${ubuntu_archive_path}/${ubuntu_snapshot}
+    security:
+      - arches: [default]
+        uri: https://snapshot.ubuntu.com/${ubuntu_archive_path}/${ubuntu_snapshot}
+
   # Ubuntu's NVIDIA-tuned kernel flavor, not the generic default -- matches
   # node-images' nvidia-kernel role. curtin installs this as the system
   # kernel directly, so there's no generic kernel to reboot into or purge

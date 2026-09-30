@@ -74,7 +74,8 @@ After a successful `nke-agent` start, the image touches
 
 ## Must have (FDE variant)
 
-`nke-node-fde.pkr.hcl` is an **opt-in** build variant, not the default image.
+`nke-node-fde-install.pkr.hcl`/`nke-node-fde-provision.pkr.hcl` is an
+**opt-in** build variant, not the default image.
 It satisfies everything above, plus:
 
 | Item | Requirement |
@@ -89,7 +90,8 @@ It satisfies everything above, plus:
 
 ## Must have (non-FDE variant, no encryption)
 
-`nke-node-non-fde.pkr.hcl` is also **opt-in**, not the default image. It uses
+`nke-node-non-fde-install.pkr.hcl`/`nke-node-non-fde-provision.pkr.hcl` is
+also **opt-in**, not the default image. It uses
 the same LVM layout as the FDE image but configures no encryption. This layout
 parity is intentional.
 

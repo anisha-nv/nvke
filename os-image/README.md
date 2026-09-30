@@ -96,6 +96,30 @@ those tools check over SSH and still pass.
 Packer validates against `^tty[A-Za-z0-9]+$`. That is a boundary, not a typo
 check: the value reaches a shell command in the autoinstall late-commands.
 
+`make os-image-fde`/`os-image-non-fde` each run two Packer builds, not one.
+The **install** stage boots the Ubuntu installer, runs autoinstall, and shuts
+down — no nke provisioners. The **provision** stage boots that disk as a thin
+qcow2 overlay and runs the nke provisioners (`nke-agent`, SPIRE, CNI, FDE/LVM
+setup) unchanged. Autoinstall is most of a bake's wall time, so Make caches
+the install stage's output in `packer/installed-cache/<key>/` (a qcow2, its
+`efivars.fd`, and the SSH keypair baked into `authorized_keys` — the only copy
+of that keypair, since the provision stage's `provision.sh` strips it from the
+final image) and reuses it on a hit instead of re-running the install stage.
+The key is a sha256 over the ISO's digest, `UBUNTU_SNAPSHOT`, `ARCH`,
+`UBUNTU_RELEASE`, the variant, and every file that shapes the install stage
+(see `scripts/print-installed-disk-cache-key.sh`, and `make print-%`, e.g.
+`make -C os-image/packer print-INSTALLED_DISK_CACHE_KEY_FDE`). CI populates
+this cache from `.github/workflows/os-image-cache.yml`'s `installed-disk` job
+and restores it in `os-image-artifact.yml`; `make clean-installed-cache`
+drops a local copy (plain `make clean` does not, unlike `iso-cache/`).
+
+`UBUNTU_SNAPSHOT` (format `YYYYMMDDTHHMMSSZ`) pins the install stage's apt
+sources to one immutable [snapshot.ubuntu.com](https://snapshot.ubuntu.com)
+timestamp instead of the live archive (see `apt:` in
+`cidata/autoinstall-lvm.pkrtpl`), so a cached installed disk stays valid for
+as long as nothing else in the cache key changes. It is bumped by hand for
+now.
+
 Image baking uses the existing package Make targets.
 `NKE_PACKAGE_BUILDER=auto|host|nix` picks the package builder: `auto` builds on
 a matching Linux host and otherwise uses the
@@ -229,19 +253,32 @@ incompatible plugin therefore fails validation before QEMU starts rather than
 falling back to plugin discovery or download.
 
 The `-only` selector is required. Omitting it is unsupported because Packer
-runs both directory-project builds, including the FDE build, by default.
+runs all four directory-project builds, including the FDE ones, by default.
+There are two per variant: `nke-node-<variant>-install.qemu.nke-<variant>-install`
+(autoinstall only) and `nke-node-<variant>-provision.qemu.nke-<variant>-provision`
+(boots the install stage's disk as a thin overlay and runs the nke
+provisioners).
 
-Both builds require the `architecture`, `material_manifest`, `output_directory`,
-`ssh_private_key_file`, `ssh_public_key_file`, `efi_firmware_code`, and
-`efi_firmware_vars` variables. Supply a matching firmware pair for the
-architecture (OVMF for amd64, AAVMF for arm64). The manifest must be an
-absolute file path. The requested architecture must be `amd64` or `arm64`, and
-both manifest records must match it before Packer selects QEMU or guest
-packages. Its sibling `materials/` directory must contain:
+All four builds require the `architecture`, `material_manifest`,
+`output_directory`, `ssh_private_key_file`, `ssh_public_key_file`,
+`efi_firmware_code`, and `efi_firmware_vars` variables. Supply a matching
+firmware pair for the architecture (OVMF for amd64, AAVMF for arm64) — a
+provision build should pass its install stage's own `efivars.fd` here, not a
+pristine template, since it boots with that disk's actual NVRAM state. The
+manifest must be an absolute file path. The requested architecture must be
+`amd64` or `arm64`, and every manifest record present must match it before
+Packer selects QEMU or guest packages. Its sibling `materials/` directory must
+contain:
 
-- `installer-iso`, the prepared installer ISO;
+- `installer-iso`, the prepared installer ISO (both stages' manifests carry
+  this; only the install source dereferences it);
 - `image-inputs`, a tar archive whose root contains the same prepared files that Make
-  stages in `packer/artifacts/`.
+  stages in `packer/artifacts/` (only the provision source dereferences it);
+- `installed-disk`, present only for a provision build: the install stage's
+  qcow2 (fresh, or restored from the installed-disk build cache described
+  above), authenticated the same way as the ISO. Optional at the schema
+  level — an install build's manifest has none yet — but at most one record,
+  well-formed if present.
 
 The explicit `architecture` is the caller's requested build intent, while the
 two manifest records are the independently authenticated material facts. Packer
@@ -282,16 +319,24 @@ The manifest contract is:
       "architecture": "amd64",
       "digest": "sha256:<digest>",
       "path": "materials/image-inputs"
+    },
+    {
+      "binding": "installed-disk",
+      "component": "nke-installed-disk",
+      "kind": "disk-image",
+      "architecture": "amd64",
+      "digest": "sha256:<digest>",
+      "path": "materials/installed-disk"
     }
   ]
 }
 ```
 
-Both records must declare the same `amd64` or `arm64` architecture. The caller
-must keep the authenticated manifest and material bytes immutable for the
-entire Packer process. The image-input archive may contain only regular files
-and directories; links and special entries are rejected before host-side
-extraction.
+Every record present must declare the same `amd64` or `arm64` architecture.
+The caller must keep the authenticated manifest and material bytes immutable
+for the entire Packer process. The image-input archive may contain only
+regular files and directories; links and special entries are rejected before
+host-side extraction.
 
 The direct defaults assume a same-architecture, KVM-capable host:
 `accelerator=kvm` and `cpu_model=host`. A caller without usable KVM must set

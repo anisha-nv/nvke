@@ -7,7 +7,13 @@ encryption-at-rest is a separate, controller/agent-side concern and is out of
 scope for `os-image/` — see the controller's etcd-encryption workflows for
 that half.
 
-This is a plain-shell Packer build, `nke-node-fde.pkr.hcl`.
+This is a plain-shell Packer build, split into an install stage
+(`nke-node-fde-install.pkr.hcl`, autoinstall only) and a provision stage
+(`nke-node-fde-provision.pkr.hcl`, everything below). The provision stage
+boots the install stage's disk (fresh, or restored from the installed-disk
+build cache — see `os-image/README.md`) as a thin overlay, so the LUKS
+passphrase slot and the `luks.key=` GRUB parameter below are already on disk
+by the time it starts.
 
 ## How it works
 
