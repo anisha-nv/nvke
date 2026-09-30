@@ -829,10 +829,13 @@ k8s_resource(
     pod_readiness="ignore",
 )
 
-# NKE API authentication scaffolding: the client namespaces and service accounts
-# the demo mints tokens for, the token-minter RBAC, and the auth config the
-# deployment mounts at /etc/nke/auth/auth.yaml. The NKE release depends on this
-# so the ConfigMap exists before the pod mounts it.
+# NKE API authentication and authorization scaffolding: the client namespaces
+# and service accounts the demo mints tokens for, the token-minter RBAC, the
+# auth config the deployment mounts at /etc/nke/auth/auth.yaml, and the dev
+# role mappings the chart projects as roleMappings.json. The NKE release
+# depends on this so both ConfigMaps exist before the pod mounts them. Editing
+# the role mappings re-applies them, and the controller reloads them without a
+# restart.
 k8s_resource(
     new_name="nke-auth-dev",
     labels=["1-infra"],
@@ -843,13 +846,28 @@ k8s_resource(
         "nke-client:serviceaccount:nke-clients",
         "nke-outsider:serviceaccount:nke-outsiders",
         "nke-e2e:serviceaccount:nke-clients",
+        "nke-cli:serviceaccount:nke-system",
+        "nke-claim-subject:serviceaccount:nke-clients",
         "nke-client-token-minter:role:nke-clients",
         "nke-client-token-minter:rolebinding:nke-clients",
         "nke-outsider-token-minter:role:nke-outsiders",
         "nke-outsider-token-minter:rolebinding:nke-outsiders",
+        "nke-cli-token-minter:role:nke-system",
+        "nke-cli-token-minter:rolebinding:nke-system",
+        "nke-claim-subject-token-minter:role:nke-clients",
+        "nke-claim-subject-token-minter:rolebinding:nke-clients",
         "nke-auth-config:configmap:cloud-workflow-engine",
+        "nke-authz-role-mappings:configmap:cloud-workflow-engine",
     ],
-    resource_deps=["check-management-cluster"],
+    # nke-cli:serviceaccount:nke-system (and its Role/RoleBinding) are applied
+    # into the nke-system namespace, which nke-system-namespace (above) owns
+    # creating -- without this dep both become eligible right after
+    # check-management-cluster and the apply can race namespace creation.
+    #
+    # nke-claim-subject and its Role/RoleBinding live in nke-clients, which
+    # this resource creates. An object not listed here is applied outside
+    # these resource_deps and races that namespace.
+    resource_deps=["check-management-cluster", "nke-system-namespace"],
     pod_readiness="ignore",
 )
 
@@ -981,6 +999,19 @@ _cwe_auth_enabled = os.getenv(
 _cwe_permissive_mode = os.getenv(
     "NKE_PERMISSIVE_MODE", _tilt_env.get("NKE_PERMISSIVE_MODE", "false")) == "true"
 
+# NKE API authorization. Enforcing by default alongside authn, on the chart's
+# roles and policies and the dev role mappings (nke-auth-dev, above). The
+# chart refuses apiAuthz.enabled without apiAuth.enabled (deployment.yaml), so
+# NKE_AUTH_ENABLED=false turns authz off too.
+#
+#   NKE_AUTHZ_ENABLED=false tilt up        -> AUTHZ_BUNDLE_PATH unset, authz off
+#   NKE_AUTHZ_PERMISSIVE_MODE=true tilt up -> evaluate and count, never reject
+#
+_cwe_authz_enabled = os.getenv(
+    "NKE_AUTHZ_ENABLED", _tilt_env.get("NKE_AUTHZ_ENABLED", "true")) == "true"
+_cwe_authz_permissive_mode = os.getenv(
+    "NKE_AUTHZ_PERMISSIVE_MODE", _tilt_env.get("NKE_AUTHZ_PERMISSIVE_MODE", "false")) == "true"
+
 _cwe_chart_extra_env_names = [
     "TEMPORAL_UI_URL",
     "NODE_HEALTH_CHECK_POLLING_INTERVAL",
@@ -1042,6 +1073,8 @@ _cwe_chart_flags = [
     "--set-string", "appDb.postgresPassword=%s" % _postgres_superuser_password,
     "--set", "apiAuth.enabled=%s" % ("true" if _cwe_auth_enabled else "false"),
     "--set", "apiAuth.permissive=%s" % ("true" if _cwe_permissive_mode else "false"),
+    "--set", "apiAuthz.enabled=%s" % ("true" if (_cwe_auth_enabled and _cwe_authz_enabled) else "false"),
+    "--set", "apiAuthz.permissive=%s" % ("true" if _cwe_authz_permissive_mode else "false"),
     "--set", "capi.rbac.create=true",
     "--set", "tenantAccess.enabled=%s" % ("true" if _cwe_tenant_access_enabled else "false"),
     "--set", "nkeOIDCAuth.enabled=%s" % ("true" if _cwe_oidc_enabled else "false"),
