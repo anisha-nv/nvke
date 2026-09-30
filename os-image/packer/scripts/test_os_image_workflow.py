@@ -4,6 +4,7 @@
 """Static publication-boundary checks for the OS-image workflow."""
 
 from pathlib import Path
+import re
 import unittest
 
 
@@ -13,6 +14,7 @@ WORKFLOW = (
     / "workflows"
     / "os-image-artifact.yml"
 )
+CACHE_WORKFLOW = WORKFLOW.with_name("os-image-cache.yml")
 README = Path(__file__).resolve().parents[2] / "README.md"
 
 
@@ -142,6 +144,24 @@ class OSImageWorkflowTest(unittest.TestCase):
         )
         self.assertIn('"${DISK}:application/vnd.qemu.qcow2"', publish)
         self.assertIn('sha256sum "${DISK}"', release_assets)
+
+    def test_cache_writer_covers_every_ubuntu_flavor_the_bake_reads(self):
+        # The bake reads what os-image-cache.yml writes. A flavor added to one
+        # and not the other is a permanent miss, which nothing reports.
+        cache = CACHE_WORKFLOW.read_text(encoding="utf-8")
+        baked = re.findall(r'ubuntu_release:"([^"]+)"', self.workflow)
+        cached = re.search(r"ubuntu_release: \[([^\]]+)\]", cache)
+        self.assertTrue(baked)
+        self.assertIsNotNone(cached)
+        self.assertEqual(
+            sorted(baked), sorted(r.strip() for r in cached.group(1).split(","))
+        )
+        for line in (
+            "BUILD_CACHE_REGION: us-east-1",
+            "BUILD_CACHE_ISO_PREFIX: nke/os-image/iso",
+        ):
+            self.assertIn(line, self.workflow)
+            self.assertIn(line, cache)
 
 
 if __name__ == "__main__":

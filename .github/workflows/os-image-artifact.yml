@@ -98,6 +98,10 @@ concurrency:
 env:
   REPO_FDE: ghcr.io/dsx-ai-factory/nke/os-image-fde
   REPO_NON_FDE: ghcr.io/dsx-ai-factory/nke/os-image-non-fde
+  # The S3 build cache. The bucket and its two roles are repository variables;
+  # os-image-cache.yml, on main, is the only writer.
+  BUILD_CACHE_REGION: us-east-1
+  BUILD_CACHE_ISO_PREFIX: nke/os-image/iso
 
 jobs:
   # A mirror-branch push carries base-branch commits, so the paths above fire
@@ -235,6 +239,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write  # the build cache's read role
     env:
       # Crane does not use the runner's Docker daemon mirror configuration.
       # Route Docker Hub reads through a public pull-through mirror reachable
@@ -290,6 +295,9 @@ jobs:
             echo "packer_version=$(make --no-print-directory print-PACKER_VERSION)"
             echo "packer_sha256_amd64=$(make --no-print-directory print-PACKER_SHA256_AMD64)"
             echo "packer_sha256_arm64=$(make --no-print-directory print-PACKER_SHA256_ARM64)"
+            echo "s5cmd_version=$(make --no-print-directory print-S5CMD_VERSION)"
+            echo "s5cmd_sha256_amd64=$(make --no-print-directory print-S5CMD_SHA256_AMD64)"
+            echo "s5cmd_sha256_arm64=$(make --no-print-directory print-S5CMD_SHA256_ARM64)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up ORAS
@@ -424,6 +432,70 @@ jobs:
           set -euo pipefail
           echo "${GHCR_TOKEN}" | oras login ghcr.io \
             --username "${{ github.actor }}" --password-stdin
+
+      # The installer ISO is 2 to 3 GiB, and arm64's comes from
+      # cdimage.ubuntu.com at a couple of MB/s. os-image-cache.yml keeps each
+      # one in the S3 build cache, too large for the 10 GiB GitHub cache
+      # together. prepare-installer-iso.sh checks whatever lands in iso-cache/
+      # against Ubuntu's SHA256SUMS and downloads again on a mismatch, so the
+      # cache can speed a build up but cannot change what it bakes. So none of
+      # these three steps can fail the bake: a miss, an STS or S3 outage, and
+      # unset repository variables all fall back to Ubuntu's mirror. The role
+      # gate keeps an empty role-to-assume from falling back to whatever
+      # ambient credentials the ARC pod has.
+      - name: Configure AWS credentials for the build cache
+        id: cache_aws
+        if: vars.NKE_GHA_CACHE_READ_ROLE_ARN != ''
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.NKE_GHA_CACHE_READ_ROLE_ARN }}
+          aws-region: ${{ env.BUILD_CACHE_REGION }}
+
+      - name: Install s5cmd
+        id: s5cmd
+        if: steps.cache_aws.outcome == 'success'
+        continue-on-error: true
+        env:
+          S5CMD_VERSION: ${{ steps.versions.outputs.s5cmd_version }}
+          S5CMD_SHA256: ${{ steps.versions.outputs.s5cmd_sha256_amd64 }}
+          S5CMD_SHA256_ARM64: ${{ steps.versions.outputs.s5cmd_sha256_arm64 }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          expected="${S5CMD_SHA256}"
+          platform=64bit
+          if [[ "${ARCH}" == "arm64" ]]; then
+            expected="${S5CMD_SHA256_ARM64}"
+            platform=arm64
+          fi
+          tarball="s5cmd_${S5CMD_VERSION}_Linux-${platform}.tar.gz"
+          tmp="$(mktemp -d)"
+          curl -fsSL -o "${tmp}/${tarball}" \
+            "https://github.com/peak/s5cmd/releases/download/v${S5CMD_VERSION}/${tarball}"
+          echo "${expected}  ${tmp}/${tarball}" | sha256sum -c -
+          tar -xzf "${tmp}/${tarball}" -C "${tmp}" s5cmd
+          sudo install -m 0755 "${tmp}/s5cmd" /usr/local/bin/s5cmd
+          s5cmd version
+
+      - name: Restore the installer ISO from the build cache
+        if: steps.s5cmd.outcome == 'success'
+        continue-on-error: true
+        # A stalled transfer would otherwise eat the whole job budget.
+        timeout-minutes: 15
+        env:
+          BUCKET: ${{ vars.NKE_GHA_CACHE_BUCKET }}
+        run: |
+          set -euo pipefail
+          iso_url="$(make --no-print-directory -C os-image/packer print-ISO_URL \
+            ARCH=${{ matrix.arch }} UBUNTU_RELEASE=${{ matrix.ubuntu_release }})"
+          key="s3://${BUCKET}/${BUILD_CACHE_ISO_PREFIX}/${iso_url##*/}"
+          mkdir -p os-image/packer/iso-cache
+          if s5cmd cp "${key}" os-image/packer/iso-cache/; then
+            echo "::notice::restored ${key}"
+          else
+            echo "::notice::${key} is not in the build cache; the build downloads it from Ubuntu"
+          fi
 
       # Self-timeout, 30s inside the job's real timeout-minutes deadline (see
       # "Record job start time" above), so a hang here dumps the serial
