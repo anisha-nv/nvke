@@ -134,21 +134,8 @@ jobs:
           WANT: ${{ github.event.inputs.arch }}
         run: |
           set -euo pipefail
-          # The amd64 KVM scale set on the same fleet, replacing the single
-          # self-hosted GPU runner that serialized every amd64 bake.
-          amd64='{"arch":"amd64","runner":"arc-amd64-kvm","timeout_minutes":180}'
-          # Scale set on the RelEng EKS fleet: 16 vCPU, 64 GiB and 200 GiB of
-          # ephemeral storage on the same c7g.metal, so /dev/kvm is real
-          # hardware. linux-arm64-cpu16 has no /dev/kvm at all.
-          #
-          # Back on arc-arm64-kvm after #863 backed it off. The only thing
-          # that failed there was the udev block above, which cannot work in
-          # a container; this leg never needed libvirt, because Packer drives
-          # its own QEMU. kubeadm-bringup-e2e stays on the self-hosted fleet
-          # until the libvirt side of #863 is solved — it is a different
-          # failure, so moving them separately isolates the variable rather
-          # than confusing it.
-          arm64='{"arch":"arm64","runner":"arc-arm64-kvm","timeout_minutes":180}'
+          amd64='{"arch":"amd64"}'
+          arm64='{"arch":"arm64"}'
           case "${WANT:-both}" in
             amd64) arches="[${amd64}]" ;;
             arm64) arches="[${arm64}]" ;;
@@ -164,7 +151,7 @@ jobs:
             [{ubuntu_release:"26.04.1",tag_suffix:""},
              {ubuntu_release:"24.04.5",tag_suffix:"-ubuntu24.04"}] as $flavors
             | [$arches[] as $a | $flavors[] as $f | ("fde","non-fde") as $v
-               | $a + $f + {variant:$v}]')"
+               | $a + $f + {variant:$v, timeout_minutes:90}]')"
           echo "legs=${legs}" >> "$GITHUB_OUTPUT"
           echo "building: ${legs}"
 
@@ -218,24 +205,19 @@ jobs:
     needs: [matrix, validate-packer]
     if: github.repository == 'dsx-ai-factory/nke'
     name: Build and verify (${{ matrix.arch }}, ubuntu ${{ matrix.ubuntu_release }}, ${{ matrix.variant }})
-    # Every build needs /dev/kvm; the "matrix" job picks the runners. arm64
-    # never finished under tcg, on the amd64 runner or on linux-arm64-cpu16,
-    # which has no /dev/kvm either (#730, #731, #733, #734).
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.matrix.outputs.legs) }}
-    # The "Enable KVM access" step below enforces /dev/kvm.
-    runs-on: ${{ matrix.runner }}
-    # amd64: sized for real KVM (FDE bake + demo-fde.sh + non-FDE bake +
-    # boot-smoke, each a few minutes, with real headroom); the KVM gate below
-    # fails fast instead of burning the timeout if that ever regresses to
-    # tcg. Bumped from 120m to 180m after a real run's amd64 leg still timed
-    # out (https://github.com/dsx-ai-factory/nke/actions/runs/34525233526) for a
-    # cause not yet root-caused -- see #695 for one confirmed contributor
-    # (a bloated golden image) and the self-timeout + console-log dump on
-    # the build steps below for diagnosing the next one. arm64: 180m now it
-    # runs under KVM, down from 300m when it was emulated.
+    # Every build needs /dev/kvm, so it runs on the arc-*-kvm bare-metal scale
+    # sets. arm64 never finished under tcg, on the amd64 runner or on
+    # linux-arm64-cpu16, which has no /dev/kvm (#730, #731, #733, #734).
+    runs-on: arc-${{ matrix.arch }}-kvm
+    # One variant per job takes 14-27 min with a warm ISO cache, and a cold
+    # arm64 ISO download from cdimage.ubuntu.com adds ~25 min. 90 leaves
+    # headroom without tying up a bare-metal KVM runner for 3h on a hang (see
+    # #695 for one confirmed cause of slow builds: a bloated golden image).
+    # The KVM gate below fails fast if /dev/kvm ever regresses.
     timeout-minutes: ${{ matrix.timeout_minutes }}
     # contents: read, not write -- the Release is cut by the "release" job.
     permissions:
@@ -716,7 +698,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # Fans the matrix back in: checksums.txt covers every disk both legs built.
+  # Fans the matrix back in: checksums.txt covers every disk all builds made.
   # Separate jobs, not more steps in "publish": that job also runs on
   # pull-request/* mirror branches with no publish step, and an
   # `environment:` gate would apply to the whole job, not just the push
