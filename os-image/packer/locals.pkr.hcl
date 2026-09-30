@@ -53,10 +53,6 @@ locals {
   # ARM uses virt, AAVMF, the PL011 serial console, and the NVIDIA 64K-page
   # kernel. AMD64 uses q35, OVMF, ttyS0, and linux-nvidia.
   nvidia_kernel_package = local.architecture == "arm64" ? "linux-nvidia-64k" : "linux-nvidia"
-  # snapshot.ubuntu.com mirrors the same two archive trees apt itself would
-  # otherwise pick by architecture: ubuntu-ports for anything that isn't
-  # amd64, ubuntu for amd64 -- see autoinstall-lvm.pkrtpl's apt: section.
-  ubuntu_archive_path = local.architecture == "arm64" ? "ubuntu-ports" : "ubuntu"
   # The INSTALLED system's console only. boot_command below keeps the installer
   # on the first UART, because the build VM maps `-serial file:` there and
   # moving it would blank the log used to diagnose a stuck bake. Overridable

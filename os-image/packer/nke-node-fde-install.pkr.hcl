@@ -51,7 +51,6 @@ source "qemu" "nke-fde-install" {
       nvidia_kernel_package = local.nvidia_kernel_package
       serial_console        = local.serial_console
       ubuntu_snapshot       = var.ubuntu_snapshot
-      ubuntu_archive_path   = local.ubuntu_archive_path
     })
     "/meta-data" = "instance-id: nke-packer-fde\nlocal-hostname: nke-packer-fde\n"
   }
@@ -84,8 +83,11 @@ build {
 
   # No nke provisioners: this stage's only job is autoinstall. Wait for
   # cloud-init to finish its own first-boot run before shutdown, so the
-  # cached disk never captures it mid-write.
+  # cached disk never captures it mid-write. Exit 2 is "disabled" (what the
+  # installed system reports on this boot) or "done with recoverable
+  # errors"; either way nothing is still running.
   provisioner "shell" {
-    inline = ["sudo cloud-init status --wait"]
+    inline           = ["sudo cloud-init status --wait"]
+    valid_exit_codes = [0, 2]
   }
 }
