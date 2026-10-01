@@ -34,6 +34,14 @@ set -Eeuo pipefail
 
 STATE_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}/bootstrap-e2e-host}"
 
+# Where the unmanaged daemons' logs go, root-owned and 0700, rather than
+# /tmp/<name>.log. The daemons are started as root, so on a host where another
+# local user can pre-create /tmp/containerd-nerdctl.log as a symlink, that
+# redirect writes root-owned output wherever the link points. Created by
+# start_unmanaged before the first redirect, and read back by the failure
+# diagnostics below.
+UNMANAGED_LOG_DIR="/var/log/nke-bootstrap-e2e"
+
 log() { printf '[bootstrap-e2e-host] %s\n' "$*"; }
 
 # wait_for_socket waits up to $2 seconds for socket $1. As root: containerd's
@@ -52,12 +60,30 @@ wait_for_socket() {
 #   System has not been booted with systemd as init system (PID 1).
 have_systemd() { [ -d /run/systemd/system ]; }
 
+# disposable_host reports whether the caller has declared this host throwaway,
+# which is what makes deleting its Docker binaries acceptable rather than
+# vandalism. Nothing here can detect that: have_systemd tells us there is no
+# init system, not that the host gets discarded, and an ephemeral ARC pod and a
+# reusable non-systemd VM are indistinguishable from in here. So the workflow,
+# which does know, says so -- and anything that has not said so gets the
+# reversible path in remove_docker instead.
+disposable_host() {
+  case "${NKE_E2E_DISPOSABLE_HOST:-}" in
+    1 | true | TRUE | yes) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # start_unmanaged runs a daemon directly, for hosts with no init system to
 # hand it to. $1 names it for the log file; the rest is the command.
 start_unmanaged() {
   local name="$1"; shift
   log "no systemd: starting ${name} directly"
-  sudo sh -c "nohup $* >/tmp/${name}.log 2>&1 &"
+  # install -d rather than mkdir -p: it sets the mode as it creates, so there
+  # is no window where the directory exists world-writable. See
+  # UNMANAGED_LOG_DIR for why the logs are not in /tmp.
+  sudo install -d -m 700 -o root -g root "${UNMANAGED_LOG_DIR}"
+  sudo sh -c "nohup $* >'${UNMANAGED_LOG_DIR}/${name}.log' 2>&1 &"
 }
 
 # install_runtime installs nerdctl-full and starts the standalone containerd
@@ -164,7 +190,7 @@ UNIT
       echo "::endgroup::"
     else
       echo "::group::containerd-nerdctl output"
-      sudo cat /tmp/containerd-nerdctl.log || true
+      sudo cat "${UNMANAGED_LOG_DIR}/containerd-nerdctl.log" || true
       echo "::endgroup::"
     fi
     echo "::group::/etc/containerd-nerdctl/config.toml"
@@ -194,16 +220,17 @@ UNIT
       echo "::endgroup::"
     else
       echo "::group::buildkit-nerdctl output"
-      sudo cat /tmp/buildkit-nerdctl.log || true
+      sudo cat "${UNMANAGED_LOG_DIR}/buildkit-nerdctl.log" || true
       echo "::endgroup::"
     fi
     exit 1
   fi
 }
 
-# remove_docker makes Docker unusable, shims it on PATH, and asserts it is
-# gone. How it does the first part depends on the runner: masked units where
-# there is systemd, a deleted client where Docker is a dind sidecar.
+# remove_docker makes Docker unusable, shims it on PATH, and asserts it. How it
+# does the first part depends on the runner: masked units where there is
+# systemd, a deleted client where Docker is a dind sidecar on a host the caller
+# has declared disposable, and shim-plus-DOCKER_HOST alone anywhere else.
 remove_docker() {
   # containerd.service here is Docker's, on /run/containerd/containerd.sock:
   # the socket nerdctl falls back to without CONTAINERD_ADDRESS. `disable`
@@ -213,24 +240,38 @@ remove_docker() {
   # sidecar reached over the mounted socket. Deleting the socket alone would
   # be weaker than masking -- the kubelet can restart that sidecar, and it
   # recreates the socket on startup. So take the client away instead, and
-  # point DOCKER_HOST at nothing in case a daemon reappears anyway. Removing
-  # the binary is safe precisely here: this runner is an ephemeral pod
-  # discarded after one job, where on a reusable VM it would outlive the run
-  # and break the next one.
+  # point DOCKER_HOST at nothing in case a daemon reappears anyway.
+  #
+  # Deleting it is only acceptable on a host that is discarded after the job,
+  # so it waits on disposable_host rather than on have_systemd: the two are not
+  # the same test, and on a reusable non-systemd host the deletion outlives the
+  # run and takes the next one -- and whoever's Docker install -- with it.
+  # Without that declaration the shim and DOCKER_HOST below still make docker
+  # unusable for this run, reversibly, which is weaker only against a caller
+  # that invokes a real binary by absolute path with its own -H.
+  docker_deleted=no
   if have_systemd; then
     sudo systemctl disable --now docker.socket docker.service containerd.service 2>/dev/null || true
     sudo systemctl mask docker.socket docker.service containerd.service
   else
-    log "no systemd: removing the Docker client rather than masking units"
-    while read -r real; do
-      sudo rm -f "${real}"
-    done < <(type -aP docker || true)
     # GITHUB_ENV so every later step of the job inherits it, the same way
     # the shim below uses GITHUB_PATH.
     if [ -n "${GITHUB_ENV:-}" ]; then
       echo "DOCKER_HOST=unix:///nonexistent/docker.sock" >> "${GITHUB_ENV}"
     fi
     export DOCKER_HOST="unix:///nonexistent/docker.sock"
+    if disposable_host; then
+      log "no systemd: removing the Docker client rather than masking units"
+      while read -r real; do
+        sudo rm -f "${real}"
+      done < <(type -aP docker || true)
+      docker_deleted=yes
+    else
+      log "no systemd, and NKE_E2E_DISPOSABLE_HOST is unset: keeping the Docker binaries."
+      log "The shim and DOCKER_HOST still make docker unusable for this run, and the"
+      log "assertions below still hold. Set NKE_E2E_DISPOSABLE_HOST=1 only on a runner"
+      log "that is discarded afterwards, which is what makes deleting them recoverable."
+    fi
   fi
   sudo rm -f /var/run/docker.sock /run/docker.sock
 
@@ -292,11 +333,18 @@ SHIM
     # sidecar with. Asserted rather than assumed, for the same reason the
     # masking is -- a removal that did not take reads as a guarantee while
     # providing nothing.
-    while read -r real; do
-      if [ "${real}" != "${shim_dir}/docker" ]; then
-        echo "::error::${real} still exists after removal, want it gone"; exit 1
-      fi
-    done < <(type -aP docker || true)
+    #
+    # Only when the deletion was the path taken. Where it was declined the
+    # binaries are meant to still be there, and what carries the guarantee
+    # instead is the loop above, which ran every one of them and required it to
+    # fail to reach a daemon.
+    if [ "${docker_deleted}" = yes ]; then
+      while read -r real; do
+        if [ "${real}" != "${shim_dir}/docker" ]; then
+          echo "::error::${real} still exists after removal, want it gone"; exit 1
+        fi
+      done < <(type -aP docker || true)
+    fi
     if [ "${DOCKER_HOST:-}" = "" ]; then
       echo "::error::DOCKER_HOST is unset after removal, want it pointing nowhere"; exit 1
     fi
