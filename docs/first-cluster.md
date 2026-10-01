@@ -152,9 +152,11 @@ bin/nkectl delete cluster <name>
 [`cli/examples/nico-mock-cluster.yaml`](../cli/examples/nico-mock-cluster.yaml)
 works as-is — its UUIDs are nico-mock's seeded identifiers.
 
-A node pool carries **either** a `nico` payload **or** an `infra` one, never
-both. **Mock NICo** uses `infra`, supplying the `NicoCluster` and `NicoMachineTemplate`
-manifests directly; a real site uses `nico` and CWE builds them. Full schema at
+The cluster's top-level `nico` or `infra` payload sets its provider, and the
+control plane and every node pool must carry the same one. **Mock NICo** uses
+`infra`, supplying the `NicoCluster` and `NicoMachineTemplate` manifests
+directly; a real site uses `nico` and CWE builds them. See
+[Control plane configuration](#control-plane-configuration); full schema at
 `/api/docs`.
 
 For `curl`, mint a token with `hack/nke-token.sh` after the stack is up:
@@ -283,15 +285,18 @@ leaves nothing schedulable and the node never reaches `Ready`.
 
 ### 3. Point at your images
 
-Both are required and the bootstrap fails without them. Nothing else has to be
-pointed at: `nkectl` installs the CWE chart and the provisioned provider's
-manifests from the copies embedded in the binary, of the commit it was built
-from, so a released binary needs no checkout.
+`make -C cli images` builds both with nerdctl on this host, tagged
+`nke-controller:latest` and `cluster-api-provider-provisioned:latest`, and the
+bootstrap side-loads them by default. To use images you pushed to a registry
+instead, name them:
 
 ```bash
-export NKECTL_CWE_IMAGE=<cwe-controller image>
+export NKECTL_CWE_IMAGE=<nke-controller image>
 export NKECTL_CAPI_PROVISIONED_IMAGE=<provisioned provider image>
 ```
+
+`nkectl` carries the CWE chart and the provisioned provider's manifests. Step 4
+lists what it fetches.
 
 ### 4. Bootstrap
 
@@ -426,6 +431,40 @@ teardown cannot be helped along through the API.
 
 - The site controller does not manage itself: no upgrade, node cycling or
   scaling.
+
+## Control plane configuration
+
+A tenant cluster's control plane is described once, at the cluster level, by
+`controlPlaneConfig`. The site controller's control-plane controller manages
+it: it creates control-plane hosts in parallel, joins them to the cluster one
+at a time, and deletes them one at a time. A create request carries
+`controlPlaneConfig` alongside a `nodePools` list that holds only workers:
+
+```yaml
+controlPlaneConfig:
+  desiredCount: 3            # >= 1; keep it odd so etcd holds a quorum
+  maxSurge: 1                # 0 or 1: 1 replaces before removing, 0 removes first
+  systemReservedMemory: "16Gi"
+  nico:
+    instanceTypePreference:  # ordered UUIDs; index 0 is tried first, the rest are fallback
+      - 00000000-0000-0000-0000-000000000000
+    vpcPrefixIDs:
+      - 00000000-0000-0000-0000-000000000000
+    sshKeyGroupIDs:
+      - 00000000-0000-0000-0000-000000000000
+    osProfile: nke-260625-24.04-x86-fde
+    configProfile: default-cp
+```
+
+`controlPlaneConfig` takes exactly one provider payload, `nico` or `infra`,
+matching the cluster's own. [`nico-cluster.yaml`](../cli/examples/nico-cluster.yaml),
+[`nico-mock-cluster.yaml`](../cli/examples/nico-mock-cluster.yaml) and
+[`capd-cluster.yaml`](../cli/examples/capd-cluster.yaml) are complete requests.
+
+A site controller deployed with
+`PROVISION_CONTROL_PLANE_WITH_CONTROL_PLANE_CONTROLLER=false` takes the older
+shape instead: a node pool with `controlPlane: true`, and no
+`controlPlaneConfig`. Each rejects the other's shape.
 
 ## See also
 
