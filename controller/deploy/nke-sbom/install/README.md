@@ -39,6 +39,22 @@ Stage names drop the numeric prefix: `--from install-cluster-api` selects `04-in
 
 On a failed `run`, `lib.sh` writes `$OUT_DIR/diagnostics/<stage>/` with nodes, pods, events, `helm list` and controller logs.
 
+## Stage 6: secure and register
+
+`06-secure-and-register.sh` patches the Cluster API controllers with the SPIRE exec-auth plugin
+(`controller/hack/apply-capi-spiffe-exec-auth.sh --kubeconfig "$SITE_KUBECONFIG"`) and registers the
+site with `nkectl config set-site`. It reads `site.name` and `site.vip` from `$SITE_CONFIG`;
+`SITE_NAME` and `SITE_VIP` in the environment override them. `nkectl` must be on `PATH`
+([install guide](../../../../docs/site-bootstrap/installation.md)).
+`clusterctl upgrade` rewrites the patched Deployments and drops the patch, so rerun this stage after it.
+The check passes when `nkectl get providers` reports `nico` as `CONFIGURED`. CONFIGURED means the
+provider CRDs are established, its manager is available and its credentials Secret exists. It does not
+mean the credentials work.
+
+The default install leaves API authentication off: the API is plain HTTP on NodePort 30080 on every
+node IP. To require a token, follow
+[configuring-api-authentication.md](../../../docs/configuring-api-authentication.md).
+
 ## Markers
 
 Commands between `# doc-begin` and `# doc-end` in each stage script are extracted verbatim into the guide; keep them copy-pasteable and free of functions.
