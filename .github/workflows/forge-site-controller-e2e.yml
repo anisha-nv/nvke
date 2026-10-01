@@ -79,7 +79,7 @@ on:
         description: HTTPS URL of the NKE qcow2.
         type: string
         required: true
-      keep-site:
+      keep-site-controller:
         description: Keep the node after the run, for debugging. Remember to delete it by hand.
         type: boolean
         required: false
@@ -175,7 +175,7 @@ jobs:
       # works on either, the resolved-inputs summary says which one answered
       # and names the replacement, and the fallback goes once no run reports
       # a deprecated name.
-      SITE_STAGE: ${{ inputs.stage || vars.SITE_E2E_STAGE || vars.FORGE_E2E_STAGE || 'provision' }}
+      SITE_CONTROLLER_STAGE: ${{ inputs.stage || vars.SITE_E2E_STAGE || vars.FORGE_E2E_STAGE || 'provision' }}
       # Empty asks for a build from this checkout; the resolve step fills it
       # in. Every use of it downstream -- the image site-inputs stages, the
       # NKECTL_CWE_IMAGE the bootstrap runs, and the tag the SBOM deploys --
@@ -184,7 +184,7 @@ jobs:
       OS_IMAGE_BOOTLOADER: ${{ inputs.os-image-bootloader || vars.SITE_E2E_OS_IMAGE_BOOTLOADER || vars.FORGE_E2E_OS_IMAGE_BOOTLOADER }}
       OS_IMAGE: ${{ inputs.os-image || vars.SITE_E2E_OS_IMAGE || vars.FORGE_E2E_OS_IMAGE }}
       # A label cannot carry a boolean, so a PR run never keeps its node.
-      KEEP_SITE: ${{ inputs.keep-site || false }}
+      KEEP_SITE_CONTROLLER: ${{ inputs.keep-site-controller || false }}
       # ghcr or nvcr. Only the runner pulls from it: every image it names is
       # staged onto the node as an archive. The node's own pull is CAPNICo,
       # which is published to GHCR alone, so the GHCR login below stays either
@@ -275,7 +275,9 @@ jobs:
       # GPU runtime is installed from this runner, because the runner is where
       # a relayed tenant kubeconfig resolves; the site install needs neither
       # here, since it runs the same script over SSH on the node itself.
+      # Only `full` creates a tenant, so the other stages skip all three steps.
       - name: Resolve the Helm version
+        if: env.SITE_CONTROLLER_STAGE == 'full'
         id: versions
         shell: bash
         run: |
@@ -283,6 +285,7 @@ jobs:
           echo "helm_version=$(make --no-print-directory print-HELM_VERSION)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Helm
+        if: env.SITE_CONTROLLER_STAGE == 'full'
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: ${{ steps.versions.outputs.helm_version }}
@@ -296,6 +299,7 @@ jobs:
       # rendering each chart first turns "the registry moved the version we
       # pin" into a thirty-second failure instead of a mid-run one.
       - name: Verify the tenant runtime install prerequisites
+        if: env.SITE_CONTROLLER_STAGE == 'full'
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -420,7 +424,7 @@ jobs:
           # Empty on a pull_request run whose SITE_E2E_* variable is unset.
           # SITE_CONTROLLER_VERSION is not here: the step above resolves it.
           missing=()
-          for name in SITE_STAGE OS_IMAGE_BOOTLOADER OS_IMAGE; do
+          for name in SITE_CONTROLLER_STAGE OS_IMAGE_BOOTLOADER OS_IMAGE; do
             [ -n "${!name}" ] || missing+=("${name}")
           done
           if [ "${#missing[@]}" -gt 0 ]; then
@@ -447,7 +451,7 @@ jobs:
               ;;
           esac
           echo "SITE_IMAGES=${images}" >> "${GITHUB_ENV}"
-          echo "stage=${SITE_STAGE} controller=${SITE_CONTROLLER_VERSION} images=${images}"
+          echo "stage=${SITE_CONTROLLER_STAGE} controller=${SITE_CONTROLLER_VERSION} images=${images}"
 
       # No stored identity: tbot joins with the repository's OIDC token
       # against a join token named by FORGE_TELEPORT_JOIN_TOKEN, whose bot
@@ -614,7 +618,7 @@ jobs:
           IN_CONTROLLER_VERSION: ${{ inputs.controller-version }}
           IN_OS_IMAGE_BOOTLOADER: ${{ inputs.os-image-bootloader }}
           IN_OS_IMAGE: ${{ inputs.os-image }}
-          IN_KEEP_SITE: ${{ inputs.keep-site }}
+          IN_KEEP_SITE_CONTROLLER: ${{ inputs.keep-site-controller }}
           IN_IMAGE_REGISTRY: ${{ inputs.image-registry }}
           VAR_IMAGE_REGISTRY: ${{ vars.SITE_E2E_IMAGE_REGISTRY }}
           VAR_NGC_ORG: ${{ vars.SITE_E2E_NGC_ORG }}
@@ -642,11 +646,11 @@ jobs:
           # and empty everywhere else. They exist so a run on an old name
           # says so rather than reporting the new one it did not read.
           rows=(
-            "stage|SITE_STAGE|IN_STAGE|VAR_STAGE|SITE_E2E_STAGE|WAS_STAGE|FORGE_E2E_STAGE"
+            "stage|SITE_CONTROLLER_STAGE|IN_STAGE|VAR_STAGE|SITE_E2E_STAGE|WAS_STAGE|FORGE_E2E_STAGE"
             "controller version|SITE_CONTROLLER_VERSION|IN_CONTROLLER_VERSION|VAR_CONTROLLER_VERSION|SITE_E2E_CONTROLLER_VERSION|WAS_CONTROLLER_VERSION|FORGE_E2E_CONTROLLER_VERSION"
             "OS image bootloader|OS_IMAGE_BOOTLOADER|IN_OS_IMAGE_BOOTLOADER|VAR_OS_IMAGE_BOOTLOADER|SITE_E2E_OS_IMAGE_BOOTLOADER|WAS_OS_IMAGE_BOOTLOADER|FORGE_E2E_OS_IMAGE_BOOTLOADER"
             "OS image|OS_IMAGE|IN_OS_IMAGE|VAR_OS_IMAGE|SITE_E2E_OS_IMAGE|WAS_OS_IMAGE|FORGE_E2E_OS_IMAGE"
-            "keep the node|KEEP_SITE|IN_KEEP_SITE||||"
+            "keep the node|KEEP_SITE_CONTROLLER|IN_KEEP_SITE_CONTROLLER||||"
             "image registry|SITE_IMAGE_REGISTRY|IN_IMAGE_REGISTRY|VAR_IMAGE_REGISTRY|SITE_E2E_IMAGE_REGISTRY|WAS_IMAGE_REGISTRY|FORGE_E2E_IMAGE_REGISTRY"
             "NGC org|SITE_E2E_NGC_ORG||VAR_NGC_ORG|SITE_E2E_NGC_ORG|WAS_NGC_ORG|FORGE_E2E_NGC_ORG"
             "Teleport proxy|FORGE_TELEPORT_PROXY||VAR_TELEPORT_PROXY|FORGE_TELEPORT_PROXY||"
@@ -751,9 +755,10 @@ jobs:
       #                         Ginkgo itself is wedged.
       #   timeout-minutes 280   the runner is killed. Same leak, no log.
       #
-      # The Ginkgo bound covers the GPU runtime. It is still an estimate:
-      # nothing has compiled a driver on this hardware, so the first green run
-      # is what turns these into measurements. Built from run 36147423536,
+      # The Ginkgo bound covers the GPU runtime. It was sized before any run
+      # had compiled a driver on this hardware; run 36209850156 has since
+      # measured it, at 68 minutes of suite time on its first attempt and 78
+      # on its second, inside the estimate below. Built from run 36147423536,
       # which reached a validated tenant 38 minutes in:
       #
       #   38  provision, bootstrap, tenant create and validate
@@ -805,9 +810,9 @@ jobs:
         run: |
           set -Eeuo pipefail
           keep=()
-          if [ "${KEEP_SITE}" = "true" ]; then
-            keep=(-e2e.keep-site)
-            echo "::warning::-e2e.keep-site is set; the Forge instance survives this run and must be deleted by hand"
+          if [ "${KEEP_SITE_CONTROLLER}" = "true" ]; then
+            keep=(-e2e.keep-site-controller)
+            echo "::warning::-e2e.keep-site-controller is set; the Forge instance survives this run and must be deleted by hand"
           fi
           # -v so a green run keeps its output. Without it `go test` buffers a
           # passing package's stdout and throws it away, which is what run
@@ -847,7 +852,7 @@ jobs:
             -ginkgo.json-report=report.json \
             -e2e.config=e2e-config.yaml \
             -e2e.environment=forge \
-            -e2e.site-stage="${SITE_STAGE}" \
+            -e2e.site-controller-stage="${SITE_CONTROLLER_STAGE}" \
             -e2e.versions="controller=${SITE_CONTROLLER_VERSION},capi-provisioned=${CAPI_PROVISIONED_VERSION},os-image-bootloader=${OS_IMAGE_BOOTLOADER},os-image=${OS_IMAGE}" \
             "${keep[@]}" 2>&1 | tee site-e2e.log
 
@@ -879,7 +884,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: forge-site-${{ env.SITE_STAGE }}-${{ github.run_id }}
+          name: forge-site-${{ env.SITE_CONTROLLER_STAGE }}-${{ github.run_id }}
           path: |
             controller/test/e2e/site-e2e.log
             controller/test/e2e/site-e2e.junit.xml

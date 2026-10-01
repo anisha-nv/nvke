@@ -121,7 +121,7 @@ or use the re-run button.
 **`workflow_dispatch` is declared and not yet usable.** Dispatch reads a
 workflow's definition from the default branch, and this file is not on `main`
 yet, so it cannot be dispatched until it merges. Its inputs — the stage, a
-controller version, the two image URLs and `keep-site` — are exactly what a
+controller version, the two image URLs and `keep-site-controller` — are exactly what a
 `pull_request` event cannot supply, which is why a labelled run falls back to
 `FORGE_E2E_*` repository variables for them.
 
@@ -129,7 +129,7 @@ Either way, one run at a time repository-wide and never cancelled: two
 concurrent runs would exhaust the site's capacity, and cancelling one
 mid-flight leaks its instance.
 
-`-e2e.site-stage` chooses how far to go, so you can pay for the part you need:
+`-e2e.site-controller-stage` chooses how far to go, so you can pay for the part you need:
 
 | Stage | Does everything above, plus | Roughly |
 |---|---|---|
@@ -137,10 +137,10 @@ mid-flight leaks its instance.
 | `bootstrap` | vanilla Kubernetes via `nkectl bootstrap site` | 30 min |
 | `full` | the NKE stack, the engine, a tenant cluster, and the GPU runtime on it | 80 min |
 
-Only `full` has been measured end to end, at 78 minutes of suite time (82 for
-the whole job) on run 36209850156, the first green run with the GPU runtime.
-The first green run of all, 36080758381, took 79 (81) before the GPU path
-existed. The other two are derived from run 36209850156's own spec
+Only `full` has been measured end to end. Run 36209850156, the first green run
+with the GPU runtime, took 68 minutes of suite time on its first attempt and 78
+(82 for the whole job) on its second; both attempts passed. The first green run
+of all, 36080758381, took 79 (81) before the GPU path existed. The other two are derived from run 36209850156's own spec
 times, where provisioning accounts for about 14 minutes and bootstrap for
 another 7, so read them as the right order of magnitude rather than as
 observations.

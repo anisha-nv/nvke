@@ -33,6 +33,13 @@ var (
 	// running the suite by hand against the simulators.
 	versionsFlag     string
 	capabilitiesFlag string
+
+	// siteControllerCapabilitiesFlag and tenantControlPlaneCapabilitiesFlag
+	// override the CPU instance type the Site Controller and a tenant
+	// control-plane pool otherwise get -- for a Forge site that has only GPU
+	// instance types to offer.
+	siteControllerCapabilitiesFlag     string
+	tenantControlPlaneCapabilitiesFlag string
 )
 
 func init() {
@@ -40,6 +47,8 @@ func init() {
 	flag.StringVar(&envName, "e2e.environment", "", "name of an environment in environments/ describing real infrastructure (required by nico-forge)")
 	flag.StringVar(&versionsFlag, "e2e.versions", "", "component versions under qualification, e.g. controller=v1.4.0-rc.1,os-image=v0.9.1,cli=v0.3.0")
 	flag.StringVar(&capabilitiesFlag, "e2e.capabilities", "", "capabilities the run requires, e.g. gpu=gb200,arch=amd64,kube=1.37")
+	flag.StringVar(&siteControllerCapabilitiesFlag, "e2e.site-controller-capabilities", "", "instance type the Site Controller needs, replacing the default machineType=cpu key by key, e.g. machineType=gpu")
+	flag.StringVar(&tenantControlPlaneCapabilitiesFlag, "e2e.tenant-control-plane-capabilities", "", "instance type a tenant control-plane pool needs, replacing the default machineType=cpu key by key, e.g. machineType=gpu")
 }
 
 // The flags are parsed once and shared. Specs read them through the accessors
@@ -79,6 +88,41 @@ func runVersions() (map[string]string, error) {
 func runCapabilities() (map[string]string, error) {
 	s, err := runSelection()
 	return s.Capabilities, err
+}
+
+// siteControllerCapabilities is the instance type request for the Site
+// Controller: CPU unless -e2e.site-controller-capabilities says otherwise.
+func siteControllerCapabilities() (map[string]string, error) {
+	return instanceTypeRequest("-e2e.site-controller-capabilities", siteControllerCapabilitiesFlag, environment.DefaultCPURequest())
+}
+
+// tenantControlPlaneCapabilities is the instance type request for a tenant
+// control-plane pool: CPU unless -e2e.tenant-control-plane-capabilities says
+// otherwise.
+func tenantControlPlaneCapabilities() (map[string]string, error) {
+	return instanceTypeRequest("-e2e.tenant-control-plane-capabilities", tenantControlPlaneCapabilitiesFlag, environment.DefaultCPURequest())
+}
+
+// tenantWorkerPoolCapabilities is the instance type request for one tenant
+// worker pool: what the table entry declared for it, or CPU if it declared
+// nothing.
+func tenantWorkerPoolCapabilities(declared map[string]string) (map[string]string, error) {
+	if len(declared) == 0 {
+		declared = environment.DefaultCPURequest()
+	}
+	return instanceTypeRequest("", "", declared)
+}
+
+func instanceTypeRequest(flagName, flagValue string, defaults map[string]string) (map[string]string, error) {
+	run, err := runCapabilities()
+	if err != nil {
+		return nil, err
+	}
+	override, err := qualification.ParseCapabilities(flagName, flagValue)
+	if err != nil {
+		return nil, err
+	}
+	return environment.InstanceTypeRequest(defaults, override, run), nil
 }
 
 // forgeEnvironment resolves -e2e.environment as a Forge declaration. Loaded on

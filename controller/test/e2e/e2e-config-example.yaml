@@ -20,7 +20,7 @@
 #   preserveOnFailure: false  # keep the cluster only when a spec fails
 #   reuseCluster: ""          # non-empty -> verify this existing cluster, skip create
 
-# The site lane builds a site controller on a Forge node (-e2e.site-stage=
+# The site lane builds a site controller on a Forge node (-e2e.site-controller-stage=
 # provision|bootstrap|full). `gmake site-inputs SITE_CONTROLLER_VERSION=...`
 # builds nkectl and the image archives below, pulling the published images
 # from SITE_IMAGE_REGISTRY: GHCR by default, or nvcr.io/<NGC org> after a

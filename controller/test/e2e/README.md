@@ -398,7 +398,7 @@ plugin needs to be present in the test image.
 
 `site_controller_test.go` (label `site-controller`) builds its own site controller
 on a Forge node and runs the `nico-forge` tenant against it, instead of using the
-management cluster in the kube context. `-e2e.site-stage` picks how far it goes;
+management cluster in the kube context. `-e2e.site-controller-stage` picks how far it goes;
 without it the lane is skipped:
 
 - `provision`: provision the node over the site's jump host and check its egress.
@@ -408,7 +408,7 @@ without it the lane is skipped:
 Both lanes create the same `nico-forge` tenant and both entries carry that
 label, so pick between them with `site-controller`, which only the lane that
 builds a site carries. Measured against this tree with `-ginkgo.dry-run` and
-`-e2e.site-stage=full`:
+`-e2e.site-controller-stage=full`:
 
 | label filter | specs | which |
 |---|---|---|
@@ -416,11 +416,11 @@ builds a site carries. Measured against this tree with `-ginkgo.dry-run` and
 | `site-controller` | 7 | the lane that builds a site, tenant included |
 | `nico-forge` | 8 | both |
 
-`-e2e.site-stage`, not the label, is what decides whether a machine is
+`-e2e.site-controller-stage`, not the label, is what decides whether a machine is
 provisioned: the site lane's tenant entries are built only when it is set, so
 a bare `nico-forge` without it selects 4 specs and reaches no hardware.
 
-The node is torn down afterwards (tenants are deleted first). `-e2e.keep-site`, or
+The node is torn down afterwards (tenants are deleted first). `-e2e.keep-site-controller`, or
 `lifecycle.preserveOnFailure` with a failed spec, keeps it.
 
 Prerequisites: a way to reach the jump host (below), the jump host in
@@ -439,7 +439,7 @@ no `site:` block is needed at all:
 gmake site-inputs SITE_CONTROLLER_VERSION=$(git rev-parse --short=12 HEAD)
 go test -timeout 5h . -args \
   -ginkgo.label-filter=site-controller -ginkgo.v \
-  -e2e.config=e2e-config.yaml -e2e.environment=forge -e2e.site-stage=full \
+  -e2e.config=e2e-config.yaml -e2e.environment=forge -e2e.site-controller-stage=full \
   -e2e.versions=controller=<the same value>,os-image-bootloader=<url>,os-image=<url>
 ```
 

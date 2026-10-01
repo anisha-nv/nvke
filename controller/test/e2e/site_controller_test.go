@@ -35,9 +35,9 @@ import (
 
 // The stages of the site lane, each doing everything the one before it did.
 const (
-	siteStageProvision = "provision" // a Forge node, reachable, then released
-	siteStageBootstrap = "bootstrap" // plus vanilla Kubernetes from nkectl
-	siteStageFull      = "full"      // plus the NKE stack, CWE, and a tenant
+	siteControllerStageProvision = "provision" // a Forge node, reachable, then released
+	siteControllerStageBootstrap = "bootstrap" // plus vanilla Kubernetes from nkectl
+	siteControllerStageFull      = "full"      // plus the NKE stack, CWE, and a tenant
 )
 
 // Secrets the site lane reads from the environment. They are never written to
@@ -88,14 +88,14 @@ const (
 )
 
 var (
-	siteStage string
-	keepSite  bool
+	siteControllerStage string
+	keepSiteController  bool
 )
 
 func init() {
-	flag.StringVar(&siteStage, "e2e.site-stage", "",
+	flag.StringVar(&siteControllerStage, "e2e.site-controller-stage", "",
 		"build a site controller on Forge up to this stage: provision, bootstrap or full (empty skips the site lane)")
-	flag.BoolVar(&keepSite, "e2e.keep-site", false,
+	flag.BoolVar(&keepSiteController, "e2e.keep-site-controller", false,
 		"keep the site controller's node after the run, for debugging")
 }
 
@@ -139,12 +139,12 @@ var _ = Describe("Site controller on Forge", Ordered, ContinueOnFailure, Label("
 	)
 
 	BeforeAll(func() {
-		switch siteStage {
+		switch siteControllerStage {
 		case "":
-			Skip("-e2e.site-stage is not set")
-		case siteStageProvision, siteStageBootstrap, siteStageFull:
+			Skip("-e2e.site-controller-stage is not set")
+		case siteControllerStageProvision, siteControllerStageBootstrap, siteControllerStageFull:
 		default:
-			Fail(fmt.Sprintf("-e2e.site-stage %q is not provision, bootstrap or full", siteStage))
+			Fail(fmt.Sprintf("-e2e.site-controller-stage %q is not provision, bootstrap or full", siteControllerStage))
 		}
 		// An archive an earlier run left behind describes another node.
 		if err := os.Remove(siteDiagnostics); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -183,7 +183,7 @@ var _ = Describe("Site controller on Forge", Ordered, ContinueOnFailure, Label("
 		Expect(unreachable).To(BeEmpty(), "the node needs egress to these")
 	}, NodeTimeout(5*time.Minute))
 
-	if siteStage == siteStageBootstrap || siteStage == siteStageFull {
+	if siteControllerStage == siteControllerStageBootstrap || siteControllerStage == siteControllerStageFull {
 		It("bootstraps the site controller", func(ctx SpecContext) {
 			if session == nil {
 				Skip("no node")
@@ -199,7 +199,7 @@ var _ = Describe("Site controller on Forge", Ordered, ContinueOnFailure, Label("
 		}, NodeTimeout(3*time.Hour))
 	}
 
-	if siteStage == siteStageFull {
+	if siteControllerStage == siteControllerStageFull {
 		DescribeTableSubtree("tenant on the built site", tenantSubtree(func() (managementCluster, error) {
 			if built.Kubeconfig == "" || session == nil {
 				return managementCluster{}, errors.New("the site controller was not built")
@@ -217,7 +217,7 @@ var _ = Describe("Site controller on Forge", Ordered, ContinueOnFailure, Label("
 			// so is on this entry and not on that one.
 			//
 			// What keeps a stray label filter from building a site is
-			// -e2e.site-stage, not the absence of a label: unset, BeforeAll
+			// -e2e.site-controller-stage, not the absence of a label: unset, BeforeAll
 			// skips this whole container before any machine is asked for.
 			Entry("nico-forge", Label("nico-forge"), nicoForgeTenant()),
 		)
@@ -229,7 +229,7 @@ var _ = Describe("Site controller on Forge", Ordered, ContinueOnFailure, Label("
 		if session == nil {
 			return
 		}
-		if keepSite || (lane.cfg.Lifecycle.PreserveOnFailure && failed) {
+		if keepSiteController || (lane.cfg.Lifecycle.PreserveOnFailure && failed) {
 			GinkgoLogr.Info("keeping the site controller", "name", node.Name, "ip", node.IP,
 				"jumpHost", lane.site.JumpHost, "kubeconfig", built.Kubeconfig)
 			return
@@ -289,7 +289,7 @@ func newSiteLane() (siteLane, error) {
 	if err != nil {
 		return siteLane{}, err
 	}
-	capabilities, err := runCapabilities()
+	capabilities, err := siteControllerCapabilities()
 	if err != nil {
 		return siteLane{}, err
 	}
@@ -504,7 +504,7 @@ func (l siteLane) candidate(node infra.Node) (site.Candidate, site.Options, erro
 			"NKECTL_CAPI_PROVISIONED_IMAGE": provisioned.Ref(),
 		},
 	}
-	if siteStage != siteStageFull {
+	if siteControllerStage != siteControllerStageFull {
 		c.Deploy = noDeploy{}
 		return c, site.Options{Probe: probeAPIServer}, nil
 	}

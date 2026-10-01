@@ -245,8 +245,9 @@ hours, one for over five, and the machine under one of them spent that time
 stopped at an initramfs LUKS prompt — see [the FDE lockout](#the-fde-lockout-and-how-to-recognise-it).
 
 **Provisioning takes most of an hour before anything interesting happens.**
-Both green `full` runs spent about 78 minutes in the suite and 81 to 82 for
-the whole job. A lane that has been
+The green `full` runs have spent 68 to 79 minutes in the suite: 79 on run
+36080758381, and 68 and 78 on the two attempts of run 36209850156. Where the
+whole job was timed, it took 81 to 82. A lane that has been
 running 20 minutes with a quiet log has not failed.
 
 ## Capacity

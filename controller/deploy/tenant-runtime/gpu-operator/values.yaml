@@ -79,9 +79,10 @@ toolkit:
 
 devicePlugin:
   env:
-    # Qualification wants a node marked unhealthy to stay visible and fail the
-    # assertion, rather than have the plugin quietly withdraw its GPUs and
-    # leave the run looking like a scheduling problem.
+    # Turns off the plugin's health checks, so it never marks a GPU unhealthy
+    # and never withdraws one from the node's allocatable count. A bad GPU then
+    # stays scheduled and fails the CUDA workload, instead of disappearing and
+    # leaving the run looking like a scheduling problem.
     - name: DP_DISABLE_HEALTHCHECKS
       value: "all"
     - name: DEVICE_LIST_STRATEGY

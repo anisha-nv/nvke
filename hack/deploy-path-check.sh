@@ -35,7 +35,8 @@ usage: deploy-path-check.sh [--sbom DIR] [--target NAME] [--online]
   --sbom DIR      directory holding deploy paths (default: controller/deploy)
   --target NAME   deploy path inside it (default: tenant-runtime)
   --online        additionally resolve and render every chart against its
-                  upstream repository. Needs network, so it is opt-in: the
+                  upstream repository, and check the images it renders.
+                  Needs network, so it is opt-in: the
                   offline checks must stay runnable on a laptop and in a
                   pipeline that has no egress.
 USAGE
@@ -62,6 +63,45 @@ FAILED=0
 pass() { printf '  ok    %s\n' "$*"; }
 fail() { printf '  FAIL  %s\n' "$*"; FAILED=1; }
 check() { printf '\n%s\n' "$*"; }
+
+# Image registries a qualification run may pull from, matched whole or followed
+# by a path separator, like PUBLIC_REPOS below. These are the ones the pinned
+# gpu-operator chart renders today; widening it is a review decision.
+declare -a PUBLIC_IMAGE_REPOS=(
+  'nvcr.io/nvidia'
+  'registry.k8s.io'
+)
+
+# image_refs FILE...: the image repositories YAML names -- each `repository:`
+# value, and each `image:` value carrying a path. A bare `image: driver` is a
+# name under a separate `repository:`, which is the one checked.
+image_refs() {
+  grep -hE '^[[:space:]]*-?[[:space:]]*(repository|image):' "$@" 2>/dev/null |
+    sed -E -e 's/^[[:space:]]*-?[[:space:]]*(repository|image):[[:space:]]*//' \
+      -e 's/[[:space:]]+#.*$//' -e "s/^[\"']//" -e "s/[\"']$//" |
+    grep '/' | sort -u || true
+}
+
+# check_image_refs LABEL < refs: fail each reference outside the allowlist.
+# Feed it by redirection, not a pipe: a pipe runs it in a subshell and its
+# failures would never reach FAILED.
+check_image_refs() {
+  local label="$1" ref allowed ok seen=""
+  while IFS= read -r ref; do
+    [[ -n "${ref}" ]] || continue
+    seen=1
+    ok=""
+    for allowed in "${PUBLIC_IMAGE_REPOS[@]}"; do
+      [[ "${ref}" == "${allowed}" || "${ref}" == "${allowed}/"* ]] && ok=1
+    done
+    if [[ -n "${ok}" ]]; then
+      pass "${label}: image ${ref}"
+    else
+      fail "${label}: image ${ref} is not from an allowlisted public registry"
+    fi
+  done
+  [[ -n "${seen}" ]] || pass "${label}: names no image repository"
+}
 
 [[ -d "${DEPLOY_PATH}" ]] || { printf 'deploy-path-check: no such deploy path: %s\n' "${DEPLOY_PATH}" >&2; exit 1; }
 
@@ -129,14 +169,30 @@ for marker in "${MARKERS[@]}"; do
   fi
 done
 
+# An image override is how a deploy path would quietly start pulling from an
+# internal registry, and the markers above would not catch most of them.
+# release.yaml is excluded: its `repository:` is the chart's, checked in 4.
+# What the charts pull by default only shows once rendered, so --online checks
+# the rendered images too (7).
+authored=()
+while IFS= read -r file; do
+  authored+=("${file}")
+done < <(find "${DEPLOY_PATH}" -type f \( -name '*.yaml' -o -name '*.yml' \) ! -name release.yaml | sort)
+check_image_refs "authored files" < <(image_refs ${authored[@]+"${authored[@]}"} </dev/null)
+
 # ---------------------------------------------------------------------------
 check "4. every chart comes from a public repository, pinned to an exact version"
 # The allowlist is short on purpose. Adding to it is a real decision -- it says
 # a new party can now determine what a qualification run installs -- so it
 # should show up in review as an edit to this list.
+#
+# Each entry is a repository, matched whole or followed by a path separator,
+# never as a bare string prefix. NGC serves every org from one host and most
+# orgs need credentials, so allowing the host would admit a private org; only
+# the public nvidia org is reproducible without an NVIDIA account.
 declare -a PUBLIC_REPOS=(
-  'https://helm.ngc.nvidia.com/'
-  'oci://registry-1.docker.io/'
+  'https://helm.ngc.nvidia.com/nvidia'
+  'oci://registry-1.docker.io'
 )
 for item in ${HELM_ITEMS[@]+"${HELM_ITEMS[@]}"}; do
   release_file="${DEPLOY_PATH}/${item}/release.yaml"
@@ -150,8 +206,8 @@ for item in ${HELM_ITEMS[@]+"${HELM_ITEMS[@]}"}; do
     pass "${item}: chart from a path inside the deploy path (${path})"
   else
     ok=""
-    for prefix in "${PUBLIC_REPOS[@]}"; do
-      [[ "${repository}" == "${prefix}"* ]] && ok=1
+    for allowed in "${PUBLIC_REPOS[@]}"; do
+      [[ "${repository%/}" == "${allowed}" || "${repository}" == "${allowed}/"* ]] && ok=1
     done
     if [[ -n "${ok}" ]]; then
       pass "${item}: ${repository} is on the public allowlist"
@@ -188,7 +244,10 @@ while IFS=$'\t' read -r name type; do
       done <<<"${found}"
       ;;
     helm)
-      line="$(python3 "${ITEMS_PY}" release "${DEPLOY_PATH}/${name}/release.yaml")"
+      if ! line="$(python3 "${ITEMS_PY}" release "${DEPLOY_PATH}/${name}/release.yaml" 2>&1)"; then
+        fail "${name}: release.yaml does not parse: ${line}"
+        continue
+      fi
       IFS=$'\x1f' read -r _ _ _ _ _ _ namespace _ _ <<<"${line}"
       created=""
       for ns in ${CREATED[@]+"${CREATED[@]}"}; do
@@ -214,7 +273,7 @@ fi
 
 # ---------------------------------------------------------------------------
 if [[ -n "${ONLINE}" ]]; then
-  check "7. every chart resolves and renders against its upstream repository"
+  check "7. every chart resolves, renders, and pulls only allowlisted images"
   # Helm writes to a cache under \$HOME by default, which a hermetic runner may
   # not give us; point it somewhere disposable.
   scratch="$(mktemp -d)"
@@ -222,7 +281,10 @@ if [[ -n "${ONLINE}" ]]; then
   export HELM_CACHE_HOME="${scratch}/cache" HELM_CONFIG_HOME="${scratch}/config" HELM_DATA_HOME="${scratch}/data"
 
   for item in ${HELM_ITEMS[@]+"${HELM_ITEMS[@]}"}; do
-    line="$(python3 "${ITEMS_PY}" release "${DEPLOY_PATH}/${item}/release.yaml")"
+    if ! line="$(python3 "${ITEMS_PY}" release "${DEPLOY_PATH}/${item}/release.yaml" 2>&1)"; then
+      fail "${item}: release.yaml does not parse: ${line}"
+      continue
+    fi
     IFS=$'\x1f' read -r _ chart version repository path release namespace values _ <<<"${line}"
     [[ -n "${repository}" ]] || { pass "${item}: local chart, nothing to resolve"; continue; }
 
@@ -234,6 +296,7 @@ if [[ -n "${ONLINE}" ]]; then
 
     if out="$(helm template "${release}" "${args[@]}" --namespace "${namespace}" 2>&1)"; then
       pass "${item}: ${chart} ${version} renders $(printf '%s\n' "${out}" | grep -c '^kind:') objects"
+      check_image_refs "${item} rendered" < <(printf '%s\n' "${out}" | image_refs -)
     else
       fail "${item}: ${chart} ${version} did not render:"
       printf '        %s\n' "${out}" | head -20

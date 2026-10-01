@@ -76,6 +76,18 @@ func Parse(versions, capabilities string) (Selection, error) {
 	return Selection{Versions: v, Capabilities: c}, nil
 }
 
+// ParseCapabilities reads one capability flag on its own, in the same format
+// as -e2e.capabilities, for the -e2e.site-controller-capabilities and
+// -e2e.tenant-control-plane-capabilities flags beside it. flagName is what an
+// error names, so a malformed pair says which flag it came from.
+func ParseCapabilities(flagName, s string) (map[string]string, error) {
+	c, err := pairs(s)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", flagName, err)
+	}
+	return c, nil
+}
+
 func pairs(s string) (map[string]string, error) {
 	// Empty rather than nil: Split("", ",") yields one empty entry, which the
 	// loop below would reject as malformed, and a caller that ranges over the

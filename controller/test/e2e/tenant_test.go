@@ -430,7 +430,7 @@ func nicoForgeTenant() testSpec {
 			// One worker, not the fleet's two. Two proves nothing here that
 			// one does not -- the assertion is that a GPU node works, not
 			// that several do -- and each is eight L40S.
-			workerCapabilities: map[string]string{"machineType": "gpu", "arch": "amd64"},
+			workerPoolCapabilities: []map[string]string{{"machineType": "gpu", "arch": "amd64"}},
 		},
 		// Generous next to the simulator lanes: these timeouts cover a bare
 		// machine booting an OS image over the network and installing
@@ -741,18 +741,22 @@ type clusterShape struct {
 	// shape as a cluster-level controlPlaneConfig (see applyControlPlaneMode).
 	controlPlanePools []nke.NodePoolSpec
 	workerPools       []nke.NodePoolSpec
-	// workerCapabilities, when set, resolves the worker pools' machine
-	// separately from the control plane's. Empty is a homogeneous cluster,
-	// where both take whatever the run's own capabilities matched.
+	// workerPoolCapabilities is the instance type each tenant worker pool
+	// asks for, by position in workerPools. A pool with no entry, or an empty
+	// one, gets a CPU instance type, so a tenant cluster with a CPU worker
+	// pool beside a GPU worker pool lists the GPU pool's capabilities and
+	// leaves the CPU pool's empty. The tenant control-plane pool is not chosen
+	// here: it is CPU unless the run passes
+	// -e2e.tenant-control-plane-capabilities.
 	//
 	// This is how an entry asks for GPU workers without pinning an instance
 	// type id: the id belongs to one site, the property belongs to the test.
 	// It is deliberately a capability set rather than a bool, because "needs
 	// a GPU" and "needs a particular GPU" are different requests and a site
 	// with several GPU types can only answer the second.
-	workerCapabilities map[string]string
-	etcdEncrypted      bool
-	controlPlaneVIP    string
+	workerPoolCapabilities []map[string]string
+	etcdEncrypted          bool
+	controlPlaneVIP        string
 	// controlPlaneConfig provisions the control plane through the cluster-level
 	// control-plane controller. Set it instead of controlPlanePools, never both:
 	// the cp-controller entries use it for controller-only fields, and the
@@ -1010,7 +1014,7 @@ func validateTenantAccessSecretGCPostDelete(test *tenantTest) {
 // it gone (404), returning whether it confirmed that. Shared by the delete spec
 // and the AfterAll cleanup.
 //
-// releaseBestEffort tolerates the wait running out of time, and only that. What
+// releaseIsBestEffort tolerates the wait running out of time, and only that. What
 // this lane qualifies is NKE: that CWE accepts the delete, drives it, and does
 // not report it failed -- all of which are observable in minutes. Whether the
 // machine then comes back is not something a budget can influence. The control
@@ -1021,14 +1025,19 @@ func validateTenantAccessSecretGCPostDelete(test *tenantTest) {
 // netbooting. It sat there while the instance reported Terminating for hours.
 // That is not slowness to size a budget against, and no verdict here would fix
 // it. A deletion CWE reports as failed is a real defect and still fails.
-func (t *tenantTest) deleteClusterAndWait(ctx context.Context, releaseBestEffort bool) bool {
+func (t *tenantTest) deleteClusterAndWait(ctx context.Context, releaseIsBestEffort bool) bool {
 	GinkgoHelper()
 	By("Deleting the tenant cluster")
 	Expect(t.lifecycle.DeleteCluster(ctx, t.cluster.ID)).To(Succeed())
 
 	By("Waiting for the tenant cluster to be deleted")
 	err := t.lifecycle.WaitForClusterDeleted(ctx, t.cluster.ID)
-	if releaseBestEffort && errors.Is(err, nke.ErrClusterDeleteTimeout) {
+	if releaseIsBestEffort && errors.Is(err, nke.ErrClusterDeleteTimeout) {
+		// A report entry rather than only a log line: a green run that left
+		// a machine unreleased has to say so where the verdict is read.
+		AddReportEntry("tolerated delete timeout",
+			fmt.Sprintf("cluster %s: CWE drove the delete and the infrastructure has not finished releasing; not failing the lane for it: %v",
+				t.cluster.ID, err))
 		GinkgoLogr.Info("CWE drove the delete and the infrastructure has not finished releasing; not failing the lane for it",
 			"cluster", t.cluster.ID, "detail", err.Error())
 		return false
@@ -1457,19 +1466,32 @@ func nicoForgeSpec(_ config.Config, name string, shape clusterShape) nke.Cluster
 	Expect(err).NotTo(HaveOccurred(), "should load the environment named by -e2e.environment")
 	site, err := forge.Site("")
 	Expect(err).NotTo(HaveOccurred(), "should resolve a site in the environment")
-	capabilities, err := runCapabilities()
-	Expect(err).NotTo(HaveOccurred(), "should parse -e2e.capabilities")
-	instanceType, err := site.MatchInstanceType(capabilities)
-	Expect(err).NotTo(HaveOccurred(), "should find an instance type providing the requested capabilities")
+	// The tenant control-plane pool is CPU unless the run says otherwise. A
+	// GPU lane wants GPUs under its workloads and has no reason to put one
+	// under the tenant API server; a Forge site with only GPU instance types
+	// passes -e2e.tenant-control-plane-capabilities=machineType=gpu.
+	tenantControlPlaneRequest, err := tenantControlPlaneCapabilities()
+	Expect(err).NotTo(HaveOccurred(), "should parse -e2e.capabilities and -e2e.tenant-control-plane-capabilities")
+	tenantControlPlaneType, err := site.MatchInstanceType(tenantControlPlaneRequest)
+	Expect(err).NotTo(HaveOccurred(), "should find an instance type for the tenant control-plane pool")
 
-	// Workers can need a different machine from the control plane. A GPU lane
-	// wants GPUs under its workloads and has no reason to put one under its
-	// API server -- and at the declared site it is the CPU type that is
-	// scarce, so this asks for less of what is contended rather than more.
-	workerInstanceType := instanceType
-	if len(shape.workerCapabilities) > 0 {
-		workerInstanceType, err = site.MatchInstanceType(shape.workerCapabilities)
-		Expect(err).NotTo(HaveOccurred(), "should find an instance type providing the worker capabilities")
+	Expect(len(shape.workerPoolCapabilities)).To(BeNumerically("<=", len(shape.workerPools)),
+		"workerPoolCapabilities should not name more pools than workerPools has")
+	tenantWorkerTypes := make([]environment.ForgeInstanceType, len(shape.workerPools))
+	for i := range shape.workerPools {
+		var declared map[string]string
+		if i < len(shape.workerPoolCapabilities) {
+			declared = shape.workerPoolCapabilities[i]
+		}
+		var request map[string]string
+		request, err = tenantWorkerPoolCapabilities(declared)
+		Expect(err).NotTo(HaveOccurred(), "should parse -e2e.capabilities")
+		tenantWorkerTypes[i], err = site.MatchInstanceType(request)
+		Expect(err).NotTo(HaveOccurred(), "should find an instance type for tenant worker pool %d", i)
+	}
+	tenantControlPlaneTypes := make([]environment.ForgeInstanceType, len(shape.controlPlanePools))
+	for i := range tenantControlPlaneTypes {
+		tenantControlPlaneTypes[i] = tenantControlPlaneType
 	}
 
 	kubernetesVersion := cmp.Or(optionalVersion("kube"), shape.kubernetesVersion, forgeDefaultKubernetesVersion)
@@ -1503,7 +1525,7 @@ func nicoForgeSpec(_ config.Config, name string, shape clusterShape) nke.Cluster
 		VpcID:        site.VpcID,
 		NodePayloads: &payloads,
 		ControlPlane: nke.ControlPlane{
-			Pools:         forgeNodePoolSpecs(shape.controlPlanePools, "control-plane", "cp", site, instanceType),
+			Pools:         forgeNodePoolSpecs(shape.controlPlanePools, "control-plane", "cp", site, tenantControlPlaneTypes),
 			EtcdEncrypted: shape.etcdEncrypted,
 			// Empty unless an entry asks for one, which CWE reads as "do not
 			// configure kube-vip". The Forge tenants were created without one,
@@ -1512,7 +1534,7 @@ func nicoForgeSpec(_ config.Config, name string, shape clusterShape) nke.Cluster
 			// hosts, and a real site has no equivalent to borrow from.
 			ControlPlaneVIP: shape.controlPlaneVIP,
 		},
-		Workers: forgeNodePoolSpecs(shape.workerPools, "worker", "w", site, workerInstanceType),
+		Workers: forgeNodePoolSpecs(shape.workerPools, "worker", "w", site, tenantWorkerTypes),
 	}
 }
 
@@ -1523,16 +1545,22 @@ func forgeNodePoolSpecs(
 	pools []nke.NodePoolSpec,
 	defaultName, defaultNodeNamePrefix string,
 	site environment.ForgeSite,
-	instanceType environment.ForgeInstanceType,
+	instanceTypes []environment.ForgeInstanceType,
 ) []nke.NodePoolSpec {
 	out := make([]nke.NodePoolSpec, 0, len(pools))
-	for _, pool := range pools {
+	for i, pool := range pools {
+		// Pool names must be unique within a cluster, so a second pool that
+		// left its name to the default would collide with the first.
+		name, prefix := defaultName, defaultNodeNamePrefix
+		if len(pools) > 1 {
+			name, prefix = fmt.Sprintf("%s-%d", defaultName, i), fmt.Sprintf("%s%d", defaultNodeNamePrefix, i)
+		}
 		out = append(out, nke.NodePoolSpec{
-			Name:                 cmp.Or(pool.Name, defaultName),
-			NodeNamePrefix:       cmp.Or(pool.NodeNamePrefix, defaultNodeNamePrefix),
+			Name:                 cmp.Or(pool.Name, name),
+			NodeNamePrefix:       cmp.Or(pool.NodeNamePrefix, prefix),
 			DesiredNodeCount:     pool.DesiredNodeCount,
 			SystemReservedMemory: cmp.Or(pool.SystemReservedMemory, "16Gi"),
-			InstanceTypeID:       cmp.Or(pool.InstanceTypeID, instanceType.ID),
+			InstanceTypeID:       cmp.Or(pool.InstanceTypeID, instanceTypes[i].ID),
 			SubnetIDs:            defaultStrings(pool.SubnetIDs, site.SubnetID),
 			SSHKeyGroupIDs:       defaultStrings(pool.SSHKeyGroupIDs, site.SSHKeyGroupID),
 		})

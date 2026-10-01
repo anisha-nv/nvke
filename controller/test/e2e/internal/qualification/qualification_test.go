@@ -5,6 +5,7 @@ package qualification
 
 import (
 	"maps"
+	"strings"
 	"testing"
 )
 
@@ -59,6 +60,26 @@ func TestParseNamesWhichFlagWasWrong(t *testing.T) {
 	}
 	if got := err.Error(); got[:len("-e2e.capabilities")] != "-e2e.capabilities" {
 		t.Errorf("got %q, want the flag named first", got)
+	}
+}
+
+func TestParseCapabilities(t *testing.T) {
+	got, err := ParseCapabilities("-e2e.site-controller-capabilities", "machineType=gpu, arch=arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["machineType"] != "gpu" || got["arch"] != "arm64" || len(got) != 2 {
+		t.Errorf("got %v", got)
+	}
+
+	empty, err := ParseCapabilities("-e2e.site-controller-capabilities", "")
+	if err != nil || len(empty) != 0 {
+		t.Errorf("empty flag: got %v, %v; want an empty map and no error", empty, err)
+	}
+
+	_, err = ParseCapabilities("-e2e.tenant-control-plane-capabilities", "machineType")
+	if err == nil || !strings.HasPrefix(err.Error(), "-e2e.tenant-control-plane-capabilities: ") {
+		t.Errorf("got %v, want an error naming the flag", err)
 	}
 }
 

@@ -95,17 +95,32 @@ Two consequences worth internalising.
 **Declaration order is the tie-break**, so declare cheapest first. Where
 several types satisfy a request, the first listed wins.
 
-**An empty request matches everything.** Asking for nothing is satisfied by
-every type, so the first declared type wins by default. That is what the site
-node and the tenant control plane get: the Forge lane passes no
-`-e2e.capabilities`, so they land on `cpu.himem.t1`.
+**Each thing placed asks for its own instance type, and asks for CPU unless
+told otherwise.** None sends an empty request, so none depends on which type
+a Forge site happens to list first:
 
-**A table entry can ask separately, and the GPU path does.** `clusterShape`
-carries a `workerCapabilities` map that resolves the worker pools' instance
-type independently of the control plane's, so the `nico-forge` entry asks for
-`{machineType: gpu, arch: amd64}` and is answered with
-`gpu.l40sx8.ovx.t1.ib`. Run 36209850156 selected it and the node came back as
-an `NVIDIA-L40S` on driver `580.126.20`, so a single run now exercises both
+| What is being placed | Default request | Changed by |
+|---|---|---|
+| Site Controller | `{machineType: cpu}` | `-e2e.site-controller-capabilities` |
+| Tenant control-plane pool | `{machineType: cpu}` | `-e2e.tenant-control-plane-capabilities` |
+| Tenant worker pool | what the table entry declares for that pool, else `{machineType: cpu}` | the table entry |
+
+Either flag replaces the default key by key, so a Forge site with only GPU
+instance types can still host a tenant control plane with
+`-e2e.tenant-control-plane-capabilities machineType=gpu`. From
+`-e2e.capabilities`, every request takes `arch` unless it set its own, and
+only GPU requests take `gpu`: a run naming `gpu=gb200` is choosing the model
+for its GPU worker pools, not asking for a GPU tenant control plane, and
+adding the key to a CPU request would leave nothing at the Forge site able to
+answer it.
+
+**Tenant worker pools ask by position.** `clusterShape.workerPoolCapabilities`
+holds one capability set per entry in `workerPools`; a pool with no entry gets
+a CPU instance type, so a tenant cluster can carry a CPU worker pool beside a
+GPU worker pool. The `nico-forge` entry has one worker pool and asks for
+`{machineType: gpu, arch: amd64}`, answered
+with `gpu.l40sx8.ovx.t1.ib`. Run 36209850156 selected it and the node came back
+as an `NVIDIA-L40S` on driver `580.126.20`, so a single run exercises both
 types the site declares. Asking by property rather than by id is what makes
 that portable: a site whose GPU is something else still answers, and a site
 with none fails saying so instead of quietly booting a CPU machine.

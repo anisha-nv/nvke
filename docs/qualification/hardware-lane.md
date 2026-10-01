@@ -41,9 +41,9 @@ real machines. The CAPD, nico-containers and nico-vms backends simulate the
 infrastructure step entirely and skip straight to
 [Tenant clusters](#3-tenant-clusters).
 
-## The four steps
+## The five steps
 
-Each is built on the one before it, and `-e2e.site-stage` decides how far a run
+Each is built on the one before it, and `-e2e.site-controller-stage` decides how far a run
 goes:
 
 ```mermaid
@@ -53,12 +53,13 @@ flowchart TB
     S2N["2b — the NKE stack<br/>deployed from the staged assets"]
     S3["3 — Tenant cluster<br/>created through CWE, not through Forge"]
     S4["4 — Node pools<br/>the machines that cluster runs on"]
+    S5["5 — GPU runtime<br/>installed into the tenant, proven by a CUDA workload"]
 
-    S1 --> S2K --> S2N --> S3 --> S4
+    S1 --> S2K --> S2N --> S3 --> S4 --> S5
 
     P["site-stage=provision"] -.->|stops here| S1
     B["site-stage=bootstrap"] -.->|stops here| S2K
-    F["site-stage=full"] -.->|runs everything| S4
+    F["site-stage=full"] -.->|runs everything| S5
 ```
 
 `bootstrap` is the one worth noticing: it stops after vanilla Kubernetes and
@@ -71,6 +72,7 @@ hardware without spending the rest of the run on the product.
 | [Site controller](#2-the-site-controller) | `internal/site` | Kubernetes plus the NKE stack on that machine |
 | [Tenant cluster](#3-tenant-clusters) | `tenant_test.go`, CWE | A tenant cluster created through the product API |
 | [Node pools](#4-node-pools) | `forgeNodePoolSpecs` | The machines that tenant cluster runs on |
+| [GPU runtime](#5-gpu-runtime) | `gpu_runtime_test.go`, `controller/deploy/tenant-runtime` | A GPU worker a CUDA workload runs on |
 
 ## 1. Forge infrastructure
 
@@ -320,10 +322,13 @@ The Forge shape today is the smallest that still proves something: one
 control-plane pool and one worker pool, each of one node — create, both nodes
 report Ready, the GPU runtime installed and a CUDA workload run, delete.
 
-The two pools do not take the same machine. `clusterShape.workerCapabilities`,
-when set, resolves the worker pools' instance type separately from the control
-plane's, so the Forge entry asks for `{machineType: gpu, arch: amd64}` and the
-environment answers with an id. Asking by property rather than by id is what
+The two pools do not take the same instance type. The tenant control-plane
+pool, like the Site Controller, is CPU unless the run passes
+`-e2e.tenant-control-plane-capabilities`; each tenant worker pool asks for its
+own through `clusterShape.workerPoolCapabilities`, so the Forge entry's one
+worker pool asks for
+`{machineType: gpu, arch: amd64}` and the environment answers with an id (see
+[how a machine gets chosen](environments.md#how-a-machine-gets-chosen)). Asking by property rather than by id is what
 keeps the entry portable: a site whose GPU is something else still answers, and
 a site with none fails saying so instead of quietly booting a CPU machine. At
 this site it also asks for less of what is scarce — the L40S machines sit idle
@@ -342,6 +347,22 @@ running out, and only that: `WaitForClusterDeleted` wraps
 the spec asserts is what NKE does — CWE accepts the delete, drives it, and does
 not report it failed — all of which is observable in minutes, unlike a machine
 stuck in the initramfs.
+
+## 5. GPU runtime
+
+`gpu_runtime_test.go` installs `controller/deploy/tenant-runtime` into the
+tenant with the same `build/use-nke-sbom.sh` the Site Controller install uses, run from
+the runner against the relayed kubeconfig described under
+[Tenant clusters](#3-tenant-clusters). The deploy path is a namespace and the
+GPU operator chart, pinned and public; `hack/deploy-path-check.sh` holds it to
+that in the merge gate.
+
+Three specs, so a failure names its stage: the runtime installs, a worker
+advertises an allocatable `nvidia.com/gpu` with a `nvidia.com/gpu.product`
+label from feature discovery, and an ordinary pod running the CUDA vectorAdd
+sample on that node exits successfully. The driver is compiled on the node, so
+the site lane checks egress to the Ubuntu archives and NGC before a machine is
+taken.
 
 ## What a green run looks like
 
