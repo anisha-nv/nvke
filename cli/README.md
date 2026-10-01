@@ -39,7 +39,9 @@ nkectl version
 ## Quick reference
 
 ```bash
-# Bootstrap a new site controller
+# Bootstrap a new site controller with the images `make -C cli images` built
+nkectl bootstrap site -f sitespec.yaml
+# ... or with images you pushed to a registry
 NKECTL_CWE_IMAGE=nvcr.io/<org>/nke-controller:edge \
 NKECTL_CAPI_PROVISIONED_IMAGE=nvcr.io/<org>/cluster-api-provider-provisioned:edge \
   nkectl bootstrap site -f sitespec.yaml
@@ -128,11 +130,11 @@ site spec file rather than from flags or the environment. See
 
 `bootstrap site` deploys a SPIRE server, so nodes with a hardware identity have
 something to attest to and CWE gets a workload identity of its own. It comes
-from the SPIFFE project's own hardened charts, pinned alongside the Temporal pin
-in [`internal/bootstrap/cwedeploy/cwedeploy.go`](internal/bootstrap/cwedeploy/cwedeploy.go)
-and installed with `helm --repo`, so nothing is added to your global Helm
-repository list. Everything it names is public, so a bootstrap needs no registry
-credential.
+from the SPIFFE project's own hardened charts. The bootstrap manifest pins each
+chart's version, and `nkectl get bootstrap-manifest` prints it. Each chart is
+installed with `helm --repo`, so nothing is added to your global Helm
+repository list. Everything it names is public, so a bootstrap needs no
+registry credential.
 
 Everything static about the deployment lives in
 [`internal/bootstrap/cwedeploy/manifests/spire-values.yaml`](internal/bootstrap/cwedeploy/manifests/spire-values.yaml).
@@ -181,7 +183,8 @@ metadata.
 | Variable | Default | Purpose |
 |---|---|---|
 | `NKECTL_BOOTSTRAP_CLUSTER_NAME` | `nkectl-bootstrap` | Name of the ephemeral cluster |
-| `NKECTL_CWE_IMAGE` | required | CWE image to deploy. Side-loaded from the local image store, so it must already be pulled. |
+| `NKECTL_CWE_IMAGE` | `nke-controller:latest` | CWE image to deploy. A reference without a registry is side-loaded from the local image store; `make -C cli images` builds the default with nerdctl. For Docker Hub, write `docker.io/<org>/<name>`. |
+| `NKECTL_CAPI_PROVISIONED_IMAGE` | `cluster-api-provider-provisioned:latest` | Provisioned-provider image, same semantics. |
 | `NKECTL_CWE_TEMPORAL_CHART` | `temporal` from `https://go.temporal.io/helm-charts` | Temporal chart, as an OCI reference or a local path. Set, it replaces the repo lookup. |
 | `NKECTL_CWE_SPIRE_CHART` | `spire` from `https://spiffe.github.io/helm-charts-hardened/` | SPIRE chart, same semantics |
 | `NKECTL_CWE_SPIRE_CRDS_CHART` | `spire-crds` from `https://spiffe.github.io/helm-charts-hardened/` | SPIRE CRDs chart, same semantics |

@@ -10,6 +10,7 @@ below is on `main`; the steps the CLI does not cover are marked.
 |---|---|---|
 | `nkectl generate sitespec <name> --nodes hosts.csv` | Writes a site spec for `bootstrap site` from a node CSV. `--set path=value` fills in what the CSV does not carry. | Available |
 | `nkectl bootstrap site -f sitespec.yaml` | Stands up an ephemeral Kind cluster running CWE, has CWE create the site cluster on the spec's hosts through `nke-agent`, writes `<name>.kubeconfig` and `<name>-etcd-encryption-key.json`, tears the Kind cluster down. `--dry-run` validates the spec only. | Available |
+| `nkectl get bootstrap-manifest` | Prints the charts and images `bootstrap site` fetches, with version and digest. | Available |
 | Install an infrastructure provider on the new cluster | Install Cluster API and CAPNICo, before the site controller. See [Infrastructure Providers](../../docs/site-bootstrap/infrastructure-providers.md). No `nkectl` command. | Not in the CLI |
 | Install the site controller on the new cluster | Deploy the controller Helm chart (`controller/deploy/charts/controller`). No `nkectl` command yet. | Not in the CLI |
 | `nkectl config set-site --url <cwe-url> --kubeconfig <path>` | Points the CLI at a site controller. `use-site` switches between entries, `view` prints the config. | Available |
@@ -21,7 +22,7 @@ below is on `main`; the steps the CLI does not cover are marked.
 | `nkectl patch cluster <name>` | PATCHes a mutable cluster property (Kubernetes version, etcd encryption, remote access, control plane config). `--patch` takes an inline YAML document, `--patch-file` a file (or stdin via `-`). | Available |
 | `nkectl create nodepool -f spec.yaml` | Adds a node pool to an existing cluster from a `CreateNodePoolRequest` YAML. `-f -` reads stdin. | Available |
 | `nkectl get nodepools [name ...]` | Lists node pools. Names narrow to those pools, `--cluster <name>` to one cluster. `-o json\|yaml` changes the format. | Available |
-| `nkectl delete nodepool <name> --cluster <name>` | Removes a node pool from a cluster. Deleting the last joined control-plane pool is rejected; delete the cluster instead. | Available |
+| `nkectl delete nodepool <name> --cluster <name>` | Removes a node pool from a cluster. A cluster has a control-plane pool only on a site controller with the control-plane controller off; deleting its last joined one is rejected, so delete the cluster instead. | Available |
 | `nkectl patch nodepool <name> --cluster <name>` | PATCHes a node pool. `--patch` takes an inline YAML document, `--patch-file` a file (or stdin via `-`). `desiredNodeCount` is the only field supported so far. | Available |
 | `nkectl version` | Prints version, commit and build date. `-o short\|yaml\|json`. | Available |
 
@@ -192,9 +193,10 @@ the site controller. A file holding several documents is rejected; create one
 pool per invocation.
 
 `name`, `nodeNamePrefix`, `desiredNodeCount` and `clusterID` are required;
-`nkectl get clusters <name>` reports the cluster's ID. A pool carries either a
-`nico` or an `infra` payload, never both, and that is where the node type is
-chosen.
+`nkectl get clusters <name>` reports the cluster's ID. A pool carries the
+same `nico` or `infra` payload as its cluster, and that is where the node type
+is chosen. `nkectl create nodepool` adds workers; the control plane is managed
+through the cluster's `controlPlaneConfig`.
 
 [examples/nico-mock-nodepool.yaml](../examples/nico-mock-nodepool.yaml) is a
 starting point. Provisioning is asynchronous, the same as cluster creation.
@@ -229,8 +231,9 @@ nkectl delete nodepool <nodepool-name> --cluster <cluster-name>
 Node pool names are unique within a cluster, so `--cluster` is what decides
 which pool is resolved. Deletion is asynchronous and the nodes are drained
 before removal; run `nkectl get nodepools --cluster <cluster-name>` to check
-on it. Deleting the last joined control-plane node pool of a cluster is
-rejected with CWE's own message — delete the cluster instead.
+on it. On a site controller with the control-plane controller off, deleting a
+cluster's last joined control-plane node pool is rejected with CWE's own
+message — delete the cluster instead.
 
 ### 14. Delete the tenant cluster
 

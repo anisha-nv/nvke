@@ -4,13 +4,13 @@ NKE is a management plane. A **site controller** — one durable Kubernetes
 cluster, also called a cell — mints **tenant clusters** on demand, each with its
 own control plane, etcd and nodes. `nkectl` is how you drive it.
 
-Three paths. Start with A.
+Three paths — pick the one that matches what you have:
 
-| Path | Needs | Gets you |
-|---|---|---|
-| [**A — the API alone**](#path-a--the-api-alone) | Go, Docker, kind | CWE running and its API to explore, in minutes. No tenant clusters. |
-| [**B — a tenant cluster with mock NICo**](#path-b--a-tenant-cluster-with-mock-nico) | Docker, kind, ~16 GB free, and either a CAPNICo checkout or an NGC account | The real create-a-cluster loop against real CAPNICo, no hardware |
-| [**C — a real site**](#path-c--a-real-site) | Imaged nodes, nerdctl, a NICo site | A site controller minting CAPNICo-backed tenant clusters |
+| Path | Who it's for | Needs | Gets you |
+|---|---|---|---|
+| [**Real Site**](#real-site) | **Operators** standing up a production NKE site | Imaged nodes, nerdctl, a NICo site | A site controller minting CAPNICo-backed tenant clusters |
+| [**Mock NICo**](#mock-nico) | **Contributors** testing the full create-cluster loop without hardware | Docker, kind, ~16 GB free, and either a CAPNICo checkout or an NGC account | The real create-a-cluster loop against real CAPNICo, no hardware |
+| [**API Only**](#api-only) | **Contributors** exploring the CWE REST API | Go, Docker, kind | CWE running and its API to explore, in minutes. No tenant clusters. |
 
 ## Before you start
 
@@ -22,15 +22,15 @@ cd nke
 | Tool | Needed for | Notes |
 |---|---|---|
 | [Go](https://go.dev/dl/) 1.27.1+ | all | `go.work` pins it. An older Go fetches the right toolchain unless `GOTOOLCHAIN=local` |
-| [Docker](https://docs.docker.com/get-docker/) 24+ | A and B | Not supported for path C bootstrapping |
-| [nerdctl](https://github.com/containerd/nerdctl) with containerd | C | The bootstrap drives kind and pulls images through it; no Docker daemon |
+| [Docker](https://docs.docker.com/get-docker/) 24+ | API Only, Mock NICo | Not supported for Real Site bootstrapping |
+| [nerdctl](https://github.com/containerd/nerdctl) with containerd | Real Site | The bootstrap drives kind and pulls images through it; no Docker daemon |
 | GNU Make 4.0+ | all | macOS ships 3.81; `brew install make` gives `gmake` |
-| [temporal](https://docs.temporal.io/cli) | A | `brew install temporal`, or `curl -sSf https://temporal.download/cli.sh \| sh` |
-| [kind](https://kind.sigs.k8s.io/), `kubectl` | A and B | |
-| `jq` | B | `dev-check` exits 1 without it |
-| [helm](https://helm.sh/), [tilt](https://docs.tilt.dev/install.html) | B | |
-| [clusterctl](https://cluster-api.sigs.k8s.io/user/quick-start) | B | `make capd-up` installs it into `controller/.local/bin` |
-| `dpkg-deb` | B on macOS | `brew install dpkg`; the bundle mirror build needs it |
+| [temporal](https://docs.temporal.io/cli) | API Only | `brew install temporal`, or `curl -sSf https://temporal.download/cli.sh \| sh` |
+| [kind](https://kind.sigs.k8s.io/), `kubectl` | API Only, Mock NICo | |
+| `jq` | Mock NICo | `dev-check` exits 1 without it |
+| [helm](https://helm.sh/), [tilt](https://docs.tilt.dev/install.html) | Mock NICo | |
+| [clusterctl](https://cluster-api.sigs.k8s.io/user/quick-start) | Mock NICo | `make capd-up` installs it into `controller/.local/bin` |
+| `dpkg-deb` | Mock NICo (macOS) | `brew install dpkg`; the bundle mirror build needs it |
 | [Flox](https://flox.dev/) | optional | Pins the whole toolchain; never required |
 
 macOS or Linux; Windows is not supported.
@@ -44,16 +44,16 @@ that `colima-up` will then refuse to resize, so size it first:
 make -C controller colima-up      # 6 CPU, 12 GiB
 ```
 
-Path A needs nothing internal and no NGC account.
+**API Only** needs nothing internal and no NGC account.
 
-Path B installs CAPNICo one of two ways, and **only one of them works without an
+**Mock NICo** installs CAPNICo one of two ways, and **only one of them works without an
 NGC account**. Set `CAPNICO_SOURCE_DIR` to a checkout of
 [`dsx-ai-factory/cluster-api-provider-nico`](https://github.com/dsx-ai-factory/cluster-api-provider-nico),
 which is public, and it builds from source. Leave it unset and it installs the
 released chart from NGC instead, which needs `NGC_API_KEY`. The source route is
 the one to take if you are outside NVIDIA.
 
-## Path A — the API alone
+## API Only
 
 CWE against a local Postgres and Temporal, with a self-signed token instead of
 NGC authentication. No tenant clusters, no hardware.
@@ -70,7 +70,7 @@ make -C controller run-local
 - `curl http://localhost:8080/api/clusters` → `{"clusters":[]}`. No token here.
 - Temporal — http://localhost:8233
 
-## Path B — a tenant cluster with mock NICo
+## Mock NICo
 
 The same stack a real site runs: real CAPNICo, with **nico-mock** answering the
 NICo API and tenant nodes as containers.
@@ -80,13 +80,13 @@ needs `NGC_API_KEY`. To build CAPNICo from a checkout instead, and need no NGC
 account, set `capnico_source_dir` in `controller/tilt_config.json` or export
 `CAPNICO_SOURCE_DIR`.
 
-If you ran path A first, stop it — its Postgres and Temporal hold 5432 and 7233,
+If you ran **API Only** first, stop it — its Postgres and Temporal hold 5432 and 7233,
 and Tilt's probes will pass against the wrong servers while its port-forwards
 retry forever:
 
 ```bash
 make -C controller dev-stop-local
-kind delete cluster            # the plain cluster from path A
+kind delete cluster            # the plain cluster from API Only
 ```
 
 ```bash
@@ -134,7 +134,7 @@ bearer token for `nke-clients/nke-client` when authentication is on. Tilt
 applies that identity in `controller/deploy/k8s/nke-auth-dev.yaml`. You do
 not export a token for `nkectl`.
 
-Under Tilt the API requires a token, unlike path A — a bare `curl` to
+Under Tilt the API requires a token, unlike **API Only** — a bare `curl` to
 `/api/clusters` returns 401. `nkectl get clusters` does not, once `set-site`
 has the kubeconfig: it discovers the audience from the `nke-auth-config`
 ConfigMap and mints through the TokenRequest API.
@@ -152,9 +152,11 @@ bin/nkectl delete cluster <name>
 [`cli/examples/nico-mock-cluster.yaml`](../cli/examples/nico-mock-cluster.yaml)
 works as-is — its UUIDs are nico-mock's seeded identifiers.
 
-A node pool carries **either** a `nico` payload **or** an `infra` one, never
-both. Path B uses `infra`, supplying the `NicoCluster` and `NicoMachineTemplate`
-manifests directly; a real site uses `nico` and CWE builds them. Full schema at
+The cluster's top-level `nico` or `infra` payload sets its provider, and the
+control plane and every node pool must carry the same one. **Mock NICo** uses
+`infra`, supplying the `NicoCluster` and `NicoMachineTemplate` manifests
+directly; a real site uses `nico` and CWE builds them. See
+[Control plane configuration](#control-plane-configuration); full schema at
 `/api/docs`.
 
 For `curl`, mint a token with `hack/nke-token.sh` after the stack is up:
@@ -178,7 +180,7 @@ This reads the `<cluster>-admin-kubeconfig` Secret in `nke-system`, which
 holds the verbatim `admin.conf`. The `-kubeconfig` Secret beside it is the one
 CWE consumes, and it becomes a SPIRE exec-auth kubeconfig when OIDC is on.
 
-## Path C — a real site
+## Real Site
 
 Real hardware, a real NICo site, and a site controller that outlives your
 terminal. Steps 1 to 4 have been run end to end on leased bare metal, to a
@@ -283,15 +285,18 @@ leaves nothing schedulable and the node never reaches `Ready`.
 
 ### 3. Point at your images
 
-Both are required and the bootstrap fails without them. Nothing else has to be
-pointed at: `nkectl` installs the CWE chart and the provisioned provider's
-manifests from the copies embedded in the binary, of the commit it was built
-from, so a released binary needs no checkout.
+`make -C cli images` builds both with nerdctl on this host, tagged
+`nke-controller:latest` and `cluster-api-provider-provisioned:latest`, and the
+bootstrap side-loads them by default. To use images you pushed to a registry
+instead, name them:
 
 ```bash
-export NKECTL_CWE_IMAGE=<cwe-controller image>
+export NKECTL_CWE_IMAGE=<nke-controller image>
 export NKECTL_CAPI_PROVISIONED_IMAGE=<provisioned provider image>
 ```
+
+`nkectl` carries the CWE chart and the provisioned provider's manifests. Step 4
+lists what it fetches.
 
 ### 4. Bootstrap
 
@@ -427,9 +432,43 @@ teardown cannot be helped along through the API.
 - The site controller does not manage itself: no upgrade, node cycling or
   scaling.
 
+## Control plane configuration
+
+A tenant cluster's control plane is described once, at the cluster level, by
+`controlPlaneConfig`. The site controller's control-plane controller manages
+it: it creates control-plane hosts in parallel, joins them to the cluster one
+at a time, and deletes them one at a time. A create request carries
+`controlPlaneConfig` alongside a `nodePools` list that holds only workers:
+
+```yaml
+controlPlaneConfig:
+  desiredCount: 3            # >= 1; keep it odd so etcd holds a quorum
+  maxSurge: 1                # 0 or 1: 1 replaces before removing, 0 removes first
+  systemReservedMemory: "16Gi"
+  nico:
+    instanceTypePreference:  # ordered UUIDs; index 0 is tried first, the rest are fallback
+      - 00000000-0000-0000-0000-000000000000
+    vpcPrefixIDs:
+      - 00000000-0000-0000-0000-000000000000
+    sshKeyGroupIDs:
+      - 00000000-0000-0000-0000-000000000000
+    osProfile: nke-260625-24.04-x86-fde
+    configProfile: default-cp
+```
+
+`controlPlaneConfig` takes exactly one provider payload, `nico` or `infra`,
+matching the cluster's own. [`nico-cluster.yaml`](../cli/examples/nico-cluster.yaml),
+[`nico-mock-cluster.yaml`](../cli/examples/nico-mock-cluster.yaml) and
+[`capd-cluster.yaml`](../cli/examples/capd-cluster.yaml) are complete requests.
+
+A site controller deployed with
+`PROVISION_CONTROL_PLANE_WITH_CONTROL_PLANE_CONTROLLER=false` takes the older
+shape instead: a node pool with `controlPlane: true`, and no
+`controlPlaneConfig`. Each rejects the other's shape.
+
 ## See also
 
-- [getting-started.md](getting-started.md) — building and testing the modules
+- [getting-started.md](getting-started.md) — building and testing the modules (contributor / local dev)
 - [concepts.md](concepts.md) — the vocabulary, one page
 - [architecture.md](architecture.md) — how CWE, the agent and CAPI fit together
 - [../cli/docs/sitespec.md](../cli/docs/sitespec.md) — every site spec field
