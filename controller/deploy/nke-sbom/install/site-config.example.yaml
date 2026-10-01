@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# One file describes the site. 03-describe-site.sh renders it into the
+# BootstrapConfig JSON and the values files stage 5 installs from.
+#
+# Copy this file, replace every REPLACE_* value, keep it out of git. It holds
+# credentials. Two levels only: a section, then `key: value` scalars.
+#
+# This schema is unstable. It changes when the site description is folded
+# into BootstrapConfig.
+
+site:
+  # DNS label. Labels the releases and names the cluster for telemetry.
+  name: REPLACE_SITE_NAME
+  # SPIFFE trust domain. Must equal spire.trustDomain in the bootstrap sitespec. Never derived from the name.
+  trustDomain: REPLACE_TRUST_DOMAIN
+  # Site controller VIP. SPIRE server address, OIDC discovery URL, certificate IP SAN.
+  vip: REPLACE_VIP
+  # Node CPU architecture, amd64 or arm64. Selects the TPM attestor plugin checksum.
+  arch: REPLACE_ARCH
+
+spire:
+  # PEM certificate of the bootstrap SPIRE CA the node agents already trust. Relative paths resolve from this file.
+  caCertFile: REPLACE_CA_CERT_PATH
+  # PEM private key of that CA. The chart stores it in a Secret it creates.
+  caKeyFile: REPLACE_CA_KEY_PATH
+
+# db:
+#   # Postgres password shared by the controller and both Temporal datastores. Omit to generate one; reruns reuse it.
+#   password: REPLACE_DB_PASSWORD
+
+images:
+  # Controller image as repository:tag. Must be staged on every node. No default.
+  controller: REPLACE_CONTROLLER_IMAGE
+  # Profiles content image as repository:tag. Must be staged on every node. No default.
+  profiles: REPLACE_PROFILES_IMAGE
+
+nico:
+  # NICo API base URL CAPNICo calls.
+  endpoint: REPLACE_NICO_ENDPOINT
+  # NICo organisation ID.
+  orgId: REPLACE_NICO_ORG_ID
+  # NICo API token.
+  token: REPLACE_NICO_TOKEN
+  # NICo API name, for example forge.
+  apiName: REPLACE_NICO_API_NAME
+
+registry:
+  # Registry host for the CAPNICo image pull secret, for example ghcr.io.
+  server: REPLACE_REGISTRY_SERVER
+  # Registry username.
+  username: REPLACE_REGISTRY_USERNAME
+  # Registry token. A fine-grained token with read:packages is enough.
+  token: REPLACE_REGISTRY_TOKEN
+
+tenant:
+  # Login user rendered into every tenant node's cloud-init.
+  user: REPLACE_TENANT_USER
+  # Password for that user.
+  password: REPLACE_TENANT_PASSWORD
