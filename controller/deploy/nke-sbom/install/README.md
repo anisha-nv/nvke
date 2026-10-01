@@ -25,6 +25,21 @@ One stage:
 
 Stage names drop the numeric prefix: `--from install-cluster-api` selects `04-install-cluster-api.sh`.
 
+## Describe your site
+
+Stage 3 has no cluster access. It reads one `site-config.yaml` and writes the files stage 5 installs from into `$OUT_DIR`: `bootstrap-config.json` for the `nke-base-config` template item, and `controller.yaml`, `spire.yaml`, `postgresql.yaml`, `temporal.yaml` for `--values-for`.
+Copy [site-config.example.yaml](site-config.example.yaml), replace every `REPLACE_*` value, keep the copy out of git.
+Every key is required except `db.password`; a missing, empty or non-scalar value fails with the key name.
+`site.trustDomain` is explicit and must equal the trust domain the nodes were bootstrapped with.
+`spire.caCertFile` and `spire.caKeyFile` point at the bootstrap SPIRE CA; the chart stores them in a Secret it creates, so `spire.yaml` carries the PEM contents.
+The database password is generated once and reused on rerun; `check` compares it with the live Postgres Secret when `SITE_KUBECONFIG` is set.
+The summary redacts credentials. The schema is unstable until it is folded into BootstrapConfig.
+
+```bash
+SITE_CONFIG=./site-config.yaml ./03-describe-site.sh run
+./03-describe-site.sh check
+```
+
 ## Environment
 
 | Variable | Default | Purpose |
@@ -39,6 +54,13 @@ Stage names drop the numeric prefix: `--from install-cluster-api` selects `04-in
 
 On a failed `run`, `lib.sh` writes `$OUT_DIR/diagnostics/<stage>/` with nodes, pods, events, `helm list` and controller logs.
 
+## Test
+
+The renderer has fixtures under `testdata/`. Python 3 only, no cluster:
+
+```bash
+make test            # or ./testdata/test.sh
+```
 ## Stage 6: secure and register
 
 `06-secure-and-register.sh` patches the Cluster API controllers with the SPIRE exec-auth plugin

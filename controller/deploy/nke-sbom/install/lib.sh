@@ -58,12 +58,19 @@ abs_path() {
 
 # Environment. Every value has a default and an env override.
 
+# A stage with no cluster access sets STAGE_NEEDS_KUBECONFIG=0 before sourcing
+# this file. The kubeconfig is then optional and only resolved when present.
+STAGE_NEEDS_KUBECONFIG="${STAGE_NEEDS_KUBECONFIG:-1}"
 SITE_KUBECONFIG="${SITE_KUBECONFIG:-}"
-[[ -n "${SITE_KUBECONFIG}" ]] ||
-  die "SITE_KUBECONFIG is not set. Export the path of the site cluster kubeconfig."
-[[ -f "${SITE_KUBECONFIG}" ]] ||
-  die "SITE_KUBECONFIG=${SITE_KUBECONFIG} does not exist."
-SITE_KUBECONFIG="$(abs_path "${SITE_KUBECONFIG}")"
+if [[ "${STAGE_NEEDS_KUBECONFIG}" != "0" ]]; then
+  [[ -n "${SITE_KUBECONFIG}" ]] ||
+    die "SITE_KUBECONFIG is not set. Export the path of the site cluster kubeconfig."
+  [[ -f "${SITE_KUBECONFIG}" ]] ||
+    die "SITE_KUBECONFIG=${SITE_KUBECONFIG} does not exist."
+fi
+if [[ -n "${SITE_KUBECONFIG}" && -f "${SITE_KUBECONFIG}" ]]; then
+  SITE_KUBECONFIG="$(abs_path "${SITE_KUBECONFIG}")"
+fi
 export SITE_KUBECONFIG
 
 # site-config.yaml holds credentials. Keep it out of the repository.
@@ -133,7 +140,7 @@ on_fail() {
   [[ -z "${ON_FAIL_DONE}" ]] || return 0
   ON_FAIL_DONE=1
   printf '[%s] run failed with exit code %s\n' "${STAGE_NAME}" "${rc}" >&2
-  if [[ -n "${DRY_RUN}" ]]; then
+  if [[ -n "${DRY_RUN}" || -z "${SITE_KUBECONFIG}" ]]; then
     return 0
   fi
   local dir="${OUT_DIR}/diagnostics/${STAGE_NAME}"
