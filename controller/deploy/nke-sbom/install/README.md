@@ -42,3 +42,5 @@ On a failed `run`, `lib.sh` writes `$OUT_DIR/diagnostics/<stage>/` with nodes, p
 ## Markers
 
 Commands between `# doc-begin` and `# doc-end` in each stage script are extracted verbatim into the guide; keep them copy-pasteable and free of functions.
+The guide marks where each block lands with `<!-- stage:NN-name begin -->` and `<!-- stage:NN-name end -->`.
+`hack/site-install/regen.sh` generates `05-install-site-controller.sh` from the deploy path and refreshes every block; `regen.sh --check` fails when either is stale.
