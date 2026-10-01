@@ -174,22 +174,27 @@ check "5. each release namespace is created before the chart that needs it"
 # install_helm_item passes --namespace but not --create-namespace, so a helm
 # item whose namespace no earlier manifest item created fails on its first
 # apply. That is a dry-run-invisible failure: the plan looks perfect.
-CREATED=""
+declare -a CREATED=()
 while IFS=$'\t' read -r name type; do
   [[ -n "${name}" ]] || continue
   case "${type}" in
     manifest | template)
-      # Namespace objects declared by this item, taking the name that follows
-      # each `kind: Namespace`.
-      found="$(awk '/^kind: Namespace$/ {want=1; next}
-                    want && /^  name: / {print $2; want=0}' \
-               "${DEPLOY_PATH}/${name}"/*.yaml "${DEPLOY_PATH}/${name}"/*.yaml.tmpl 2>/dev/null || true)"
-      CREATED="${CREATED} ${found}"
+      if ! found="$(python3 hack/deploy-path-namespaces.py "${DEPLOY_PATH}/${name}" 2>&1)"; then
+        fail "${name}: could not read its manifests: ${found}"
+        continue
+      fi
+      while IFS= read -r ns; do
+        [[ -n "${ns}" ]] && CREATED+=("${ns}")
+      done <<<"${found}"
       ;;
     helm)
       line="$(python3 "${ITEMS_PY}" release "${DEPLOY_PATH}/${name}/release.yaml")"
       IFS=$'\x1f' read -r _ _ _ _ _ _ namespace _ _ <<<"${line}"
-      if [[ " ${CREATED} " == *" ${namespace} "* ]]; then
+      created=""
+      for ns in ${CREATED[@]+"${CREATED[@]}"}; do
+        [[ "${ns}" == "${namespace}" ]] && created=1
+      done
+      if [[ -n "${created}" ]]; then
         pass "${name}: namespace ${namespace} created by an earlier item"
       else
         fail "${name}: namespace ${namespace} is never created before this item"
