@@ -146,6 +146,19 @@ jobs:
         with:
           persist-credentials: false
 
+      # Before the toolchain steps, so a runner without these says so in the
+      # first half minute rather than twelve minutes in wearing another
+      # failure's clothes. ip and iptables are what cli/e2e/bootstrap/run.sh
+      # attaches the bootstrap cluster to the fake-node network with, and it
+      # checks for neither; jq it does check for, but only once the suite is
+      # already running, and NKECTL_E2E_CONTROL_PLANE_VIP defaults to set, so
+      # the check is live. make runs before any of that -- the setup-* actions
+      # below read their version pins through it.
+      - name: Require host tools
+        uses: ./.github/actions/require-host-tools
+        with:
+          tools: ip iptables jq make
+
       # Large toolchains this job does not use, removed before any build
       # writes more data. A no-op on an image without them, and it still logs
       # the disk headroom for when a run fails on space.

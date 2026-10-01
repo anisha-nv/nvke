@@ -1,0 +1,117 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Makes a lane's host-tool requirements part of the workflow instead of part of
+# whichever image the runner happens to boot.
+#
+# The suites shell out to a handful of commands the toolchain steps never
+# install, so they only work on a runner that already has them. Ours does,
+# because they were added to the runner image one failure at a time; a fork
+# running on its own runner inherits none of that. `ip` missing is not reported
+# as `ip` missing -- it surfaces as "the bootstrap cluster was never attached
+# to the node network", and the one line that says `ip: command not found` is
+# 600 lines into a suite log. A probe binary missing is worse: the Tiltfile's
+# readiness gates are `nc -z`, and a gate that cannot run just never passes, so
+# `tilt ci` times out with every pod in the cluster Running.
+#
+# So each lane names what it needs, up front, and this installs anything that
+# is absent. A no-op on our runners and on ubuntu-latest, where all of it is
+# already present -- which also keeps `apt-get update` out of the normal path,
+# since that is its own source of flakes. The point is the bring-your-own
+# runner case, and failing in the first thirty seconds with the package name
+# when even apt cannot help.
+name: Require host tools
+description: Verify the host commands a suite shells out to, installing any that are missing
+
+inputs:
+  tools:
+    description: Space-separated commands to require, for example "ip iptables"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        TOOLS: ${{ inputs.tools }}
+      run: |
+        set -Eeuo pipefail
+
+        # Only commands a lane actually needs belong here. An unmapped one is
+        # an error rather than a best-effort `apt-get install $cmd`, because
+        # the command and its package differ often enough -- ip, nc -- that
+        # guessing would turn a clear failure into a confusing one.
+        package_for() {
+          case "$1" in
+            ip)       echo iproute2 ;;
+            iptables) echo iptables ;;
+            jq)       echo jq ;;
+            make)     echo make ;;
+            nc)       echo netcat-openbsd ;;
+            rsync)    echo rsync ;;
+            *)        return 1 ;;
+          esac
+        }
+
+        # nc is checked for -z rather than for existing, because
+        # netcat-traditional provides an nc without it and every Tiltfile probe
+        # is `nc -z`. `nc -h` exits non-zero by design, hence the `|| true`.
+        have() {
+          case "$1" in
+            nc) command -v nc >/dev/null && { nc -h 2>&1 || true; } | grep -q -- -z ;;
+            *)  command -v "$1" >/dev/null ;;
+          esac
+        }
+
+        missing=()
+        for tool in ${TOOLS}; do
+          if have "${tool}"; then
+            echo "${tool}: $(command -v "${tool}")"
+          else
+            missing+=("${tool}")
+          fi
+        done
+
+        if [ ${#missing[@]} -eq 0 ]; then
+          echo "every required host tool is present"
+          exit 0
+        fi
+
+        packages=()
+        for tool in "${missing[@]}"; do
+          if ! package="$(package_for "${tool}")"; then
+            echo "::error::${tool} is missing and this action has no package mapped for it; install it on the runner, or add it to package_for in .github/actions/require-host-tools"
+            exit 1
+          fi
+          packages+=("${package}")
+        done
+
+        echo "missing: ${missing[*]} -> installing ${packages[*]}"
+
+        if ! command -v apt-get >/dev/null; then
+          echo "::error::${missing[*]} missing and no apt-get to install ${packages[*]} with; install the equivalent packages on this runner"
+          exit 1
+        fi
+        if [ "$(id -u)" -eq 0 ]; then
+          sudo=""
+        elif command -v sudo >/dev/null; then
+          sudo="sudo"
+        else
+          echo "::error::${missing[*]} missing and this job is neither root nor able to sudo, so ${packages[*]} cannot be installed; install them on this runner"
+          exit 1
+        fi
+
+        ${sudo} apt-get update
+        ${sudo} apt-get install -y --no-install-recommends "${packages[@]}"
+
+        # Re-checked, because apt exiting 0 is not the same as the command
+        # being on PATH and taking the flag the suite uses -- `nc` from the
+        # wrong package being exactly that case.
+        for tool in "${missing[@]}"; do
+          if have "${tool}"; then
+            echo "${tool}: $(command -v "${tool}")"
+          else
+            echo "::error::installed $(package_for "${tool}") but ${tool} is still unusable"
+            exit 1
+          fi
+        done

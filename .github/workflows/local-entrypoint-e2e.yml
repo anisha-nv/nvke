@@ -125,6 +125,18 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      # nc above all: every readiness gate on the Tiltfile's port-forward
+      # resources is `nc -z`, and Tilt runs those on the host, so without it
+      # the gates cannot pass, anything with a resource_dep on them stalls,
+      # and `tilt ci` reports a timeout while every pod in the cluster is
+      # Running. local-backend-e2e.sh's own preflight covers curl, docker,
+      # dpkg-deb, go, kind, kubectl and tilt; these are the ones it misses or
+      # that are needed before it runs at all.
+      - name: Require host tools
+        uses: ./.github/actions/require-host-tools
+        with:
+          tools: nc jq make
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:

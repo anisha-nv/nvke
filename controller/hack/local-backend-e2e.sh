@@ -114,6 +114,15 @@ trap collect_diagnostics EXIT
 for command in curl docker dpkg-deb go jq kind kubectl make tilt; do
   require_command "${command}"
 done
+# nc is checked separately, and for -z rather than for existing, because
+# netcat-traditional provides an nc without that flag. Every readiness probe on
+# the Tiltfile's port-forward resources is `nc -z`, and Tilt runs them here on
+# the host, so the wrong nc does not fail anywhere near itself: it fails as
+# `tilt ci` timing out on a stack whose every pod is Running. `nc -h` exits
+# non-zero by design, hence the `|| true`.
+require_command nc
+{ nc -h 2>&1 || true; } | grep -q -- -z ||
+  fail "nc does not support -z (netcat-traditional?); the Tilt readiness probes need netcat-openbsd"
 if [[ -n "${dockerhub_mirror}" && ! "${dockerhub_mirror}" =~ ^[a-zA-Z0-9.-]+(:[0-9]{1,5})?$ ]]; then
   fail "NKE_E2E_DOCKERHUB_MIRROR must be a registry host with an optional port"
 fi
