@@ -29,6 +29,8 @@
 #   controller/deploy/...                   -> "${SBOM_DIR}/..."
 #   HELM_REPOSITORY_*=<mktemp>/...          -> "${HELM_TMP}/...", created once, removed by a trap
 #   template item apply lines               -> render at apply time into ${RENDER_TMP}, apply, remove
+#   helm items deploy-sbom.sh gives --values-for -> --values "${OUT_DIR}/<item>.yaml" appended after
+#                                              the item's own values files, so the site file wins
 #   === headers                             -> comments, so the script reads as the item list
 #
 # Added before the items: the stage 2 image check, a helm version warning.
@@ -66,6 +68,8 @@ capnico_manifest="${sbom_arg}/${target}/capnico/capnico.yaml"
 controller_overlay="${sbom_arg}/${target}/controller/overlay.yaml"
 template_dir="${sbom_arg}/${target}/nke-base-config"
 worker_main="controller/cmd/worker/main.go"
+deploy_sbom="controller/hack/ci/deploy-sbom.sh"
+describe_site="${install_dir}/describe_site.py"
 crd_warning="NicoMachine CRD not installed"
 year="2026"
 
@@ -180,6 +184,26 @@ cwe_deploy="$(awk '/^fullnameOverride: / { print $2; exit }' "${controller_overl
 
 grep -qF "${crd_warning}" "${worker_main}" ||
   die "warning text '${crd_warning}' not found in ${worker_main}; update crd_warning"
+
+# The helm items that take a site values file. deploy-sbom.sh names them with
+# --values-for ITEM=...; stage 3 writes ${OUT_DIR}/ITEM.yaml for each.
+site_values_items="$(sed -n 's/^[[:space:]]*--values-for "\([a-z]*\)=.*/\1/p' "${deploy_sbom}")"
+[[ -n "${site_values_items}" ]] || die "no --values-for items in ${deploy_sbom}"
+for item in ${site_values_items}; do
+  grep -qF "\"${item}.yaml\"" "${describe_site}" ||
+    die "${deploy_sbom} passes --values-for ${item}= but ${describe_site} does not write ${item}.yaml"
+done
+
+# site_values_arg prints the --values flag for an item, or nothing.
+site_values_arg() {
+  local candidate
+  for candidate in ${site_values_items}; do
+    if [[ "${candidate}" == "$1" ]]; then
+      printf -- ' --values "${OUT_DIR}/%s.yaml"' "$1"
+      return 0
+    fi
+  done
+}
 
 # ---------------------------------------------------------------------------
 # 3. Normalise the dry-run into the stage_run body.
@@ -324,7 +348,7 @@ while IFS= read -r line; do
     rest="${line#helm }"
     rest="${rest/ --kubeconfig \/dev\/null/}"
     rest="${rest/--timeout 15m/${phase_timeout}}"
-    emit "  hl $(paths "${rest}" 1)"
+    emit "  hl $(paths "${rest}" 1)$(site_values_arg "${item}")"
     ;;
   "env HELM_REPOSITORY_CONFIG=${tmp_base}/"*)
     rest="${line#env }"
@@ -391,8 +415,10 @@ cleanup_tmp() {
 
 stage_run() {
   require_cmd kubectl helm python3
-  [[ -n "\${DRY_RUN}" || -f "\${OUT_DIR}/bootstrap-config.json" ]] ||
-    die "\${OUT_DIR}/bootstrap-config.json not found. Run 03-describe-site.sh first."
+  for f in bootstrap-config.json$(for item in ${site_values_items}; do printf ' %s.yaml' "${item}"; done); do
+    [[ -n "\${DRY_RUN}" || -f "\${OUT_DIR}/\${f}" ]] ||
+      die "\${OUT_DIR}/\${f} not found. Run 03-describe-site.sh first."
+  done
   helm_want="\$(sed -n 's/^HELM_VERSION[[:space:]]*?*=[[:space:]]*//p' "\${SBOM_DIR}/../../make/tool-versions.mk")"
   helm_have="\$(helm version --template '{{.Version}}' 2>/dev/null || true)"
   [[ -z "\${helm_want}" || "\${helm_have}" == "\${helm_want}" ]] ||
@@ -416,6 +442,10 @@ EOF
 }
 
 stage_check() {
+  if [[ -n "\${DRY_RUN}" ]]; then
+    printf 'SKIP  provider and plane checks need a cluster (DRY_RUN)\n'
+    return 0
+  fi
   log "provider"
   for crd in $(printf '%s\n' "${crds}" | tr '\n' ' ' | sed 's/ *$//'); do
     if [[ "\$(kc get crd "\${crd}" -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>/dev/null)" == "True" ]]; then

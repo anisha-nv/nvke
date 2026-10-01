@@ -31,3 +31,5 @@ postgresql.yaml auth.postgresPassword
 postgresql.yaml auth.password
 temporal.yaml server.config.persistence.default.sql.password
 temporal.yaml server.config.persistence.visibility.sql.password
+site.env SITE_NAME
+site.env SITE_VIP

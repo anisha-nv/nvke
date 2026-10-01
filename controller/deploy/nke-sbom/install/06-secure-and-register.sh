@@ -26,8 +26,9 @@ set -euo pipefail
 
 HACK_DIR="$(cd "${SBOM_DIR}/.." && pwd)/hack"
 
-# The site name and VIP come from the site config written for stage 3. Both
-# can be set in the environment instead.
+# The site name and VIP come from stage 3: ${OUT_DIR}/site.env when it has
+# been run, else the site config it reads. Both can be set in the environment
+# instead.
 # site_value prints one scalar under the top-level `site:` key of SITE_CONFIG.
 site_value() {
   [[ -f "${SITE_CONFIG}" ]] || return 0
@@ -43,9 +44,18 @@ site_value() {
   ' "${SITE_CONFIG}"
 }
 
-# resolve_site fills SITE_NAME and SITE_VIP from the environment or SITE_CONFIG.
-# Only the run step needs them; check works from the cluster alone.
+# env_value prints one KEY from ${OUT_DIR}/site.env, sourced in a subshell.
+env_value() {
+  [[ -f "${OUT_DIR}/site.env" ]] || return 0
+  # shellcheck disable=SC1091
+  (. "${OUT_DIR}/site.env" && printf '%s' "${!1:-}")
+}
+
+# resolve_site fills SITE_NAME and SITE_VIP: the environment, then site.env,
+# then SITE_CONFIG. Only the run step needs them; check works from the cluster.
 resolve_site() {
+  SITE_NAME="${SITE_NAME:-$(env_value SITE_NAME)}"
+  SITE_VIP="${SITE_VIP:-$(env_value SITE_VIP)}"
   SITE_NAME="${SITE_NAME:-$(site_value name)}"
   SITE_VIP="${SITE_VIP:-$(site_value vip)}"
   local v
@@ -103,6 +113,10 @@ stage_check() {
   require_nkectl
 
   local entry ns name volume
+  if [[ -n "${DRY_RUN}" ]]; then
+    printf 'SKIP  exec-auth volumes and rollouts need a cluster (DRY_RUN)\n'
+    EXEC_AUTH_DEPLOYMENTS=""
+  fi
   for entry in ${EXEC_AUTH_DEPLOYMENTS}; do
     ns="${entry%%/*}"
     name="${entry#*/}"

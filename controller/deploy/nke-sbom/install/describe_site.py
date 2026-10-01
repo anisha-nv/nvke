@@ -7,7 +7,7 @@
   describe_site.py check  --out DIR
   describe_site.py keys   --config site-config.yaml --sbom-dir controller/deploy
 
-render writes five files to DIR, mode 0600:
+render writes six files to DIR, mode 0600:
 
   bootstrap-config.json   the context build/render-template.py renders the
                           nke-base-config template item against
@@ -15,6 +15,7 @@ render writes five files to DIR, mode 0600:
   spire.yaml              --values-for spire=...
   postgresql.yaml         --values-for postgresql=...
   temporal.yaml           --values-for temporal=...
+  site.env                SITE_NAME and SITE_VIP for stage 6; no secrets
 
 The derivations follow controller/hack/ci/deploy-sbom.sh, which does the same
 for the e2e lanes from environment variables. The upstream CA values follow
@@ -71,7 +72,9 @@ CWE_ADMIN_PATH = "/nke-service/cloud-workflow-engine"
 OIDC_NODEPORT = 30443
 
 OUTPUT_FILES = ["bootstrap-config.json", "controller.yaml", "spire.yaml",
-                "postgresql.yaml", "temporal.yaml"]
+                "postgresql.yaml", "temporal.yaml", "site.env"]
+ENV_FILE = "site.env"
+ENV_KEYS = ["SITE_NAME", "SITE_VIP"]
 PASSWORD_FILE = "db-password"
 
 SECRET_KEY_RE = re.compile(r"password|token|key|secret", re.I)
@@ -362,12 +365,16 @@ def build(flat, files, sbom_dir, password):
         "default": {"sql": {"password": password}},
         "visibility": {"sql": {"password": password}},
     }}}}
+    # Stage 6 sources this for `nkectl config set-site`. Both values are
+    # validated above as a DNS label and an IP address, so they need no quoting.
+    site_env = {"SITE_NAME": site_name, "SITE_VIP": vip}
     return {
         "bootstrap-config.json": bootstrap,
         "controller.yaml": controller,
         "spire.yaml": spire,
         "postgresql.yaml": postgresql,
         "temporal.yaml": temporal,
+        ENV_FILE: site_env,
     }
 
 
@@ -393,6 +400,11 @@ def to_yaml(node, indent=0):
     else:
         out.append("%s%s" % (pad, json.dumps(node)))
     return "\n".join(out)
+
+
+def to_env(node):
+    """Emit a flat dict as KEY=value lines a shell can source."""
+    return "\n".join("%s=%s" % (key, value) for key, value in node.items())
 
 
 def write_private(path, text):
@@ -448,6 +460,8 @@ def cmd_render(args):
     for name, tree in outputs.items():
         if name.endswith(".json"):
             text = json.dumps(tree, indent=2)
+        elif name == ENV_FILE:
+            text = to_env(tree)
         else:
             text = to_yaml(tree)
         write_private(os.path.join(args.out, name), text)
@@ -522,6 +536,13 @@ def cmd_check(args):
             with open(path) as fh:
                 if not fh.read().strip():
                     fail("%s is empty" % name)
+        elif name == ENV_FILE:
+            with open(path) as fh:
+                env = dict(line.rstrip("\n").split("=", 1) for line in fh if "=" in line)
+            for key in ENV_KEYS:
+                if not env.get(key):
+                    fail("%s: %s is missing or empty" % (name, key))
+            print("PASS  %s has %s" % (name, ", ".join(ENV_KEYS)))
         else:
             with open(path) as fh:
                 text = fh.read()

@@ -49,6 +49,23 @@ The cluster's nodes are the cluster's container hosts. An image imported into a 
 Confirm the tools, the checkout, egress, the node count and the architecture before anything changes.
 
 <!-- stage:00-check-readiness begin -->
+```bash
+# Hosts the install pulls from. Stage 4 fetches Cluster API and cert-manager
+# from github.com. Stage 5 pulls charts and images from the rest: Postgres from
+# registry-1.docker.io, SPIRE from spiffe.github.io, Temporal from
+# go.temporal.io, CAPNICo from ghcr.io, and the nktp chart dependencies from
+# the three repositories named in nktp/deploy/charts/nktp/Chart.yaml.
+EGRESS_URLS=(
+  https://github.com/
+  https://registry-1.docker.io/v2/
+  https://ghcr.io/v2/
+  https://spiffe.github.io/helm-charts-hardened/index.yaml
+  https://go.temporal.io/helm-charts/index.yaml
+  https://open-telemetry.github.io/opentelemetry-helm-charts/index.yaml
+  https://prometheus-community.github.io/helm-charts/index.yaml
+  https://kubernetes-sigs.github.io/metrics-server/index.yaml
+)
+```
 <!-- stage:00-check-readiness end -->
 
 ### Check
@@ -70,6 +87,22 @@ Every node is a control-plane node and carries the `NoSchedule` taint. Nothing i
 A bare site ships no StorageClass. Postgres and SPIRE need one. The stage installs a local-path provisioner. It stores data on one node's disk, so it is single-node durability. A site with real storage should use its own CSI driver instead: set `SKIP_STORAGECLASS=1` and create a default StorageClass yourself before the check.
 
 <!-- stage:01-prepare-cluster begin -->
+```bash
+# Let workloads schedule on control-plane nodes. Only nodes that carry the
+# taint are touched.
+printf '%s\n' "${tainted}" | while read -r node; do
+  [[ -n "${node}" ]] || continue
+  kc taint nodes "${node}" node-role.kubernetes.io/control-plane:NoSchedule-
+done
+
+# Default StorageClass for Postgres and Temporal. Skipped when one exists
+# or when SKIP_STORAGECLASS is set.
+if [[ -z "${SKIP_STORAGECLASS}" && -z "${default_sc}" ]]; then
+  kc apply -f "${LOCAL_PATH_URL}"
+  kc annotate storageclass local-path storageclass.kubernetes.io/is-default-class=true --overwrite
+  kc -n local-path-storage rollout status deployment/local-path-provisioner --timeout="${REQUIRE_TIMEOUT}"
+fi
+```
 <!-- stage:01-prepare-cluster end -->
 
 ### Check
@@ -117,6 +150,10 @@ The file holds credentials. Keep it out of git. The renderer writes to `OUT_DIR`
 The trust domain and the CA are the two values that tie the permanent SPIRE server to the bootstrap. Every node's SPIRE agent already trusts the bootstrap CA and carries the bootstrap trust domain. Reusing both lets the agents move to the permanent server. Changing either changes every SPIFFE ID and strands the agents. See [A SPIFFE trust domain](../first-cluster.md#real-site).
 
 <!-- stage:03-describe-site begin -->
+```bash
+python3 "${INSTALL_DIR}/describe_site.py" render \
+  --config "${SITE_CONFIG}" --out "${OUT_DIR}" --sbom-dir "${SBOM_DIR}"
+```
 <!-- stage:03-describe-site end -->
 
 ### Check
@@ -134,6 +171,15 @@ Install cert-manager, Cluster API core and the kubeadm providers at the version 
 Cluster API comes first because CAPNICo needs its CRDs, the SPIRE item waits on a cert-manager Certificate, and the controller reads the Machine CRDs once at start. [Infrastructure Providers](infrastructure-providers.md) explains the pin and the ordering.
 
 <!-- stage:04-install-cluster-api begin -->
+```bash
+# Pinned, so clusterctl does not install whatever is latest. Installs
+# cert-manager too. Safe to rerun: clusterctl skips what is present.
+run clusterctl init --kubeconfig "${SITE_KUBECONFIG}" \
+  --core "cluster-api:${CAPI_VERSION}" \
+  --bootstrap "kubeadm:${CAPI_VERSION}" \
+  --control-plane "kubeadm:${CAPI_VERSION}" \
+  --wait-providers
+```
 <!-- stage:04-install-cluster-api end -->
 
 ### Check
@@ -155,6 +201,88 @@ Apply the deploy items in list order: base configuration, SPIRE node ports, CAPN
 **Security posture.** The controller runs as root with a writable root filesystem. The `materialize-profiles` init container copies the profiles image into a shared volume and needs that. Restore a non-root design before production use.
 
 <!-- stage:05-install-site-controller begin -->
+```bash
+# Imported images are eligible for kubelet garbage collection. Confirm they
+# are still present before anything schedules.
+if [[ -x "${INSTALL_DIR}/02-stage-images.sh" ]]; then
+  "${INSTALL_DIR}/02-stage-images.sh" check ||
+    die "staged images are missing. Rerun 02-stage-images.sh."
+fi
+
+HELM_TMP="$(mktemp -d "${TMPDIR:-/tmp}/nke-helm.XXXXXX")"
+
+# item nke-base-config (template)
+RENDER_TMP="$(mktemp -d "${TMPDIR:-/tmp}/nke-render.XXXXXX")"
+run python3 "${SBOM_DIR}/../../build/render-template.py" "${OUT_DIR}/bootstrap-config.json" "${SBOM_DIR}/nke-sbom/nke-base-config" "${RENDER_TMP}"
+for file in "${RENDER_TMP}"/*.yaml; do
+  kc apply --server-side -f "${file}"
+done
+rm -rf "${RENDER_TMP}"
+
+# item spire-tpm-pubhashes (manifest)
+kc apply --server-side -f "${SBOM_DIR}/nke-sbom/spire-tpm-pubhashes/spire-tpm-pubhashes.yaml"
+
+# item spire-server-nodeport (manifest)
+kc apply --server-side -f "${SBOM_DIR}/nke-sbom/spire-server-nodeport/spire-server-nodeport.yaml"
+
+# item spire-oidc-provider-nodeport (manifest)
+kc apply --server-side -f "${SBOM_DIR}/nke-sbom/spire-oidc-provider-nodeport/spire-oidc-provider-nodeport.yaml"
+
+# item capnico (manifest)
+if [[ -n "${CAPNICO_IMAGE:-}" ]]; then
+  CAPNICO_TMP="$(mktemp -d "${TMPDIR:-/tmp}/nke-capnico.XXXXXX")"
+  cp "${SBOM_DIR}/nke-sbom/capnico/capnico.yaml" "${CAPNICO_TMP}/capnico.yaml"
+  printf 'resources: [capnico.yaml]\nimages:\n  - name: %s\n    newName: %s\n    newTag: %s\n' \
+    'ghcr.io/dsx-ai-factory/cluster-api-provider-nico/controller' "${CAPNICO_IMAGE%:*}" "${CAPNICO_IMAGE##*:}" >"${CAPNICO_TMP}/kustomization.yaml"
+  run kubectl kustomize "${CAPNICO_TMP}" | kc apply --server-side -f -
+  rm -rf "${CAPNICO_TMP}"
+else
+  kc apply --server-side -f "${SBOM_DIR}/nke-sbom/capnico/capnico.yaml"
+fi
+
+# item nktp (helm)
+
+# building chart dependencies of ${SBOM_DIR}/nke-sbom/../../../nktp/deploy/charts/nktp
+run env HELM_REPOSITORY_CONFIG="${HELM_TMP}/repositories.yaml" HELM_REPOSITORY_CACHE="${HELM_TMP}/cache" helm repo add dependency-1 https://kubernetes-sigs.github.io/metrics-server/
+run env HELM_REPOSITORY_CONFIG="${HELM_TMP}/repositories.yaml" HELM_REPOSITORY_CACHE="${HELM_TMP}/cache" helm repo add dependency-2 https://open-telemetry.github.io/opentelemetry-helm-charts
+run env HELM_REPOSITORY_CONFIG="${HELM_TMP}/repositories.yaml" HELM_REPOSITORY_CACHE="${HELM_TMP}/cache" helm repo add dependency-3 https://prometheus-community.github.io/helm-charts
+run env HELM_REPOSITORY_CONFIG="${HELM_TMP}/repositories.yaml" HELM_REPOSITORY_CACHE="${HELM_TMP}/cache" helm dependency build "${SBOM_DIR}/nke-sbom/../../../nktp/deploy/charts/nktp" --skip-refresh
+
+# nktp -> release nktp (nktp 0.1.0-rc.2) in nktp
+hl upgrade --install nktp "${SBOM_DIR}/nke-sbom/../../../nktp/deploy/charts/nktp" --namespace nktp --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/nktp/values.yaml"
+
+# item postgresql (helm)
+
+# postgresql -> release postgres (postgresql 18.5.15) in postgres
+hl upgrade --install postgres oci://registry-1.docker.io/bitnamicharts/postgresql --version 18.5.15 --namespace postgres --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/postgresql/values.yaml" --values "${OUT_DIR}/postgresql.yaml"
+
+# item spire-crds (helm)
+
+# spire-crds -> release spire-crds (spire-crds 0.6.1) in spire-server
+hl upgrade --install spire-crds spire-crds --repo https://spiffe.github.io/helm-charts-hardened/ --version 0.6.1 --namespace spire-server --wait --timeout "${PHASE_TIMEOUT:-15m}"
+
+# item temporal (helm)
+
+# temporal -> release temporal (temporal 0.74.0) in temporal
+hl upgrade --install temporal temporal --repo https://go.temporal.io/helm-charts --version 0.74.0 --namespace temporal --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/temporal/values.yaml" --values "${SBOM_DIR}/nke-sbom/temporal/overlay.yaml" --values "${OUT_DIR}/temporal.yaml"
+
+# item spire (helm)
+
+# waiting for certificate/oidc-provider-upstream-ca condition=Ready
+kc -n spire-server get certificate/oidc-provider-upstream-ca >/dev/null 2>&1 ||
+  die "phase spire requires certificate/oidc-provider-upstream-ca in namespace spire-server, which does not exist.
+ is not part of this chart -- an earlier item supplies it. In this repository
+at is the nke-base-config item, from ${SBOM_DIR}/k8s/oidc-upstream-ca.yaml."
+kc -n spire-server wait --for=condition=Ready certificate/oidc-provider-upstream-ca --timeout="${REQUIRE_TIMEOUT:-180s}"
+
+# spire -> release spire (spire 0.30.1) in spire-server
+hl upgrade --install spire spire --repo https://spiffe.github.io/helm-charts-hardened/ --version 0.30.1 --namespace spire-server --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/spire/values.yaml" --values "${SBOM_DIR}/nke-sbom/spire/overlay.yaml" --values "${OUT_DIR}/spire.yaml"
+
+# item controller (helm)
+
+# controller -> release controller (nke-controller 0.0.0) in cloud-workflow-engine
+hl upgrade --install controller "${SBOM_DIR}/nke-sbom/../charts/controller" --namespace cloud-workflow-engine --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/controller/values.yaml" --values "${SBOM_DIR}/nke-sbom/controller/overlay.yaml" --values "${OUT_DIR}/controller.yaml"
+```
 <!-- stage:05-install-site-controller end -->
 
 ### Check
@@ -183,6 +311,16 @@ Patch the Cluster API controllers to authenticate to tenant clusters with SPIFFE
 **API authentication is off by default.** The controller API is plain HTTP on NodePort `30080` on every node IP, with no token required. Anyone who can reach a node can call every endpoint. Turn authentication on before exposing the site: [Configuring NKE API Authentication](../../controller/docs/configuring-api-authentication.md).
 
 <!-- stage:06-secure-and-register begin -->
+```bash
+run "${HACK_DIR}/apply-capi-spiffe-exec-auth.sh" --kubeconfig "${SITE_KUBECONFIG}"
+
+run nkectl config set-site \
+  --name "${SITE_NAME}" \
+  --url "http://${SITE_VIP}:30080" \
+  --kubeconfig "${SITE_KUBECONFIG}"
+
+run nkectl get providers
+```
 <!-- stage:06-secure-and-register end -->
 
 ### Check

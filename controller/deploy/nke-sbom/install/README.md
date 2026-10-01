@@ -2,7 +2,6 @@
 
 The reference implementation of [docs/site-bootstrap/install-site-controller.md](../../../../docs/site-bootstrap/install-site-controller.md).
 One script per stage of that guide, run in order.
-Generated parts are marked at the top of each script. Do not edit them by hand.
 The guide is the authority. When a script and the guide disagree, the guide wins.
 
 ## Run
@@ -24,10 +23,11 @@ One stage:
 ```
 
 Stage names drop the numeric prefix: `--from install-cluster-api` selects `04-install-cluster-api.sh`.
+`install-all.sh` runs the stage scripts present in this directory. `02-stage-images.sh` is not in the tree yet; until it lands, import the controller and profiles images by hand as the guide describes, and stage 5 skips its image check.
 
 ## Describe your site
 
-Stage 3 has no cluster access. It reads one `site-config.yaml` and writes the files stage 5 installs from into `$OUT_DIR`: `bootstrap-config.json` for the `nke-base-config` template item, and `controller.yaml`, `spire.yaml`, `postgresql.yaml`, `temporal.yaml` for `--values-for`.
+Stage 3 has no cluster access. It reads one `site-config.yaml` and writes the files later stages use into `$OUT_DIR`: `bootstrap-config.json` for the `nke-base-config` template item, `controller.yaml`, `spire.yaml`, `postgresql.yaml` and `temporal.yaml` as the last `--values` of each release, and `site.env` with `SITE_NAME` and `SITE_VIP` for stage 6.
 Copy [site-config.example.yaml](site-config.example.yaml), replace every `REPLACE_*` value, keep the copy out of git.
 Every key is required except `db.password`; a missing, empty or non-scalar value fails with the key name.
 `site.trustDomain` is explicit and must equal the trust domain the nodes were bootstrapped with.
@@ -54,19 +54,13 @@ SITE_CONFIG=./site-config.yaml ./03-describe-site.sh run
 
 On a failed `run`, `lib.sh` writes `$OUT_DIR/diagnostics/<stage>/` with nodes, pods, events, `helm list` and controller logs.
 
-## Test
-
-The renderer has fixtures under `testdata/`. Python 3 only, no cluster:
-
-```bash
-make test            # or ./testdata/test.sh
-```
 ## Stage 6: secure and register
 
 `06-secure-and-register.sh` patches the Cluster API controllers with the SPIRE exec-auth plugin
 (`controller/hack/apply-capi-spiffe-exec-auth.sh --kubeconfig "$SITE_KUBECONFIG"`) and registers the
-site with `nkectl config set-site`. It reads `site.name` and `site.vip` from `$SITE_CONFIG`;
-`SITE_NAME` and `SITE_VIP` in the environment override them. `nkectl` must be on `PATH`
+site with `nkectl config set-site`. It takes the site name and VIP from `$OUT_DIR/site.env`, written by
+stage 3, else from `site.name` and `site.vip` in `$SITE_CONFIG`; `SITE_NAME` and `SITE_VIP` in the
+environment override both. `nkectl` must be on `PATH`
 ([install guide](../../../../docs/site-bootstrap/installation.md)).
 `clusterctl upgrade` rewrites the patched Deployments and drops the patch, so rerun this stage after it.
 The check passes when `nkectl get providers` reports `nico` as `CONFIGURED`. CONFIGURED means the
@@ -77,8 +71,18 @@ The default install leaves API authentication off: the API is plain HTTP on Node
 node IP. To require a token, follow
 [configuring-api-authentication.md](../../../docs/configuring-api-authentication.md).
 
-## Markers
+## Test
+
+The renderer has fixtures under `testdata/`. Python 3 only, no cluster:
+
+```bash
+make test            # or ./testdata/test.sh
+```
+
+`hack/site-install/regen_test.sh` covers the generator.
+
+## Markers and regeneration
 
 Commands between `# doc-begin` and `# doc-end` in each stage script are extracted verbatim into the guide; keep them copy-pasteable and free of functions.
 The guide marks where each block lands with `<!-- stage:NN-name begin -->` and `<!-- stage:NN-name end -->`.
-`hack/site-install/regen.sh` generates `05-install-site-controller.sh` from the deploy path and refreshes every block; `regen.sh --check` fails when either is stale.
+`05-install-site-controller.sh` is generated. `hack/site-install/regen.sh` writes it from the deploy path and refreshes every block in the guide; `regen.sh --check` fails when either is stale. Do not edit the generated script by hand.

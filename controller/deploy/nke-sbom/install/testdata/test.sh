@@ -111,7 +111,7 @@ else
   fail "valid.yaml: check rc=${rc}: ${log}"
 fi
 
-for f in bootstrap-config.json controller.yaml spire.yaml postgresql.yaml temporal.yaml db-password; do
+for f in bootstrap-config.json controller.yaml spire.yaml postgresql.yaml temporal.yaml site.env db-password; do
   [[ -f "${out}/${f}" ]] || fail "valid.yaml: ${f} missing"
 done
 mode="$(stat -f '%Lp' "${out}" 2>/dev/null || stat -c '%a' "${out}")"
@@ -147,6 +147,13 @@ expect_line controller.yaml '^  discoveryURL: "https://192.0.2.10:30443/.well-kn
 expect_line controller.yaml '^    serverAddress: "192.0.2.10"$'
 expect_line bootstrap-config.json '"ClusterName": "demo-site"'
 expect_line bootstrap-config.json '"APIName": "forge"'
+expect_line site.env '^SITE_NAME=demo-site$'
+expect_line site.env '^SITE_VIP=192.0.2.10$'
+if [[ "$(grep -c . "${out}/site.env")" -eq 2 ]]; then
+  pass "site.env holds two lines and no credential"
+else
+  fail "site.env holds $(grep -c . "${out}/site.env") lines, expected 2"
+fi
 
 # One password in five places.
 password="$(cat "${out}/db-password")"

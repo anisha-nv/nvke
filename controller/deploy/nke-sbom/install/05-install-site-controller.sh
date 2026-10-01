@@ -33,8 +33,10 @@ cleanup_tmp() {
 
 stage_run() {
   require_cmd kubectl helm python3
-  [[ -n "${DRY_RUN}" || -f "${OUT_DIR}/bootstrap-config.json" ]] ||
-    die "${OUT_DIR}/bootstrap-config.json not found. Run 03-describe-site.sh first."
+  for f in bootstrap-config.json controller.yaml spire.yaml postgresql.yaml temporal.yaml; do
+    [[ -n "${DRY_RUN}" || -f "${OUT_DIR}/${f}" ]] ||
+      die "${OUT_DIR}/${f} not found. Run 03-describe-site.sh first."
+  done
   helm_want="$(sed -n 's/^HELM_VERSION[[:space:]]*?*=[[:space:]]*//p' "${SBOM_DIR}/../../make/tool-versions.mk")"
   helm_have="$(helm version --template '{{.Version}}' 2>/dev/null || true)"
   [[ -z "${helm_want}" || "${helm_have}" == "${helm_want}" ]] ||
@@ -94,7 +96,7 @@ stage_run() {
   # item postgresql (helm)
 
   # postgresql -> release postgres (postgresql 18.5.15) in postgres
-  hl upgrade --install postgres oci://registry-1.docker.io/bitnamicharts/postgresql --version 18.5.15 --namespace postgres --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/postgresql/values.yaml"
+  hl upgrade --install postgres oci://registry-1.docker.io/bitnamicharts/postgresql --version 18.5.15 --namespace postgres --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/postgresql/values.yaml" --values "${OUT_DIR}/postgresql.yaml"
 
   # item spire-crds (helm)
 
@@ -104,7 +106,7 @@ stage_run() {
   # item temporal (helm)
 
   # temporal -> release temporal (temporal 0.74.0) in temporal
-  hl upgrade --install temporal temporal --repo https://go.temporal.io/helm-charts --version 0.74.0 --namespace temporal --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/temporal/values.yaml" --values "${SBOM_DIR}/nke-sbom/temporal/overlay.yaml"
+  hl upgrade --install temporal temporal --repo https://go.temporal.io/helm-charts --version 0.74.0 --namespace temporal --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/temporal/values.yaml" --values "${SBOM_DIR}/nke-sbom/temporal/overlay.yaml" --values "${OUT_DIR}/temporal.yaml"
 
   # item spire (helm)
 
@@ -116,16 +118,20 @@ that is the nke-base-config item, from ${SBOM_DIR}/k8s/oidc-upstream-ca.yaml."
   kc -n spire-server wait --for=condition=Ready certificate/oidc-provider-upstream-ca --timeout="${REQUIRE_TIMEOUT:-180s}"
 
   # spire -> release spire (spire 0.30.1) in spire-server
-  hl upgrade --install spire spire --repo https://spiffe.github.io/helm-charts-hardened/ --version 0.30.1 --namespace spire-server --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/spire/values.yaml" --values "${SBOM_DIR}/nke-sbom/spire/overlay.yaml"
+  hl upgrade --install spire spire --repo https://spiffe.github.io/helm-charts-hardened/ --version 0.30.1 --namespace spire-server --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/spire/values.yaml" --values "${SBOM_DIR}/nke-sbom/spire/overlay.yaml" --values "${OUT_DIR}/spire.yaml"
 
   # item controller (helm)
 
   # controller -> release controller (nke-controller 0.0.0) in cloud-workflow-engine
-  hl upgrade --install controller "${SBOM_DIR}/nke-sbom/../charts/controller" --namespace cloud-workflow-engine --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/controller/values.yaml" --values "${SBOM_DIR}/nke-sbom/controller/overlay.yaml"
+  hl upgrade --install controller "${SBOM_DIR}/nke-sbom/../charts/controller" --namespace cloud-workflow-engine --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/controller/values.yaml" --values "${SBOM_DIR}/nke-sbom/controller/overlay.yaml" --values "${OUT_DIR}/controller.yaml"
   # doc-end
 }
 
 stage_check() {
+  if [[ -n "${DRY_RUN}" ]]; then
+    printf 'SKIP  provider and plane checks need a cluster (DRY_RUN)\n'
+    return 0
+  fi
   log "provider"
   for crd in nicoclusters.infrastructure.cluster.x-k8s.io nicoclustertemplates.infrastructure.cluster.x-k8s.io nicomachines.infrastructure.cluster.x-k8s.io nicomachinetemplates.infrastructure.cluster.x-k8s.io; do
     if [[ "$(kc get crd "${crd}" -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>/dev/null)" == "True" ]]; then
