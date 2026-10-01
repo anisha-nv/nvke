@@ -85,3 +85,8 @@ controller/test/e2e/site-e2e.log
 controller/test/e2e/site-e2e.junit.xml
 controller/test/e2e/report.json
 controller/test/e2e/site-diagnostics.tar.gz
+
+# Output of the staged site controller install under
+# controller/deploy/nke-sbom/install/: rendered values, the generated database
+# password and failure diagnostics. Relative to wherever the stages run.
+.site-install/
