@@ -46,8 +46,7 @@ boards against the Prometheus that actually scrapes that cluster.
 | [`nke-provisioning-duration-reference.json`](nke-provisioning-duration-reference.json) | Reference - NKE Provisioning Duration | Node provision/teardown duration, success vs give-up rate, and in-progress nodes from controller `/metrics`. |
 | [`nke-cluster-upgrade-overview-reference.json`](nke-cluster-upgrade-overview-reference.json) | Reference - NKE Cluster Upgrade Overview | Upgrade progress for GPU clusters: kubelet, Calico, control plane, and OS profile. Applies only to GPU clusters. |
 
-Controller series match both `cwe_*` (existing sites) and `nke_controller_*`
-(greenfield prefix). Site-controller Ready/Version/Restarts match both
+Controller series use the `nke_controller_*` prefix. Site-controller Ready/Version/Restarts match both
 `cloud-workflow-engine` and `nke-controller` workload names.
 
 ## Editing
