@@ -36,6 +36,7 @@ indexes both.
 | [site-bootstrap/custom-base-os.md](site-bootstrap/custom-base-os.md) | Running on a base OS other than the reference image |
 | [site-bootstrap/deploy-repository.md](site-bootstrap/deploy-repository.md) | The deploy repository and what it holds |
 | [site-bootstrap/infrastructure-providers.md](site-bootstrap/infrastructure-providers.md) | Installing Cluster API and an infrastructure provider on a site cluster |
+| [site-bootstrap/install-site-controller.md](site-bootstrap/install-site-controller.md) | Installing Postgres, Temporal, SPIRE, CAPNICo and the NKE controller onto a bootstrapped site cluster, in seven stages |
 | [../cli/docs/sitespec.md](../cli/docs/sitespec.md) | Every field of the site spec file, with its type |
 
 ## Running tenant clusters

@@ -41,6 +41,8 @@ navigation:
             path: site-bootstrap/deploy-repository.md
           - page: Infrastructure Providers
             path: site-bootstrap/infrastructure-providers.md
+          - page: Install the Site Controller
+            path: site-bootstrap/install-site-controller.md
           - page: Pre-Provisioned Nodes
             path: site-bootstrap/pre-provisioned-nodes.md
           - page: Custom Base OS
