@@ -232,6 +232,9 @@ dev-start-remote: dev-check dev-postgres-start ## Start remote development (conn
 .PHONY: run-local
 run-local: dev-start-local ## Start local services and run CWE (sources .env.local if present)
 	@echo ""
+	@echo "📦 Installing the release CRDs and the fixture releases (RELEASES_DIR=$(RELEASES_DIR))..."
+	@$(MAKE) releases-install
+	@echo ""
 	@echo "🚀 Starting CWE worker..."
 	@bash -c '\
 		[ -f .env.local ] && echo "📄 Loading .env.local..." && set -a && source .env.local && set +a; \

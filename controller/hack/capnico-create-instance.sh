@@ -9,8 +9,8 @@
 # report ready and prints the nico-sim instance JSON.
 #
 # Notes:
-#   - The iPXE script comes from the CWE-side OS profile
-#     (profiles/osProfiles/<OS_PROFILE>/ipxeScript); nico-vms and CAPNICo only
+#   - The iPXE script comes from the releases in the cluster: the
+#     MachineImage that NodePoolRelease <OS_PROFILE> references; nico-vms and CAPNICo only
 #     ever see the rendered text. `{{ .DiskSelectionStrategy }}` is the only
 #     template variable today and is rendered with sed; any surviving `{{` is a
 #     hard failure rather than a VM that silently fails to boot.
@@ -161,15 +161,22 @@ esac
 # Render the OS profile's iPXE script.
 # ---------------------------------------------------------------------------
 
-PROFILES_ROOT="${CWE_PROFILES_DIR:-${REPO_ROOT}/../../nke-site-deploy/cwe-profiles/profiles}"
-IPXE_SOURCE="${PROFILES_ROOT}/osProfiles/${OS_PROFILE}/ipxeScript"
-if [ ! -f "${IPXE_SOURCE}" ]; then
-  echo "OS profile '${OS_PROFILE}' has no ipxeScript at ${IPXE_SOURCE}" >&2
-  echo "Set CWE_PROFILES_DIR to the nke-site-deploy cwe-profiles profiles tree." >&2
+# The script is read from the releases in the cluster, the same place CWE
+# resolves it: the NodePoolRelease named OS_PROFILE points at a MachineImage,
+# which carries the iPXE script. Nothing here reads a profiles directory.
+IMAGE_NAME="$(kubectl get nodepoolrelease "${OS_PROFILE}" -o jsonpath='{.spec.machineImageRef.name}' 2>/dev/null || true)"
+if [ -z "${IMAGE_NAME}" ]; then
+  echo "NodePoolRelease '${OS_PROFILE}' is not installed in the cluster kubectl points at." >&2
+  echo "Apply the releases first (nke-site-deploy/cwe-profiles/releases, or make releases-install)." >&2
+  exit 1
+fi
+IPXE_TEMPLATE="$(kubectl get machineimage "${IMAGE_NAME}" -o jsonpath='{.spec.nico.ipxeScript}' 2>/dev/null || true)"
+if [ -z "${IPXE_TEMPLATE}" ]; then
+  echo "MachineImage '${IMAGE_NAME}' (from NodePoolRelease '${OS_PROFILE}') has no iPXE script." >&2
   exit 1
 fi
 
-IPXE_SCRIPT="$(sed "s|{{ \.DiskSelectionStrategy }}|${DISK_SELECTION_STRATEGY}|g" "${IPXE_SOURCE}")"
+IPXE_SCRIPT="$(printf '%s\n' "${IPXE_TEMPLATE}" | sed "s|{{ \.DiskSelectionStrategy }}|${DISK_SELECTION_STRATEGY}|g")"
 if printf '%s\n' "${IPXE_SCRIPT}" | grep -q '{{'; then
   echo "Unrendered template variables remain in the ${OS_PROFILE} ipxeScript:" >&2
   printf '%s\n' "${IPXE_SCRIPT}" | grep -n '{{' >&2
