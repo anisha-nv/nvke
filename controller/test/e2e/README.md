@@ -424,8 +424,13 @@ The node is torn down afterwards (tenants are deleted first). `-e2e.keep-site`, 
 `lifecycle.preserveOnFailure` with a failed spec, keeps it.
 
 Prerequisites: a way to reach the jump host (below), the jump host in
-`FORGE_JUMP_HOST` (read by `environments/forge.yaml`), `FORGE_API_KEY`, and for
-`full` `GHCR_USERNAME` and `GHCR_TOKEN`, which the node pulls CAPNICo with.
+`FORGE_JUMP_HOST` (read by `environments/forge.yaml`), the seven Forge
+identifiers that file also reads (`FORGE_ORG_ID`, `FORGE_SITE_ID`,
+`FORGE_VPC_ID`, `FORGE_SUBNET_ID`, `FORGE_SSH_KEY_GROUP_ID`,
+`FORGE_INSTANCE_TYPE_CPU_ID`, `FORGE_INSTANCE_TYPE_GPU_ID`; see
+[Where the identifiers come from](../../../docs/qualification/environments.md#where-the-identifiers-come-from)),
+`FORGE_API_KEY`, and for `full` `GHCR_USERNAME` and `GHCR_TOKEN`, which the node
+pulls CAPNICo with.
 Neither the proxy nor the jump host is checked in; secrets are read only from
 the environment. Build the inputs, then run; with the `site-inputs` defaults
 no `site:` block is needed at all:

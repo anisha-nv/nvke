@@ -91,8 +91,10 @@ runs:
           # deliberate: a publish whose result cannot be addressed by digest
           # has not produced something the release layer can qualify, and
           # finding that out here is far cheaper than at promotion.
-          if ! digest="$(crane digest "${reference}" 2>&1)"; then
-            echo "::error::${reference} did not resolve after publishing: ${digest}"
+          # Only stdout is the digest: crane reports registry Warning headers on
+          # stderr even when it succeeds, and those must not be recorded.
+          if ! digest="$(crane digest "${reference}" 2>"${RUNNER_TEMP}/crane.err")"; then
+            echo "::error::${reference} did not resolve after publishing: $(cat "${RUNNER_TEMP}/crane.err")"
             exit 1
           fi
           case "${digest}" in

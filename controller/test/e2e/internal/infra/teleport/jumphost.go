@@ -169,7 +169,8 @@ func (j SSHJumpHost) hostKeyCallback() ssh.HostKeyCallback {
 		if want == "" {
 			j.warningf("jump host %s presented host key %s, which was accepted UNCHECKED "+
 				"because no fingerprint is configured. Pin it by setting "+
-				"site.jumpHostKeyFingerprint to that value.", hostname, got)
+				"infrastructure.sites.<site>.jumpHostKeyFingerprint in "+
+				"environments/<name>.yaml to that value.", hostname, got)
 			return nil
 		}
 		if got != want {

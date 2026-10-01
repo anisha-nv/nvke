@@ -50,13 +50,18 @@ So: a UUID, in that one file, and nothing else. That a UUID is not a
 credential is the argument above; a secret of any other shape in that file is
 still caught, as is anything at all in any other file. The tree is held to the
 stronger rule by internal-config-check, which fails the merge gate if a known
-identifier comes back."""
+identifier comes back.
+
+Only generic-api-key is exempted, and only for a secret that is exactly one
+UUID: a rule written for a UUID-shaped credential still fires in this file, and
+so does a longer secret that merely contains a UUID."""
+targetRules = ["generic-api-key"]
 condition = "AND"
 paths = [
   '''^controller/test/e2e/environments/forge\.yaml$''',
 ]
 regexes = [
-  '''[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}''',
+  '''^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$''',
 ]
 
 [[allowlists]]

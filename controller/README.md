@@ -401,9 +401,18 @@ external rotation is picked up without restarting the manager.
 tsh login
 kubectl -n cloud-workflow-engine port-forward svc/cloud-workflow-engine 18080:8080
 
+# Name the site's resources; the script exits if any is unset
+export NICO_SITE_ID=… NICO_VPC_ID=… NICO_SUBNET_ID=…
+export NICO_SSH_KEY_GROUP_ID=… NICO_INSTANCE_TYPE_ID=…
+
 # Create the Forge NICo cluster
 CWE_HTTP_PORT=18080 ./hack/create-forge-nico-cluster.sh
 ```
+
+The identifiers are not checked in. They name the same site, VPC, subnet, key
+group and instance type as the `FORGE_*` variables in
+[Where the identifiers come from](../docs/qualification/environments.md#where-the-identifiers-come-from);
+the comment at the top of the script shows how to list instance types.
 
 ### Cleanup
 
