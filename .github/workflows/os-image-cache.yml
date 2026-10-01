@@ -184,11 +184,13 @@ jobs:
       # install stage alone needs no cloud-localds/genisoimage (demo-fde.sh
       # and the boot-smoke tools only) and no dpkg-dev (fetch-artifacts.sh's
       # CNI deb indexing, which the install stage never runs -- see C1).
-      - name: Install QEMU, swtpm, OVMF/AAVMF, unzip, 7z, and xorriso
+      # zstd compresses the upload; the bake installs it too, so both sides
+      # pick the same <key>.tar.zst object name.
+      - name: Install QEMU, swtpm, OVMF/AAVMF, unzip, 7z, xorriso, and zstd
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-system-x86 qemu-system-arm qemu-utils unzip swtpm ovmf qemu-efi-aarch64 p7zip-full xorriso
+          sudo apt-get install -y -qq qemu-system-x86 qemu-system-arm qemu-utils unzip swtpm ovmf qemu-efi-aarch64 p7zip-full xorriso zstd
 
       # Same as os-image-artifact.yml's "Enable KVM access": the install
       # stage needs real KVM, not tcg fallback.
