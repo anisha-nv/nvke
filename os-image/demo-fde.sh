@@ -20,7 +20,7 @@
 #   SSH_PORT      host port to forward to guest :22 (default: 2222)
 #   BOOT_TIMEOUT  seconds to wait for SSH per boot (default: 360 kvm / 1800 tcg)
 #   LOCKED_GRACE  seconds the wrong-TPM boot must sit at the LUKS prompt to
-#                 count as locked (default: 60)
+#                 count as locked (default: 60 kvm / 300 tcg)
 #   CPU_MODEL     QEMU -cpu model (default: host kvm / max tcg)
 #
 # No interactive/blind console typing is needed: autoinstall-lvm.pkrtpl bakes
@@ -101,6 +101,7 @@ if [[ "$(uname -m)" == "${ARCH_UNAME}" && -c /dev/kvm && -w /dev/kvm ]]; then
   # comfortably past 180s in practice, so the default here is generous
   # rather than tuned to the fast-path boots.
   BOOT_TIMEOUT="${BOOT_TIMEOUT:-360}"
+  LOCKED_GRACE="${LOCKED_GRACE:-60}"
 else
   echo "demo: no usable same-arch /dev/kvm, booting under software emulation (slower)" >&2
   ACCEL_ARGS=(-accel tcg)
@@ -112,6 +113,7 @@ else
     CPU_MODEL="${CPU_MODEL:-max}"
   fi
   BOOT_TIMEOUT="${BOOT_TIMEOUT:-1800}"
+  LOCKED_GRACE="${LOCKED_GRACE:-300}"
 fi
 
 for tool in "${QEMU_BIN}" qemu-img swtpm cloud-localds ssh; do
@@ -226,15 +228,23 @@ wait_ssh() {
 # passphrase prompt even while clevis is still unlocking in the background,
 # so the prompt alone proves nothing; it must still be the latest thing on
 # the console LOCKED_GRACE seconds later, with the guest never having
-# reached systemd in the real root. Prints "locked", "unlocked", or
-# "timeout" (prompt never seen and no SSH, the old pass condition).
-LOCKED_GRACE="${LOCKED_GRACE:-60}"
+# reached systemd in the real root. Prints "locked", "unlocked", "died" (qemu
+# exited), "panic" (kernel panic on the console), or "timeout" (prompt never
+# seen and no SSH). Only "locked" is a pass; the rest prove nothing.
 wait_locked() {
   local log="${VM_RUNWORK}/qemu.log"
   local deadline=$((SECONDS + BOOT_TIMEOUT)) prompt_at=""
   while (( SECONDS <= deadline )); do
     if grep -aq 'Welcome to' "${log}" || ssh_guest true 2>/dev/null; then
       echo "unlocked"
+      return
+    fi
+    if ! kill -0 "${VM_QPID}" 2>/dev/null; then
+      echo "died"
+      return
+    fi
+    if grep -aq 'Kernel panic' "${log}"; then
+      echo "panic"
       return
     fi
     if [[ -z "${prompt_at}" ]] && grep -aq 'Please unlock disk' "${log}"; then
@@ -253,6 +263,8 @@ wait_locked() {
 # Tears down the VM started by the most recent start_vm.
 stop_vm() {
   kill "${VM_QPID}" 2>/dev/null || true
+  # Reap it, so the next boot's hostfwd can bind SSH_PORT.
+  wait "${VM_QPID}" 2>/dev/null || true
   # Fallback by disk path in case $VM_QPID somehow isn't qemu's own pid (e.g.
   # a future refactor backgrounds it indirectly again).
   pkill -f "${QEMU_BIN}.*${DISK}" 2>/dev/null || true
@@ -312,8 +324,8 @@ STATE="$(wait_locked)"
 stop_vm
 case "${STATE}" in
   locked) report "moved-to-different-tpm-fails" "PASS" "boot against a different TPM stayed at the LUKS passphrase prompt for ${LOCKED_GRACE}s, as expected" ;;
-  timeout) report "moved-to-different-tpm-fails" "PASS" "boot against a different TPM did not unlock within ${BOOT_TIMEOUT}s, as expected" ;;
-  *) report "moved-to-different-tpm-fails" "FAIL" "boot against a different TPM unexpectedly unlocked the root — the LUKS key is not actually TPM-bound" ;;
+  unlocked) report "moved-to-different-tpm-fails" "FAIL" "boot against a different TPM unexpectedly unlocked the root — the LUKS key is not actually TPM-bound" ;;
+  *) report "moved-to-different-tpm-fails" "FAIL" "inconclusive: boot against a different TPM ended in state '${STATE}' without reaching the LUKS prompt and staying locked" ;;
 esac
 
 echo "=== Scenario: encryption survives node replacement (fresh boot, same TPM, still unlocks) ==="
@@ -327,7 +339,7 @@ stop_vm
 case "${STATE}" in
   up) report "replacement-node-fresh-seal" "PASS" "a later boot against the original TPM still auto-unlocks (stand-in for a replacement node sealing its own key)" ;;
   locked) report "replacement-node-fresh-seal" "FAIL" "a boot against the original TPM sat at the passphrase prompt for ${LOCKED_GRACE}s; either the binding is broken or LOCKED_GRACE is too short to tell a wrong TPM from a slow unlock, so moved-to-different-tpm-fails proves nothing" ;;
-  *) report "replacement-node-fresh-seal" "FAIL" "a later boot against the original TPM failed to auto-unlock within ${BOOT_TIMEOUT}s" ;;
+  *) report "replacement-node-fresh-seal" "FAIL" "a later boot against the original TPM failed to auto-unlock (state: ${STATE}, BOOT_TIMEOUT ${BOOT_TIMEOUT}s)" ;;
 esac
 
 echo
