@@ -41,6 +41,14 @@ class Namespaces(unittest.TestCase):
         text = "kind: Namespace\nmetadata: {name: gpu-operator, labels: {a: b}}\n"
         self.assertEqual(names(text), ["gpu-operator"])
 
+    def test_flow_metadata_nested_name_ignored(self):
+        text = "kind: Namespace\nmetadata: {labels: {name: gpu-operator}, name: actual-namespace}\n"
+        self.assertEqual(names(text), ["actual-namespace"])
+
+    def test_flow_metadata_without_name(self):
+        text = "kind: Namespace\nmetadata: {labels: {name: gpu-operator}}\n"
+        self.assertEqual(names(text), [])
+
     def test_trailing_comment(self):
         self.assertEqual(names(NS.replace("gpu-operator", "gpu-operator  # the operator")), ["gpu-operator"])
 

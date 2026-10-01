@@ -25,7 +25,6 @@ import sys
 DOC_SEP = re.compile(r"(?m)^---[ \t]*(?:#.*)?$")
 TOP_KEY = re.compile(r"^([A-Za-z_][\w.-]*):(.*)$")
 NAME = re.compile(r"^\s+name:(.*)$")
-FLOW_NAME = re.compile(r"(?:^|[{,])\s*name:\s*([^,}]+)")
 
 
 def scalar(value):
@@ -34,6 +33,35 @@ def scalar(value):
     if len(value) > 1 and value[0] == value[-1] and value[0] in "\"'":
         value = value[1:-1]
     return value
+
+
+def flow_name(mapping):
+    """The `name` entry of a flow mapping such as {name: x, labels: {a: b}}.
+
+    Only entries at the mapping's own level count: a `name` inside a nested
+    mapping, such as labels.name, is not the object's name.
+    """
+    entries, current, depth = [], [], 0
+    for char in mapping.strip():
+        if char in "{[":
+            depth += 1
+            if depth == 1:
+                continue
+        elif char in "}]":
+            depth -= 1
+            if depth == 0:
+                entries.append("".join(current))
+                break
+        elif char == "," and depth == 1:
+            entries.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    for entry in entries:
+        key, sep, value = entry.partition(":")
+        if sep and key.strip() == "name":
+            return scalar(value)
+    return None
 
 
 def namespaces(text):
@@ -52,9 +80,7 @@ def namespaces(text):
                 if key == "kind":
                     kind = scalar(rest)
                 elif in_metadata and rest.strip().startswith("{"):
-                    flow = FLOW_NAME.search(rest.strip().lstrip("{"))
-                    if flow:
-                        name = scalar(flow.group(1))
+                    name = flow_name(rest) or name
                 continue
             if not in_metadata:
                 continue
