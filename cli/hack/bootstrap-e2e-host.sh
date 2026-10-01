@@ -81,7 +81,13 @@ install_runtime() {
 
   # A dedicated unit, config and data root, so this never reuses Docker's
   # `containerd`.
-  sudo mkdir -p /etc/containerd-nerdctl /var/lib/containerd-nerdctl /run/containerd-nerdctl /run/buildkit-nerdctl
+  # /etc/systemd/system included deliberately: the unit files below are
+  # written on every host, including the ones with no systemd to read them,
+  # where the directory is incidental rather than guaranteed. It happens to
+  # exist on both fleets today, so this is about not resting a suite whose
+  # point is working without systemd on a directory systemd owns.
+  sudo mkdir -p /etc/containerd-nerdctl /var/lib/containerd-nerdctl /run/containerd-nerdctl /run/buildkit-nerdctl \
+    /etc/systemd/system
   /usr/local/bin/containerd config default | sudo tee /etc/containerd-nerdctl/config.toml >/dev/null
   # Match on the path only, not the quoting, which differs across containerd
   # versions. The grpc address is the only line carrying this path; the
