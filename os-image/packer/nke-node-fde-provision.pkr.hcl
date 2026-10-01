@@ -27,9 +27,10 @@ source "qemu" "nke-fde-provision" {
   # flattens this and refuses to publish a result that still carries a
   # backing file (see its header comment), so the overlay never leaks out.
   use_backing_file = true
-  # Keep the install stage's disk_size. Packer otherwise grows a disk_image
-  # to its 40 GiB default, and the image could not deploy to a smaller disk.
-  skip_resize_disk = true
+  # Match the install stage's disk_size. Packer creates the overlay at
+  # disk_size, 40 GiB by default, and the image could not deploy to a
+  # smaller disk.
+  disk_size = var.disk_size
 
   qemu_binary    = local.qemu_binary
   machine_type   = local.machine_type

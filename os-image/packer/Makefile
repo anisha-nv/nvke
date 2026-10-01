@@ -671,6 +671,7 @@ _os-image-fde: prepare-installed-disk-fde prepare-image-build
 		-var "cpu_model=$(CPU_MODEL)" \
 		-var "cpus=$(CPUS)" \
 		-var "ssh_timeout=$(SSH_TIMEOUT)" \
+		-var "disk_size=$(DISK_SIZE)" \
 		-var "root_fs_label=$(ROOT_FS_LABEL)" \
 		-var "ubuntu_snapshot=$(UBUNTU_SNAPSHOT)" \
 		"$(PACKER_PROJECT)"
@@ -762,6 +763,7 @@ _os-image-non-fde: prepare-installed-disk-non-fde prepare-image-build
 		-var "cpu_model=$(CPU_MODEL)" \
 		-var "cpus=$(CPUS)" \
 		-var "ssh_timeout=$(SSH_TIMEOUT)" \
+		-var "disk_size=$(DISK_SIZE)" \
 		-var "root_fs_label=$(ROOT_FS_LABEL)" \
 		-var "ubuntu_snapshot=$(UBUNTU_SNAPSHOT)" \
 		"$(PACKER_PROJECT)"
