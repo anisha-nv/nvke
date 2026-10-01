@@ -245,7 +245,8 @@ hours, one for over five, and the machine under one of them spent that time
 stopped at an initramfs LUKS prompt — see [the FDE lockout](#the-fde-lockout-and-how-to-recognise-it).
 
 **Provisioning takes most of an hour before anything interesting happens.**
-Green runs have taken 81 and 73 minutes end to end. A lane that has been
+Both green `full` runs spent about 78 minutes in the suite and 81 to 82 for
+the whole job. A lane that has been
 running 20 minutes with a quiet log has not failed.
 
 ## Capacity

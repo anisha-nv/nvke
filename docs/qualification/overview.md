@@ -135,10 +135,12 @@ mid-flight leaks its instance.
 |---|---|---|
 | `provision` | a Forge node, reachable, then released | 20 min |
 | `bootstrap` | vanilla Kubernetes via `nkectl bootstrap site` | 30 min |
-| `full` | the NKE stack, the engine, a tenant cluster, and the GPU runtime on it | 75 min |
+| `full` | the NKE stack, the engine, a tenant cluster, and the GPU runtime on it | 80 min |
 
-Only `full` has been measured end to end — 73 minutes on run 36209850156 and
-81 on the first green run. The other two are derived from that run's own spec
+Only `full` has been measured end to end, at 78 minutes of suite time (82 for
+the whole job) on run 36209850156, the first green run with the GPU runtime.
+The first green run of all, 36080758381, took 79 (81) before the GPU path
+existed. The other two are derived from run 36209850156's own spec
 times, where provisioning accounts for about 14 minutes and bootstrap for
 another 7, so read them as the right order of magnitude rather than as
 observations.
