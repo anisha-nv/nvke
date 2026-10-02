@@ -103,6 +103,19 @@ run() {
   "$@"
 }
 
+# run_from is run with stdin redirected from a file. The dry-run line shows
+# the redirect.
+run_from() {
+  local file="$1"
+  shift
+  if [[ -n "${DRY_RUN}" ]]; then
+    printf '%q ' "$@"
+    printf '<%q\n' "${file}"
+    return 0
+  fi
+  "$@" <"${file}"
+}
+
 # kc and hl pin every kubectl and helm call to the site kubeconfig.
 kc() { run kubectl --kubeconfig "${SITE_KUBECONFIG}" "$@"; }
 hl() { run helm --kubeconfig "${SITE_KUBECONFIG}" "$@"; }

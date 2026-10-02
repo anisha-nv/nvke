@@ -15,7 +15,8 @@ render writes six files to DIR, mode 0600:
   spire.yaml              --values-for spire=...
   postgresql.yaml         --values-for postgresql=...
   temporal.yaml           --values-for temporal=...
-  site.env                SITE_NAME and SITE_VIP for stage 6; no secrets
+  site.env                SITE_NAME, SITE_VIP and the two image references
+                          for stages 2 and 6; no secrets
 
 The derivations follow controller/hack/ci/deploy-sbom.sh, which does the same
 for the e2e lanes from environment variables. The upstream CA values follow
@@ -74,7 +75,7 @@ OIDC_NODEPORT = 30443
 OUTPUT_FILES = ["bootstrap-config.json", "controller.yaml", "spire.yaml",
                 "postgresql.yaml", "temporal.yaml", "site.env"]
 ENV_FILE = "site.env"
-ENV_KEYS = ["SITE_NAME", "SITE_VIP"]
+ENV_KEYS = ["SITE_NAME", "SITE_VIP", "SITE_IMAGE_CONTROLLER", "SITE_IMAGE_PROFILES"]
 PASSWORD_FILE = "db-password"
 
 SECRET_KEY_RE = re.compile(r"password|token|key|secret", re.I)
@@ -252,6 +253,8 @@ def validate(data, config_dir):
 def split_image(ref, path):
     if "@" in ref:
         raise ConfigError("%s must be repository:tag, not a digest reference." % path)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", ref):
+        raise ConfigError("%s may only contain letters, digits and . _ : / -, got %r." % (path, ref))
     repo, sep, tag = ref.rpartition(":")
     if not sep or not repo or not tag or "/" in tag:
         raise ConfigError("%s must be repository:tag, got %r." % (path, ref))
@@ -365,9 +368,15 @@ def build(flat, files, sbom_dir, password):
         "default": {"sql": {"password": password}},
         "visibility": {"sql": {"password": password}},
     }}}}
-    # Stage 6 sources this for `nkectl config set-site`. Both values are
-    # validated above as a DNS label and an IP address, so they need no quoting.
-    site_env = {"SITE_NAME": site_name, "SITE_VIP": vip}
+    # Stage 2 sources the image references and stage 6 the name and VIP.
+    # Every value is validated above (DNS label, IP address, reference
+    # characters), so none needs quoting.
+    site_env = {
+        "SITE_NAME": site_name,
+        "SITE_VIP": vip,
+        "SITE_IMAGE_CONTROLLER": flat["images.controller"],
+        "SITE_IMAGE_PROFILES": flat["images.profiles"],
+    }
     return {
         "bootstrap-config.json": bootstrap,
         "controller.yaml": controller,
