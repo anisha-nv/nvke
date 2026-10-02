@@ -33,7 +33,7 @@ You don't run `kubeadm` directly. NKE runs it for you. But understanding what it
 
 Helm is the package manager for Kubernetes. Applications are packaged as *charts* — versioned bundles of Kubernetes manifests with templated configuration. NKE's own services (CWE, Temporal, CloudNative-PG) are deployed as Helm charts from the NGC Helm registry.
 
-After `nkectl` bootstraps the cluster, you deploy NKE's services onto it using ArgoCD Application manifests that point at Helm charts and supply values.
+After `nkectl` bootstraps the cluster, you deploy NKE's services onto it from a deploy path: Helm charts, their values, and the Secrets they need, in install order.
 
 **Learn more:** https://helm.sh/docs/intro/using_helm/
 
@@ -43,7 +43,7 @@ After `nkectl` bootstraps the cluster, you deploy NKE's services onto it using A
 
 ArgoCD is a GitOps continuous delivery tool for Kubernetes. It watches a git repository for Kubernetes manifests and keeps the cluster in sync with what's declared there. When you push a change to your deploy repository, ArgoCD detects the drift and reconciles the cluster.
 
-NKE uses ArgoCD to manage the site controller stack. After `nkectl` bootstraps the cluster, you install ArgoCD and apply your deploy repository to bring up NKE's services. Once deployed, ArgoCD owns ongoing reconciliation — you don't apply manifests by hand.
+NKE does not require ArgoCD. A deploy path is a plain list of Helm releases and manifests, so you can apply it with Helm directly or have ArgoCD, or another GitOps tool, consume the same items.
 
 **Learn more:** https://argo-cd.readthedocs.io/en/stable/core_concepts/
 
@@ -65,7 +65,7 @@ Operators can port-forward Temporal's web UI to inspect running workflows or dia
 
 CloudNative-PG is a Kubernetes operator for running PostgreSQL. NKE deploys CNPG clusters on the site controller for CWE and Temporal rather than running standalone database processes. CNPG handles HA failover, backup, and certificate management.
 
-Database credentials are configured in your ArgoCD application manifests during the post-bootstrap deployment step. CNPG creates and manages the actual PostgreSQL instances.
+Database credentials are configured in your deploy path's values during the post-bootstrap deployment step. CNPG creates and manages the actual PostgreSQL instances.
 
 **Learn more:** https://cloudnative-pg.io/documentation/
 
@@ -95,9 +95,9 @@ In NKE, every node and every workload gets a SPIFFE identity backed by TPM attes
 
 ## GitOps and the Deploy Repository
 
-GitOps is the practice of using a git repository as the single source of truth for infrastructure state. You declare what you want in git; a controller (ArgoCD in NKE's case) makes the cluster match it.
+GitOps is the practice of using a git repository as the single source of truth for infrastructure state. You declare what you want in git; a controller makes the cluster match it.
 
-NKE requires a **deploy repository** — a git repo you own and maintain, structured so ArgoCD can discover and apply its contents. After `nkectl` bootstraps the cluster, you install ArgoCD and point it at the deploy repository to bring up the NKE services stack. ArgoCD then owns ongoing reconciliation. See [Deploy Repository](site-bootstrap/deploy-repository.md) for the structure.
+NKE's services are installed from a **deploy path** — a directory of Helm releases and manifests in install order. After `nkectl` bootstraps the cluster, you apply the deploy path with Helm directly or through a GitOps tool of your choice. See [Deploy Path Format](site-bootstrap/deploy-repository.md) for the format.
 
 ---
 

@@ -105,5 +105,5 @@ All validation errors are reported together in one pass so you can fix them with
 
 ## What's Next After Bootstrap
 
-After the site controller cluster is up, install Cluster API and an infrastructure provider on it before deploying the NKE services (CWE, Temporal, CNPG) — see [Infrastructure Providers](infrastructure-providers.md). The NKE services deployment uses a GitOps-based deploy repository and ArgoCD; see [Deploy Repository](deploy-repository.md) for the structure and application manifests.
+After the site controller cluster is up, install Cluster API and an infrastructure provider on it before deploying the NKE services (CWE, Temporal, CNPG) — see [Infrastructure Providers](infrastructure-providers.md). The NKE services are described by a deploy path; see [Deploy Path Format](deploy-repository.md) for the format.
 

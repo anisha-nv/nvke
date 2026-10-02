@@ -34,14 +34,14 @@ The cluster at this point is a plain kubeadm cluster. No NKE services are instal
 
 This phase installs everything that makes the cluster an NKE site:
 
-1. **Deploy the NKE component stack** — the NKE SBOM (Software Bill of Materials) is the versioned bundle of NKE components: the controller, Temporal, PostgreSQL, SPIRE, and supporting services. Deploy it via ArgoCD or your GitOps tooling. See [Deploy Repository](site-bootstrap/deploy-repository.md).
+1. **Deploy the NKE component stack** — the NKE SBOM (Software Bill of Materials) is the versioned bundle of NKE components: the controller, Temporal, PostgreSQL, SPIRE, and supporting services. It is described by a deploy path, which you apply with Helm directly or through your GitOps tooling. See [Deploy Path Format](site-bootstrap/deploy-repository.md).
 2. **Configure CAPNICo** — install the `cluster-api-provider-nico` chart and connect it to your NICo site with a `nico-credentials` Secret. Run `nkectl get providers` to confirm `nico: CONFIGURED`.
 3. **Ingest the site into NKE** — the NKE team registers the site and applies the etcd encryption key from Day 0. This step requires coordination with the NKE team; contact your NKE onboarding contact with your site's kubeconfig and the etcd encryption key file from Day 0.
 4. **Create your first tenant cluster** — `nkectl create cluster -f cluster.yaml`. See [Your First Cluster — Path C, Step 7](first-cluster.md#7-create-a-tenant-cluster).
 
 **What Day 1 requires:**
 - A working NICo site with capacity allocated for the instance types your cluster spec uses
-- An ArgoCD-compatible deploy repository with your environment's SBOM values
+- A deploy path with your environment's values
 - The etcd encryption key from Day 0
 
 **See:** [Your First Cluster](first-cluster.md) · [NICo documentation](https://docs.nvidia.com/infra-controller/documentation/home)

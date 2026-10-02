@@ -44,7 +44,7 @@ After bootstrap completes:
 - On the **init node**: `kind` binary and `nerdctl` with containerd installed — `nkectl` uses these to create the ephemeral bootstrap Kind cluster. Docker is not supported. kind states 1.7.0 as the minimum for its nerdctl provider; 2.3.5 is the version CI exercises
 - The two images `nkectl` side-loads: `make -C cli images` builds them on the init node. To use images from a registry instead, set `NKECTL_CWE_IMAGE` (e.g. `nvcr.io/<org>/nke-controller:edge`) and `NKECTL_CAPI_PROVISIONED_IMAGE` (e.g. `nvcr.io/<org>/cluster-api-provider-provisioned:edge`)
 
-If you are targeting a self-managed cluster, prepare your environment SBOM and [deploy repository](deploy-repository.md) ahead of time.
+If you are targeting a self-managed cluster, prepare your [deploy path](deploy-repository.md) and its values ahead of time.
 
 ## Step 1: Prepare All Nodes
 

@@ -163,6 +163,6 @@ For provider-side conditions — `WaitingForBootstrapData`, `WaitingForIdentityS
 
 ## Next Steps
 
-- [Deploy Repository](deploy-repository.md) — the ArgoCD application structure for the NKE services stack
+- [Deploy Path Format](deploy-repository.md) — the format that describes the NKE services stack
 - [CAPNICo: Path C, Production Against an Existing NICo Site](https://github.com/dsx-ai-factory/cluster-api-provider-nico/blob/main/docs/getting-started.md#path-c-production-against-an-existing-nico-site) — the provider's own guide for production sites
 - [Your first cluster](../first-cluster.md) — creating a tenant cluster once a provider is configured
