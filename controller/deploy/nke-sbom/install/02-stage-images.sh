@@ -8,7 +8,10 @@
 # Usage: ./02-stage-images.sh [run|check]
 #
 # The guide docs/site-bootstrap/install-site-controller.md is the authority.
-# Commands between `# doc-begin` and `# doc-end` are extracted verbatim into
+# Commands between `# Build images single-manifest (--provenance=false --output type=docker). An OCI
+# index with an attestation manifest makes the kubelet pull by digest instead of
+# the imported tag. See nke-sbom/README.md, "Before this runs".
+# doc-begin` and `# doc-end` are extracted verbatim into
 # the guide. Keep them copy-pasteable: use the lib variables, no functions.
 #
 # Images. The controller and profiles images come from `IMAGES` (space
