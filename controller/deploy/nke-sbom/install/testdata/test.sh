@@ -160,10 +160,12 @@ expect_line bootstrap-config.json '"ClusterName": "demo-site"'
 expect_line bootstrap-config.json '"APIName": "forge"'
 expect_line site.env '^SITE_NAME=demo-site$'
 expect_line site.env '^SITE_VIP=192.0.2.10$'
-if [[ "$(grep -c . "${out}/site.env")" -eq 2 ]]; then
-  pass "site.env holds two lines and no credential"
+expect_line site.env '^SITE_IMAGE_CONTROLLER=registry.example.test:5000/nke/nke-controller:v0.1.1$'
+expect_line site.env '^SITE_IMAGE_PROFILES=cwe-profiles:demo$'
+if [[ "$(grep -c . "${out}/site.env")" -eq 4 ]]; then
+  pass "site.env holds four lines and no credential"
 else
-  fail "site.env holds $(grep -c . "${out}/site.env") lines, expected 2"
+  fail "site.env holds $(grep -c . "${out}/site.env") lines, expected 4"
 fi
 
 # One password in five places.

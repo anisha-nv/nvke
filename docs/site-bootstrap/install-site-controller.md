@@ -119,14 +119,47 @@ Two default StorageClasses fail the check. Remove the `storageclass.kubernetes.i
 
 ## 3. Stage Images
 
-Import the controller and profiles images into every node's containerd.
+Import the controller, profiles and CAPNICo images into the `k8s.io` containerd namespace of every node, so the install pulls nothing. Build the controller and profiles images first; the CAPNICo image is public and is pulled for the node architecture. The script exports each image from the local nerdctl or docker and reaches a node through `NODE_EXEC`, a command prefix with `{node}` in it: unset when the script runs on the node, `ssh root@{node}` for hosts, `nerdctl exec -i {node}` for container nodes. The image list comes from `images.controller` and `images.profiles` in `site-config.yaml`, or from `IMAGES`.
 
 <!-- stage:02-stage-images begin -->
+```bash
+# The provider image is public. Pull it for the node architecture here, so
+# the nodes need no registry credential.
+if ! "${IMAGE_CLI}" image inspect "${CAPNICO_IMAGE}" >/dev/null 2>&1; then
+  run "${IMAGE_CLI}" pull --platform "linux/${NODE_ARCH}" "${CAPNICO_IMAGE}"
+fi
+
+# One tarball per image, imported into every node that lacks the digest.
+# Namespace k8s.io: an image in any other namespace is invisible to the kubelet.
+mkdir -p "${OUT_DIR}/images"
+for image in ${IMAGES} ${CAPNICO_IMAGE}; do
+  digest="$(local_digest "${image}")"
+  missing=""
+  for node in ${NODES}; do
+    if [[ -z "${DRY_RUN}" && -n "${digest}" && "$(node_digest "${node}" "${image}")" == "${digest}" ]]; then
+      continue
+    fi
+    missing="${missing} ${node}"
+  done
+  if [[ -z "${missing}" ]]; then
+    log "${image} ${digest} is on every node"
+    continue
+  fi
+  tar="${OUT_DIR}/images/$(printf '%s' "${image}" | tr '/:@' '___').tar"
+  run "${IMAGE_CLI}" save -o "${tar}" "${image}"
+  for node in ${missing}; do
+    log "${image} -> ${node}"
+    exec_prefix="$(node_exec "${node}")"
+    run_from "${tar}" ${exec_prefix} ctr -n k8s.io images import -
+  done
+  rm -f "${tar}"
+done
+```
 <!-- stage:02-stage-images end -->
 
 ### Check
 
-`ctr -n k8s.io images ls` on each node lists both images. The check prints each digest.
+`ctr -n k8s.io images ls` on each node lists every image. The check prints each digest and fails on a missing or stale one.
 
 ### If It Fails
 
