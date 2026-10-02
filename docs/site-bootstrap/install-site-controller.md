@@ -4,7 +4,7 @@
 
 The install has seven stages. Each stage has a run step and a check step. Each run step is safe to repeat. You can stop after any stage and resume later.
 
-A reference implementation lives at [`controller/deploy/nke-sbom/install/`](../../controller/deploy/nke-sbom/install/), one script per stage. The command blocks on this page are extracted from those scripts. This page is the authority. When a script and this page disagree, this page wins.
+An executable form of this guide lives at [`controller/deploy/nke-sbom/install/`](../../controller/deploy/nke-sbom/install/), one script per stage. The command blocks on this page are extracted from those scripts. This page is the authority. When a script and this page disagree, this page wins.
 
 To run every stage in order:
 
@@ -357,6 +357,50 @@ Helm leaves PersistentVolumeClaims behind. Delete the `postgres` and `spire-serv
 3. Run `install-all.sh --from install-site-controller`.
 
 Stage 7 runs again as part of that range. [Tenant Cluster Kubernetes Upgrades](../operations/upgrade.md) covers upgrades of tenant clusters.
+
+## Extend to GitOps
+
+The manual install above is the baseline. Every item in `nke-deploy.yaml` is a Helm chart plus values files, or plain YAML. A GitOps tool can deliver the same items without changing the deploy path.
+
+- **Source.** The clone is a valid git source. The controller and NKTP charts are in the tree, at `controller/deploy/charts/controller` and `nktp/deploy/charts/nktp`. Postgres, SPIRE and Temporal are referenced by chart repository and version in each item's `release.yaml`.
+- **Order.** The item list order maps to sync waves, one wave per item.
+- **The Certificate.** The `spire` item declares a `requires:` on the `oidc-provider-upstream-ca` Certificate. In GitOps that is a wave boundary or a health check on the Certificate, not a `kubectl wait`.
+- **Secrets.** The `nke-base-config` item renders three Secrets: `nico-credentials`, `ghcr-imagepull` and `dgxc-tenant-credentials`. Under GitOps those come from the operator's secret store. The namespaces and the Certificate chain in the same item are plain YAML and stay in git.
+- **Imperative steps.** `clusterctl init` and `controller/hack/apply-capi-spiffe-exec-auth.sh` stay imperative, outside GitOps. Stages 1 to 5 and stage 7 do not change.
+
+The per-site values stage 4 renders belong in your own repository or your secret store. [Deploy Repository](deploy-repository.md) describes the `argocd` item type for a deploy path that carries Argo CD Applications.
+
+The Application below delivers the `temporal` item. It is illustrative and untested. The chart source is the repository and version from `temporal/release.yaml`. The values come from the two in-tree values files through the clone as a second source. The sync wave is the item's position in the list.
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: temporal
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "8"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: temporal
+  sources:
+    - repoURL: https://go.temporal.io/helm-charts
+      chart: temporal
+      targetRevision: 0.74.0
+      helm:
+        releaseName: temporal
+        valueFiles:
+          - $values/controller/deploy/nke-sbom/temporal/values.yaml
+          - $values/controller/deploy/nke-sbom/temporal/overlay.yaml
+    - repoURL: https://github.com/dsx-ai-factory/nke.git
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+```
 
 ## Next Steps
 
