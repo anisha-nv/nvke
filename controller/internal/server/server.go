@@ -116,6 +116,11 @@ func NewServer(
 	m.HandleFunc("GET "+healthz, hc.healthz)
 	m.HandleFunc("GET "+readyz, hc.readyz)
 
+	// Prototype endpoint, not part of openapi.yaml: imports an already-provisioned
+	// cluster's DB rows (preserving IDs) and enqueues SelfRegisterCluster to
+	// recreate its live CAPI objects without touching the real nodes.
+	m.HandleFunc("POST /api/self-register-cluster", selfRegisterClusterHandler(database, temporalClient, logger))
+
 	// Built inside out: each assignment wraps the handler the previous one
 	// produced, so the order below is the reverse of the order a request meets.
 	// A request runs

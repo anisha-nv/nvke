@@ -12,6 +12,7 @@ const (
 	TeardownClusterWorkflowPrefix      = "teardown-cluster-"
 	EnableEtcdEncryptionWorkflowPrefix = "enable-etcd-encryption-"
 	EnableOIDCWorkflowPrefix           = "enable-oidc-"
+	SelfRegisterClusterWorkflowPrefix  = "self-register-cluster-"
 
 	EtcdEncryptionKeySecretPrefix     = "etcd-encryption-key-"
 	EtcdEncryptionKeyFieldActive      = "active"
