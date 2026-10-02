@@ -53,21 +53,24 @@ on:
     inputs:
       use-nke-stack:
         description: >-
-          Deploy from the generated capd-e2e deploy path. This is the default on
-          push and schedule; set false here to fall back to Tilt.
+          Deploy from the capd-e2e deploy path under controller/deploy, one
+          helm release per component. This is the default on push and
+          schedule; set false here to fall back to Tilt.
         required: false
         type: boolean
         default: true
       stack-chart:
         description: >-
-          OCI reference of an nke-stack umbrella chart, e.g.
-          oci://ghcr.io/<org>/nke/charts/nke-stack. Leave empty to build the
-          chart from the working tree, which is what every routine run does.
+          Not supported: there is no umbrella chart, and the deploy path
+          refuses to run when this is set. Each component is its own release
+          from controller/deploy/<target>.
         required: false
         type: string
         default: ''
       stack-version:
-        description: Chart version. Required when stack-chart is set.
+        description: >-
+          Not supported: component versions are pinned in each item's
+          release.yaml, and the deploy path refuses to run when this is set.
         required: false
         type: string
         default: ''

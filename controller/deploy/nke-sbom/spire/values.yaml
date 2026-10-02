@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Release-wide values the umbrella used to supply. spire is itself a chart of
-# subcharts -- spire-server, spire-agent, spiffe-csi-driver,
-# spiffe-oidc-discovery-provider -- and helm merges `global` into every one of
-# them, so this still propagates exactly as it did when nke-stack was the parent.
+# Release-wide values. spire is itself a chart of subcharts -- spire-server,
+# spire-agent, spiffe-csi-driver, spiffe-oidc-discovery-provider -- and helm
+# merges `global` into every one of them, so these reach all four.
 global:
   spire:
     # recommendations is required for the two-namespace layout: without it a
@@ -21,9 +20,8 @@ global:
   deleteHooks:
     enabled: false
 
-# spire values for the nke-stack composition. Merged under the `spire` key of the
-# generated chart's values.yaml -- the top-level key is added by the generator,
-# so it is deliberately absent here.
+# spire values for the nke-sbom deploy path. The item is its own helm release
+# (see release.yaml), so these values sit at the chart's top level.
 
 # ─── spire ───────────────────────────────────────────────────────────────────
 # Site identity (clusterName, trustDomain, jwtIssuer), the TPM attestor

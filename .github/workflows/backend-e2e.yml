@@ -107,26 +107,24 @@ on:
         default: false
       use-nke-stack:
         description: >-
-          Deploy the management plane from the nke-stack umbrella chart instead
-          of Tilt. The chart is built from this commit unless stack-chart names
-          a published one -- building is the default because subcharts are baked
-          into a package, so a published artifact would test the chart templates
-          as they were when it was published.
+          Deploy the management plane from the controller/deploy path for the
+          selected backend, one helm release per component, instead of Tilt.
+          The controller chart and image are built from this commit.
         required: false
         type: boolean
         default: false
       stack-chart:
         description: >-
-          OCI reference of an nke-stack umbrella chart. When set, the six
-          management-plane charts are installed from it instead of by Tilt, and
-          stack-version is required. Empty (the default) keeps the Tilt deploy,
-          which also brings up capd-reboot-controller, the BGP wiring and the
-          profiles renderer that the umbrella does not cover.
+          Not supported: there is no umbrella chart, and the deploy path
+          refuses to run when this is set. Each component is its own release
+          from controller/deploy/<target>.
         required: false
         type: string
         default: ''
       stack-version:
-        description: Chart version to install. Required when stack-chart is set.
+        description: >-
+          Not supported: component versions are pinned in each item's
+          release.yaml, and the deploy path refuses to run when this is set.
         required: false
         type: string
         default: ''

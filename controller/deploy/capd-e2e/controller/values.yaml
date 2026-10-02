@@ -1,9 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# cloud-workflow-engine values for the nke-stack composition. Merged under the `cloud-workflow-engine` key of the
-# generated chart's values.yaml -- the top-level key is added by the generator,
-# so it is deliberately absent here.
+# cloud-workflow-engine values for the capd-e2e deploy path. The item is its own helm release
+# (see release.yaml), so these values sit at the chart's top level.
 
 # ─── cloud-workflow-engine ───────────────────────────────────────────────────
 # image.repository/tag are left at the chart's own defaults. The nvcr-published

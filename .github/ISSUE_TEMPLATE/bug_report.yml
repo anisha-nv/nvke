@@ -28,7 +28,7 @@ body:
         - Node agent or updater
         - nkectl CLI
         - Cluster API provider (provisioned)
-        - Helm charts or deployment (nke-stack)
+        - Helm charts or deployment (controller/deploy)
         - nico-sim (development simulator)
         - OS image or image checker
         - NKTP telemetry pipeline

@@ -2,7 +2,7 @@
 
 Read this before adding, copying, or editing JSON under `controller/deploy/dashboards/`.
 
-These files are **operator-importable reference dashboards**. They are **not** installed by the `nke-stack` Helm composition, and they are not Grafana Cloud or private-fleet exports.
+These files are **operator-importable reference dashboards**. No Helm chart in this repository renders them, and they are not Grafana Cloud or private-fleet exports.
 
 Operators: import steps and a short description of each file are in [README.md](README.md). This file is the contributor contract.
 
@@ -33,25 +33,26 @@ Do not bump `controller/deploy/charts/controller/Chart.yaml` for dashboard-only 
 ## Workflow for a dashboard change
 
 1. Identify the **cluster that emits the metrics** (site controller vs tenant vs CWE process). Site kube-prometheus does not scrape tenant ovnkube or tenant etcd.
-2. Confirm the series exist in **this repo’s OSS stack** (`generated/nke-stack/values.yaml`, controller metrics, ovn `values-nke.yaml` contract in `os-image/packages/cni-ovn/README.md`).
+2. Confirm the series exist in **this repo’s deploy paths** (`controller/deploy/<target>/*/values.yaml`, controller metrics, ovn `values-nke.yaml` contract in `os-image/packages/cni-ovn/README.md`).
 3. Prefer **required** panels that work with kube-state-metrics or documented CWE metrics. Put everything else in **optional** rows that stay empty without turning red (`or vector(0)` only when zero is a real reading, not a missing scrape).
 4. Update the Requirements panel, `description`, and tags (`nke`, plus the topic).
 5. Strip private-fleet chrome before commit: `$env`, hardcoded cluster-name regexes, datasource regexes for hosted Mimir, Slack, links to unpublished dashboards, `topk` over a fleet unless the dashboard is explicitly multi-cluster.
 
 When porting a dashboard from elsewhere, treat it as a **query catalog**, not a file to check in.
 
-## Ground truth: what OSS installs
+## Ground truth: what the deploy paths install
 
-`nke-stack` (`generated/nke-stack/values.yaml`):
+The deploy paths under `controller/deploy/` (`capd-e2e`, `capnico-e2e`, `nke-sbom`) install one Helm release per item, with values in each item's `values.yaml`:
 
-- cert-manager (`cert-manager`)
+- cert-manager (`cert-manager`), installed before the deploy path runs
 - SPIRE server (`spire-server`) and agent (`spire-system`, DaemonSet/ServiceAccount `spire-agent`)
-- kube-prometheus-stack (`monitoring`) — Prometheus, Grafana, node-exporter, kube-state-metrics. **Does not** configure kubeadm etcd TLS scrape.
 - PostgreSQL (`postgres`, in-repo chart) — **not** CNPG
 - Temporal (`temporal`)
-- CWE (`cloud-workflow-engine`, `nameOverride: cloud-workflow-engine`, default **replicaCount 1**)
+- CWE (`cloud-workflow-engine`, the controller chart's default `nameOverride`, default **replicaCount 1**)
 
-**Not** in nke-stack: SWE / `site-workflow-engine`, Longhorn, Teleport `tbot`, process-exporter, sdn-monitoring, Argo CD (deploy-repo only), CNPG (docs/overlays may use it; default stack does not).
+kube-prometheus-stack (`monitoring` — Prometheus, Grafana, node-exporter, kube-state-metrics) is the scrape stack these dashboards assume. No deploy path in this repository installs it, and it **does not** scrape kubeadm etcd over TLS unless configured to.
+
+**Not** in any deploy path: SWE / `site-workflow-engine`, Longhorn, Teleport `tbot`, process-exporter, sdn-monitoring, Argo CD (deploy-repo only), CNPG (docs/overlays may use it; the deploy paths do not).
 
 Site bootstrap CNI may be `calico` or `ovn-kubernetes`. OVN chart path: `ovnkube-control-plane` + `ovnkube-single-node-zone`, host OVS, images `ovn-c` / `ovnkube-c`. Confirm DaemonSet **name** against the packaged `values-nke.yaml` before hardcoding `ovnkube-node`.
 
@@ -91,7 +92,7 @@ kube-state-metrics on the same panel do you rewrite the label:
 label_replace({__name__=~"(cwe|nke_controller)_node_info",tenant_cluster=~"$cluster"}, "k8s_cluster_name", "$1", "tenant_cluster", "(.*)")
 ```
 
-HA thresholds of **3** (etcd members, CNPG collectors, ready nodes) are colo-sized. Parameterize or document “typical HA”; nke-stack CWE is 1 replica and Kind can be 1 node.
+HA thresholds of **3** (etcd members, CNPG collectors, ready nodes) are colo-sized. Parameterize or document “typical HA”; the controller chart defaults to 1 replica and Kind can be 1 node.
 
 ## Do not ship
 
@@ -109,7 +110,7 @@ HA thresholds of **3** (etcd members, CNPG collectors, ready nodes) are colo-siz
 
 **etcd.** Panel set from [etcd mixin](https://github.com/etcd-io/etcd/tree/main/contrib/mixin) (`etcd.libsonnet` / `targets.libsonnet`): Up (`etcd_server_has_leader`, not scrape `up{}`), RPC rate, active streams, DB size, disk sync, memory, client/peer traffic, raft/leader elections, peer RTT. `$cluster` is `k8s_cluster_name`; the mixin's `clusterLabel: job` is a separate `$job` variable, which is single-select and also scopes the non-etcd-specific `grpc_server_*` and `process_resident_memory_bytes` series to the etcd process. Empty until kube-prometheus `kubeEtcd` (or equivalent) scrapes kubeadm etcd. Do not add apiserver watch-cache or process-exporter CPU here.
 
-**CNPG.** Only for sites that run CloudNativePG. Default nke-stack Postgres will leave this empty — that is expected.
+**CNPG.** Only for sites that run CloudNativePG. The deploy paths' PostgreSQL is not CNPG and leaves this empty — that is expected.
 
 **OVN-Kubernetes controller.** Required: kube-state-metrics restarts (`container="ovnkube-controller"`) and DaemonSet ready if the name matches. Optional: `ovnkube_controller_build_info`, NB–SB timestamp diff (needs ovnkube scrape **on the cluster that runs the CNI**). Do not mix `ovnkube_node_workqueue_*` onto a controller board. CNI request metrics belong on a node row, if at all. Calico clusters: empty is OK.
 

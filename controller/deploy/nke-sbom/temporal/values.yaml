@@ -1,18 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# temporal values for the nke-stack composition. Merged under the `temporal` key of the
-# generated chart's values.yaml -- the top-level key is added by the generator,
-# so it is deliberately absent here.
+# temporal values for the nke-sbom deploy path. The item is its own helm release
+# (see release.yaml), so these values sit at the chart's top level.
 
 # ─── temporal ────────────────────────────────────────────────────────────────
 # Owns the release namespace (see the header). The persistence host below is an
 # FQDN into postgresql's namespace, so it stays correct across the split.
 # Pin the service names so temporal-frontend.temporal.svc.cluster.local stays
-# correct regardless of the release name. controller/Tiltfile installs this
-# chart as release "temporal"; inside one umbrella the release is nke-stack,
-# which would rename every service and break the host cloud-workflow-engine
-# dials. Same reason postgresql carries fullnameOverride above.
+# correct regardless of the release name. controller/Tiltfile and
+# release.yaml both install this chart as release "temporal"; any other
+# release name would rename every service and break the host
+# cloud-workflow-engine dials. Same reason postgresql carries fullnameOverride
+# above.
 fullnameOverride: temporal
 server:
   configMapsToMount: sprig
