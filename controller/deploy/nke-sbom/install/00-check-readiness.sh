@@ -17,17 +17,8 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-TOOL_VERSIONS_MK="${SBOM_DIR}/../../make/tool-versions.mk"
 # Free space the runner needs for rendered values, diagnostics and image tarballs.
 MIN_DISK_GB="${MIN_DISK_GB:-10}"
-
-check_warn() { printf 'WARN  %s\n' "$*"; }
-check_skip() { printf 'SKIP  %s\n' "$*"; }
-
-# mk_var prints the value of a `NAME ?= value` line in make/tool-versions.mk.
-mk_var() {
-  sed -n "s/^$1[[:space:]]*?=[[:space:]]*//p" "${TOOL_VERSIONS_MK}" 2>/dev/null | head -n 1
-}
 
 # doc-begin
 # Hosts the install pulls from. Stage 4 fetches Cluster API and cert-manager

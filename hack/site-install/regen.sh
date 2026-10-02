@@ -443,7 +443,7 @@ EOF
 
 stage_check() {
   if [[ -n "\${DRY_RUN}" ]]; then
-    printf 'SKIP  provider and plane checks need a cluster (DRY_RUN)\n'
+    check_skip "provider and plane checks need a cluster (DRY_RUN)"
     return 0
   fi
   log "provider"

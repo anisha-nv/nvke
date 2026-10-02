@@ -36,15 +36,15 @@ stage_check() {
   # The password only matters once Postgres holds one. Compare with the live
   # Secret when a kubeconfig is set and the cluster answers; otherwise skip.
   if [[ -z "${SITE_KUBECONFIG}" ]]; then
-    printf 'SKIP  live database password: SITE_KUBECONFIG is not set\n'
+    check_skip "live database password: SITE_KUBECONFIG is not set"
     return 0
   fi
   if ! kubectl --kubeconfig "${SITE_KUBECONFIG}" version >/dev/null 2>&1; then
-    printf 'SKIP  live database password: cluster is not reachable\n'
+    check_skip "live database password: cluster is not reachable"
     return 0
   fi
   if ! kubectl --kubeconfig "${SITE_KUBECONFIG}" -n postgres get secret postgres-postgresql >/dev/null 2>&1; then
-    printf 'SKIP  live database password: secret postgres/postgres-postgresql does not exist yet\n'
+    check_skip "live database password: secret postgres/postgres-postgresql does not exist yet"
     return 0
   fi
   local live

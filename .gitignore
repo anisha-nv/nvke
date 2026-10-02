@@ -90,3 +90,7 @@ controller/test/e2e/site-diagnostics.tar.gz
 # controller/deploy/nke-sbom/install/: rendered values, the generated database
 # password and failure diagnostics. Relative to wherever the stages run.
 .site-install/
+# The site description that install reads. It holds credentials; only the example is tracked.
+site-config.yaml
+site-config.*.yaml
+!site-config.example.yaml
