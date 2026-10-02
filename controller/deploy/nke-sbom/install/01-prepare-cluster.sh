@@ -27,8 +27,6 @@ LOCAL_PATH_URL="https://github.com/rancher/local-path-provisioner/releases/downl
 SKIP_STORAGECLASS="${SKIP_STORAGECLASS:-}"
 export LOCAL_PATH_VERSION LOCAL_PATH_URL SKIP_STORAGECLASS
 
-check_skip() { printf 'SKIP  %s\n' "$*"; }
-
 # tainted_nodes prints the nodes that carry the control-plane NoSchedule taint.
 tainted_nodes() {
   kc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.taints[?(@.key=="node-role.kubernetes.io/control-plane")].effect}{"\n"}{end}' |

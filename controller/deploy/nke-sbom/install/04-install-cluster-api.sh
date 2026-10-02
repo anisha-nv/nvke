@@ -19,19 +19,10 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-TOOL_VERSIONS_MK="${SBOM_DIR}/../../make/tool-versions.mk"
-
-# mk_var prints the value of a `NAME ?= value` line in make/tool-versions.mk.
-mk_var() {
-  sed -n "s/^$1[[:space:]]*?=[[:space:]]*//p" "${TOOL_VERSIONS_MK}" 2>/dev/null | head -n 1
-}
-
 CAPI_VERSION="${CAPI_VERSION:-$(mk_var CAPI_VERSION)}"
 CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-$(mk_var CERT_MANAGER_VERSION)}"
 [[ -n "${CAPI_VERSION}" ]] || die "CAPI_VERSION not found in ${TOOL_VERSIONS_MK}"
 export CAPI_VERSION CERT_MANAGER_VERSION
-
-check_skip() { printf 'SKIP  %s\n' "$*"; }
 
 # deployment_image prints the first container image of a Deployment, or nothing.
 deployment_image() {
@@ -119,7 +110,7 @@ stage_check() {
   if [[ -z "${CERT_MANAGER_VERSION}" || "${tag}" == "${CERT_MANAGER_VERSION}" ]]; then
     check_pass "cert-manager ${tag:-unknown} matches CERT_MANAGER_VERSION"
   else
-    printf 'WARN  cert-manager %s does not match CERT_MANAGER_VERSION %s; the clusterctl binary chose it\n' "${tag:-missing}" "${CERT_MANAGER_VERSION}"
+    check_warn "cert-manager ${tag:-missing} does not match CERT_MANAGER_VERSION ${CERT_MANAGER_VERSION}; the clusterctl binary chose it"
   fi
 }
 

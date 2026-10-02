@@ -31,6 +31,9 @@
 #   template item apply lines               -> render at apply time into ${RENDER_TMP}, apply, remove
 #   helm items deploy-sbom.sh gives --values-for -> --values "${OUT_DIR}/<item>.yaml" appended after
 #                                              the item's own values files, so the site file wins
+#   the nktp item                           -> the same, but only when "${OUT_DIR}/nktp.yaml" exists
+#                                              at run time; stage 3 writes it when site-config.yaml
+#                                              has an nktp block (nke-sbom/README.md, "Per-site values")
 #   === headers                             -> comments, so the script reads as the item list
 #
 # Added before the items: the stage 2 image check, a helm version warning.
@@ -194,6 +197,16 @@ for item in ${site_values_items}; do
     die "${deploy_sbom} passes --values-for ${item}= but ${describe_site} does not write ${item}.yaml"
 done
 
+# The helm items whose site values file is optional. The telemetry backend
+# row of the "Per-site values" table in nke-sbom/README.md: the chart's bundled
+# development backend unless the site passes its own. Stage 3 writes
+# ${OUT_DIR}/ITEM.yaml only when site-config.yaml has the block.
+optional_values_items="nktp"
+for item in ${optional_values_items}; do
+  grep -qF "\"${item}.yaml\"" "${describe_site}" ||
+    die "${item} is an optional values item but ${describe_site} does not know ${item}.yaml"
+done
+
 # site_values_arg prints the --values flag for an item, or nothing.
 site_values_arg() {
   local candidate
@@ -203,6 +216,15 @@ site_values_arg() {
       return 0
     fi
   done
+}
+
+# optional_values_item succeeds when the item takes an optional site values file.
+optional_values_item() {
+  local candidate
+  for candidate in ${optional_values_items}; do
+    [[ "${candidate}" != "$1" ]] || return 0
+  done
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -348,7 +370,18 @@ while IFS= read -r line; do
     rest="${line#helm }"
     rest="${rest/ --kubeconfig \/dev\/null/}"
     rest="${rest/--timeout 15m/${phase_timeout}}"
-    emit "  hl $(paths "${rest}" 1)$(site_values_arg "${item}")"
+    if optional_values_item "${item}"; then
+      # The array is empty when the file is absent. \${arr[@]+"\${arr[@]}"}
+      # expands an empty array under set -u on bash 3.2, where "\${arr[@]}"
+      # alone is an unbound variable.
+      emit "  # Site values for ${item} are optional: stage 3 writes \${OUT_DIR}/${item}.yaml only"
+      emit "  # when site-config.yaml has an ${item} block."
+      emit "  ${item}_extra=()"
+      emit "  [[ ! -f \"\${OUT_DIR}/${item}.yaml\" ]] || ${item}_extra=(--values \"\${OUT_DIR}/${item}.yaml\")"
+      emit "  hl $(paths "${rest}" 1) \${${item}_extra[@]+\"\${${item}_extra[@]}\"}"
+    else
+      emit "  hl $(paths "${rest}" 1)$(site_values_arg "${item}")"
+    fi
     ;;
   "env HELM_REPOSITORY_CONFIG=${tmp_base}/"*)
     rest="${line#env }"
@@ -392,7 +425,9 @@ gen_stage="${work}/gen/${stage_file}"
 # Usage: ./${stage_file} [run|check]
 #
 # Optional: CAPNICO_IMAGE=repository:tag repoints the CAPNICo manifest at
-# another image, for a locally built provider.
+# another image, for a locally built provider. \${OUT_DIR}/nktp.yaml, written
+# by stage 3 when site-config.yaml has an nktp block, becomes the last
+# --values of the nktp release.
 #
 # The guide docs/site-bootstrap/install-site-controller.md is the authority.
 # Commands between \`# doc-begin\` and \`# doc-end\` are extracted verbatim into
@@ -443,7 +478,7 @@ EOF
 
 stage_check() {
   if [[ -n "\${DRY_RUN}" ]]; then
-    printf 'SKIP  provider and plane checks need a cluster (DRY_RUN)\n'
+    check_skip "provider and plane checks need a cluster (DRY_RUN)"
     return 0
   fi
   log "provider"

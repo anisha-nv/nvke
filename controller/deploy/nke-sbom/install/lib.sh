@@ -28,8 +28,9 @@
 #   stage_check() { ...; }
 #   stage_main "$@"
 #
-# Inside stage_check, test with `if`, then call check_pass or check_fail.
-# A bare failing command aborts the check instead of counting it.
+# Inside stage_check, test with `if`, then call check_pass, check_warn,
+# check_skip or check_fail. A bare failing command aborts the check instead
+# of counting it.
 
 set -Eeuo pipefail
 
@@ -88,6 +89,9 @@ export OUT_DIR
 SBOM_DIR="${SBOM_DIR:-$(cd "${INSTALL_DIR}/../.." && pwd)}"
 export SBOM_DIR
 
+# The repository's tool pins. mk_var reads one.
+TOOL_VERSIONS_MK="${SBOM_DIR}/../../make/tool-versions.mk"
+
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-15m}"
 REQUIRE_TIMEOUT="${REQUIRE_TIMEOUT:-180s}"
 DRY_RUN="${DRY_RUN:-}"
@@ -107,6 +111,11 @@ run() {
 kc() { run kubectl --kubeconfig "${SITE_KUBECONFIG}" "$@"; }
 hl() { run helm --kubeconfig "${SITE_KUBECONFIG}" "$@"; }
 
+# mk_var prints the value of a `NAME ?= value` line in make/tool-versions.mk.
+mk_var() {
+  sed -n "s/^$1[[:space:]]*?=[[:space:]]*//p" "${TOOL_VERSIONS_MK}" 2>/dev/null | head -n 1
+}
+
 # require_cmd dies when a tool is missing from PATH.
 require_cmd() {
   local cmd
@@ -115,7 +124,12 @@ require_cmd() {
   done
 }
 
+# One line per finding. Only check_fail counts towards the exit code: WARN
+# is advice, SKIP marks a check that needs a cluster or the network and was
+# not run, as under DRY_RUN.
 check_pass() { printf 'PASS  %s\n' "$*"; }
+check_warn() { printf 'WARN  %s\n' "$*"; }
+check_skip() { printf 'SKIP  %s\n' "$*"; }
 check_fail() {
   printf 'FAIL  %s\n' "$*"
   CHECK_FAILURES=$((CHECK_FAILURES + 1))

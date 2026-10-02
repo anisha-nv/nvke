@@ -78,6 +78,19 @@ grep -q '^helm --kubeconfig .* upgrade --install controller ' "${work}/dry.out" 
   error "dry-run did not print the controller release"
 grep -q '/dev/null' "${work}/dry.out" &&
   error "dry-run argv still names /dev/null"
+# The nktp release takes ${OUT_DIR}/nktp.yaml only when stage 3 wrote it.
+grep -E '^helm .* upgrade --install nktp .*--values [^ ]*nke-sbom/nktp/values.yaml *$' "${work}/dry.out" >/dev/null ||
+  error "dry-run without nktp.yaml did not end the nktp release at the committed values"
+mkdir -p "${work}/site-out"
+printf 'otel-lgtm:\n  enabled: false\n' >"${work}/site-out/nktp.yaml"
+if ! (cd "${work}" && DRY_RUN=1 SITE_KUBECONFIG="${work}/kubeconfig" OUT_DIR="${work}/site-out" \
+  SBOM_DIR="${repo_root}/controller/deploy" TMPDIR="${work}" \
+  ./install/05-install-site-controller.sh run >"${work}/dry2.out" 2>"${work}/dry2.err"); then
+  cat "${work}/dry2.err" >&2
+  error "dry-run of the generated stage with nktp.yaml failed"
+fi
+grep -E '^helm .* upgrade --install nktp .*--values [^ ]*nke-sbom/nktp/values.yaml --values [^ ]*/site-out/nktp.yaml *$' "${work}/dry2.out" >/dev/null ||
+  error "dry-run with nktp.yaml did not append it as the last --values of the nktp release"
 if ls -d "${work}"/nke-* >/dev/null 2>&1; then
   error "dry-run left temp dirs behind: $(ls -d "${work}"/nke-*)"
 fi

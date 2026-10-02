@@ -50,20 +50,24 @@ Confirm the tools, the checkout, egress, the node count and the architecture bef
 
 <!-- stage:00-check-readiness begin -->
 ```bash
-# Hosts the install pulls from. Stage 4 fetches Cluster API and cert-manager
-# from github.com. Stage 5 pulls charts and images from the rest: Postgres from
-# registry-1.docker.io, SPIRE from spiffe.github.io, Temporal from
-# go.temporal.io, CAPNICo from ghcr.io, and the nktp chart dependencies from
-# the three repositories named in nktp/deploy/charts/nktp/Chart.yaml.
+# Hosts the install pulls from, sorted by host. Stage 4 fetches Cluster API
+# and cert-manager from github.com. Stage 5 pulls charts and images from the
+# rest: Postgres and the Bitnami OCI chart from registry-1.docker.io (where
+# docker.io image pulls land), SPIRE from spiffe.github.io, Temporal from
+# go.temporal.io, CAPNICo from ghcr.io, the nktp chart dependencies from the
+# three repositories named in nktp/deploy/charts/nktp/Chart.yaml, and the
+# nktp images from docker.io, ghcr.io, quay.io and registry.k8s.io.
 EGRESS_URLS=(
-  https://github.com/
-  https://registry-1.docker.io/v2/
   https://ghcr.io/v2/
-  https://spiffe.github.io/helm-charts-hardened/index.yaml
+  https://github.com/
   https://go.temporal.io/helm-charts/index.yaml
+  https://kubernetes-sigs.github.io/metrics-server/index.yaml
   https://open-telemetry.github.io/opentelemetry-helm-charts/index.yaml
   https://prometheus-community.github.io/helm-charts/index.yaml
-  https://kubernetes-sigs.github.io/metrics-server/index.yaml
+  https://quay.io/v2/
+  https://registry-1.docker.io/v2/
+  https://registry.k8s.io/v2/
+  https://spiffe.github.io/helm-charts-hardened/index.yaml
 )
 ```
 <!-- stage:00-check-readiness end -->
@@ -249,7 +253,11 @@ run env HELM_REPOSITORY_CONFIG="${HELM_TMP}/repositories.yaml" HELM_REPOSITORY_C
 run env HELM_REPOSITORY_CONFIG="${HELM_TMP}/repositories.yaml" HELM_REPOSITORY_CACHE="${HELM_TMP}/cache" helm dependency build "${SBOM_DIR}/nke-sbom/../../../nktp/deploy/charts/nktp" --skip-refresh
 
 # nktp -> release nktp (nktp 0.1.0-rc.2) in nktp
-hl upgrade --install nktp "${SBOM_DIR}/nke-sbom/../../../nktp/deploy/charts/nktp" --namespace nktp --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/nktp/values.yaml"
+# Site values for nktp are optional: stage 3 writes ${OUT_DIR}/nktp.yaml only
+# when site-config.yaml has an nktp block.
+nktp_extra=()
+[[ ! -f "${OUT_DIR}/nktp.yaml" ]] || nktp_extra=(--values "${OUT_DIR}/nktp.yaml")
+hl upgrade --install nktp "${SBOM_DIR}/nke-sbom/../../../nktp/deploy/charts/nktp" --namespace nktp --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/nktp/values.yaml" ${nktp_extra[@]+"${nktp_extra[@]}"}
 
 # item postgresql (helm)
 

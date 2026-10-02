@@ -1,6 +1,6 @@
 # install
 
-The reference implementation of [docs/site-bootstrap/install-site-controller.md](../../../../docs/site-bootstrap/install-site-controller.md).
+The executable form of [docs/site-bootstrap/install-site-controller.md](../../../../docs/site-bootstrap/install-site-controller.md).
 One script per stage of that guide, run in order.
 The guide is the authority. When a script and the guide disagree, the guide wins.
 
@@ -28,8 +28,9 @@ Stage names drop the numeric prefix: `--from install-cluster-api` selects `04-in
 ## Describe your site
 
 Stage 3 has no cluster access. It reads one `site-config.yaml` and writes the files later stages use into `$OUT_DIR`: `bootstrap-config.json` for the `nke-base-config` template item, `controller.yaml`, `spire.yaml`, `postgresql.yaml` and `temporal.yaml` as the last `--values` of each release, and `site.env` with `SITE_NAME` and `SITE_VIP` for stage 6.
-Copy [site-config.example.yaml](site-config.example.yaml), replace every `REPLACE_*` value, keep the copy out of git.
+Copy [site-config.example.yaml](site-config.example.yaml), replace every `REPLACE_*` value, keep the copy out of git. The root `.gitignore` ignores `site-config.yaml` and `site-config.*.yaml`.
 Every key is required except `db.password`; a missing, empty or non-scalar value fails with the key name.
+The optional top-level `nktp:` block is the exception to the two-level schema: it is not parsed, it is dedented and written to `nktp.yaml` as written, and stage 5 appends that file as the last `--values` of the `nktp` release. Without the block no `nktp.yaml` is written (a stale one from an earlier run is removed) and telemetry exports to the chart's bundled development backend. See "Per-site values" and "Telemetry" in [the deploy path README](../README.md); the chart README's "The backend" section lists the keys.
 `site.trustDomain` is explicit and must equal the trust domain the nodes were bootstrapped with.
 `spire.caCertFile` and `spire.caKeyFile` point at the bootstrap SPIRE CA; the chart stores them in a Secret it creates, so `spire.yaml` carries the PEM contents.
 The database password is generated once and reused on rerun; `check` compares it with the live Postgres Secret when `SITE_KUBECONFIG` is set.
@@ -39,6 +40,10 @@ The summary redacts credentials. The schema is unstable until it is folded into 
 SITE_CONFIG=./site-config.yaml ./03-describe-site.sh run
 ./03-describe-site.sh check
 ```
+
+## Images
+
+Stage 2 imports the controller and profiles images into every node's `k8s.io` containerd namespace. Build them single-manifest (`docker buildx build --provenance=false --output type=docker`): an OCI index with an attestation manifest makes the pull go by digest instead of by the imported tag. See "Before this runs" in [the deploy path README](../README.md).
 
 ## Environment
 

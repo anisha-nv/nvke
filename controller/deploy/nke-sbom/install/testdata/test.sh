@@ -66,6 +66,7 @@ expect_error empty-value.yaml registry.token
 expect_error null-value.yaml tenant.password
 expect_error nested-non-scalar.yaml nico.endpoint
 expect_error bad-arch.yaml site.arch
+expect_error empty-nktp.yaml nktp
 
 # A missing CA file is an error that names the key.
 dir="${WORK}/missing-ca"
@@ -114,6 +115,16 @@ fi
 for f in bootstrap-config.json controller.yaml spire.yaml postgresql.yaml temporal.yaml site.env db-password; do
   [[ -f "${out}/${f}" ]] || fail "valid.yaml: ${f} missing"
 done
+if [[ -e "${out}/nktp.yaml" ]]; then
+  fail "valid.yaml: nktp.yaml written without an nktp block"
+else
+  pass "valid.yaml: no nktp.yaml without an nktp block"
+fi
+if [[ "${log}" == *"nktp.yaml absent"* ]]; then
+  pass "valid.yaml: check reports nktp.yaml absent"
+else
+  fail "valid.yaml: check does not report nktp.yaml absent: ${log}"
+fi
 mode="$(stat -f '%Lp' "${out}" 2>/dev/null || stat -c '%a' "${out}")"
 [[ "${mode}" == "700" ]] && pass "out dir is 0700" || fail "out dir mode is ${mode}"
 mode="$(stat -f '%Lp' "${out}/spire.yaml" 2>/dev/null || stat -c '%a' "${out}/spire.yaml")"
@@ -183,6 +194,57 @@ if grep -q '46d0caad8c25a027dd11c93e18b58a8bc6fbd9f1fe2e36fa2a0dd440986de4dc' "$
   pass "amd64 selects the amd64 checksum"
 else
   fail "amd64 checksum not selected"
+fi
+
+# The optional nktp block is passed through as written, dedented, mode 0600.
+dir="${WORK}/with-nktp"
+stage "${dir}" with-nktp.yaml
+out="${dir}/out"
+rc=0
+log="$(python3 "${RENDERER}" render --config "${dir}/site-config.yaml" --out "${out}" --sbom-dir "${SBOM_DIR}" 2>&1)" || rc=$?
+if [[ "${rc}" -eq 0 && -f "${out}/nktp.yaml" ]]; then
+  pass "with-nktp.yaml: render exits 0 and writes nktp.yaml"
+else
+  fail "with-nktp.yaml: rc=${rc}, nktp.yaml present: $([[ -f "${out}/nktp.yaml" ]] && echo yes || echo no): ${log}"
+fi
+if [[ "${log}" == *"nktp-backend-token"* ]]; then
+  fail "with-nktp.yaml: summary leaks the nktp block"
+else
+  pass "with-nktp.yaml: summary names top-level keys only"
+fi
+mode="$(stat -f '%Lp' "${out}/nktp.yaml" 2>/dev/null || stat -c '%a' "${out}/nktp.yaml")"
+[[ "${mode}" == "600" ]] && pass "nktp.yaml is 0600" || fail "nktp.yaml mode is ${mode}"
+expect_line nktp.yaml '^otel-lgtm:$'
+expect_line nktp.yaml '^  enabled: false$'
+expect_line nktp.yaml '^    headers:$'
+expect_line nktp.yaml '^      Authorization: "Bearer nktp-backend-token"$'
+expect_line nktp.yaml '^      ca_pem_files: \[ca.pem\]$'
+expect_line nktp.yaml '^# Point the exporters'
+if [[ "$(head -c 1 "${out}/nktp.yaml")" != " " ]]; then
+  pass "nktp.yaml is dedented"
+else
+  fail "nktp.yaml keeps the section indentation"
+fi
+rc=0
+log="$(python3 "${RENDERER}" check --out "${out}" 2>&1)" || rc=$?
+if [[ "${rc}" -eq 0 && "${log}" == *"nktp.yaml has keys otel-lgtm, exporters"* ]]; then
+  pass "with-nktp.yaml: check lists the nktp.yaml keys"
+else
+  fail "with-nktp.yaml: check rc=${rc}: ${log}"
+fi
+if python3 "${RENDERER}" keys --config "${dir}/site-config.yaml" --sbom-dir "${SBOM_DIR}" | grep -qx 'nktp.yaml exporters'; then
+  pass "with-nktp.yaml: keys lists nktp.yaml top-level keys"
+else
+  fail "with-nktp.yaml: keys does not list nktp.yaml exporters"
+fi
+# Dropping the block removes the file on the next render.
+cp "${HERE}/valid.yaml" "${dir}/site-config.yaml"
+rc=0
+log="$(python3 "${RENDERER}" render --config "${dir}/site-config.yaml" --out "${out}" --sbom-dir "${SBOM_DIR}" 2>&1)" || rc=$?
+if [[ "${rc}" -eq 0 && ! -e "${out}/nktp.yaml" && "${log}" == *"nktp.yaml removed"* ]]; then
+  pass "rerun without the nktp block removes nktp.yaml"
+else
+  fail "rerun without the nktp block: rc=${rc}, nktp.yaml present: $([[ -e "${out}/nktp.yaml" ]] && echo yes || echo no): ${log}"
 fi
 
 # Golden: the key set each file carries.

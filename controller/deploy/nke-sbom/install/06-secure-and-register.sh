@@ -114,14 +114,14 @@ stage_check() {
 
   local entry ns name volume
   if [[ -n "${DRY_RUN}" ]]; then
-    printf 'SKIP  exec-auth volumes and rollouts need a cluster (DRY_RUN)\n'
+    check_skip "exec-auth volumes and rollouts need a cluster (DRY_RUN)"
     EXEC_AUTH_DEPLOYMENTS=""
   fi
   for entry in ${EXEC_AUTH_DEPLOYMENTS}; do
     ns="${entry%%/*}"
     name="${entry#*/}"
     if ! kc -n "${ns}" get "deployment/${name}" >/dev/null 2>&1; then
-      printf 'SKIP  %s/%s not installed\n' "${ns}" "${name}"
+      check_skip "${ns}/${name} not installed"
       continue
     fi
     # The overlay adds a volume whose CSI driver is csi.spiffe.io. Its
