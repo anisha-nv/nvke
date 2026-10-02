@@ -1,0 +1,36 @@
+# valid.yaml plus an nktp block: nested maps, a list, a comment, a blank line.
+site:
+  name: demo-site
+  trustDomain: "demo-site.nke.local"
+  vip: '192.0.2.10'
+  arch: arm64
+spire:
+  caCertFile: ca.crt
+  caKeyFile: ca.key
+images:
+  controller: registry.example.test:5000/nke/nke-controller:v0.1.1
+  profiles: cwe-profiles:demo
+nktp:
+  # Point the exporters at the site's backend and turn the bundled one off.
+  otel-lgtm:
+    enabled: false
+
+  exporters:
+    otlp:
+      endpoint: otel.example.test:4317
+      headers:
+        Authorization: "Bearer nktp-backend-token"
+      tls:
+        ca_pem_files: [ca.pem]
+nico:
+  endpoint: http://nico.example.test:18080
+  orgId: novxwn552ssc
+  token: nico-token
+  apiName: forge
+registry:
+  server: ghcr.io
+  username: octocat
+  token: ghp_example
+tenant:
+  user: nke
+  password: "tenant-pass"

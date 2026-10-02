@@ -10,7 +10,9 @@
 # Usage: ./05-install-site-controller.sh [run|check]
 #
 # Optional: CAPNICO_IMAGE=repository:tag repoints the CAPNICo manifest at
-# another image, for a locally built provider.
+# another image, for a locally built provider. ${OUT_DIR}/nktp.yaml, written
+# by stage 3 when site-config.yaml has an nktp block, becomes the last
+# --values of the nktp release.
 #
 # The guide docs/site-bootstrap/install-site-controller.md is the authority.
 # Commands between `# doc-begin` and `# doc-end` are extracted verbatim into
@@ -91,7 +93,11 @@ stage_run() {
   run env HELM_REPOSITORY_CONFIG="${HELM_TMP}/repositories.yaml" HELM_REPOSITORY_CACHE="${HELM_TMP}/cache" helm dependency build "${SBOM_DIR}/nke-sbom/../../../nktp/deploy/charts/nktp" --skip-refresh
 
   # nktp -> release nktp (nktp 0.1.0-rc.2) in nktp
-  hl upgrade --install nktp "${SBOM_DIR}/nke-sbom/../../../nktp/deploy/charts/nktp" --namespace nktp --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/nktp/values.yaml"
+  # Site values for nktp are optional: stage 3 writes ${OUT_DIR}/nktp.yaml only
+  # when site-config.yaml has an nktp block.
+  nktp_extra=()
+  [[ ! -f "${OUT_DIR}/nktp.yaml" ]] || nktp_extra=(--values "${OUT_DIR}/nktp.yaml")
+  hl upgrade --install nktp "${SBOM_DIR}/nke-sbom/../../../nktp/deploy/charts/nktp" --namespace nktp --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/nktp/values.yaml" ${nktp_extra[@]+"${nktp_extra[@]}"}
 
   # item postgresql (helm)
 

@@ -5,7 +5,9 @@
 # BootstrapConfig JSON and the values files stage 5 installs from.
 #
 # Copy this file, replace every REPLACE_* value, keep it out of git. It holds
-# credentials. Two levels only: a section, then `key: value` scalars.
+# credentials. Two levels only: a section, then `key: value` scalars. The one
+# exception is the optional `nktp:` block at the end, which is copied to helm
+# as written.
 #
 # This schema is unstable. It changes when the site description is folded
 # into BootstrapConfig.
@@ -59,3 +61,13 @@ tenant:
   user: REPLACE_TENANT_USER
   # Password for that user.
   password: REPLACE_TENANT_PASSWORD
+
+# Optional. Values for the nktp release, passed through as written: stage 3
+# writes them to nktp.yaml and stage 5 appends that file as the last --values
+# of the release. Without this block telemetry exports to the chart's bundled
+# development backend, which keeps data in memory and has no authentication.
+# The keys a real backend sets are listed in the chart README's "The backend"
+# section (nktp/deploy/charts/nktp/README.md).
+# nktp:
+#   otel-lgtm:
+#     enabled: false

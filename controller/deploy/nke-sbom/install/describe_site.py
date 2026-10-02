@@ -17,6 +17,12 @@ render writes six files to DIR, mode 0600:
   temporal.yaml           --values-for temporal=...
   site.env                SITE_NAME and SITE_VIP for stage 6; no secrets
 
+and one optional file:
+
+  nktp.yaml               --values-for nktp=...; the `nktp:` block of the
+                          config, copied as written. Only when the block is
+                          present. A rerun without the block removes it.
+
 The derivations follow controller/hack/ci/deploy-sbom.sh, which does the same
 for the e2e lanes from environment variables. The upstream CA values follow
 cli/internal/bootstrap/cwedeploy (upstreamCAArgs): the chart takes the PEM
@@ -26,7 +32,10 @@ manifest; stage 5 renders those at apply time and deletes them.
 Standard library only. PyYAML is not guaranteed, so this reads a small YAML
 subset: two levels, `section:` then `  key: value`, scalars bare or quoted,
 `#` comments. Anything else is refused by name. Every required key must be a
-non-empty scalar, as render-template.py requires of the BootstrapConfig.
+non-empty scalar, as render-template.py requires of the BootstrapConfig. The
+one exception is the `nktp:` block: its lines are not parsed here, they are
+dedented and passed through to helm, which parses them. The chart README's
+"The backend" section lists the keys that block sets.
 
 check re-reads DIR and refuses missing files, unparseable JSON, missing keys
 and empty values. keys prints the dotted key paths render would write, for the
@@ -52,6 +61,8 @@ REQUIRED = [
     "tenant.user", "tenant.password",
 ]
 OPTIONAL = ["db.password"]
+# Sections passed through unparsed. Each maps to the values file it becomes.
+PASSTHROUGH = {"nktp": "nktp.yaml"}
 
 ARCHES = ("amd64", "arm64")
 
@@ -73,6 +84,7 @@ OIDC_NODEPORT = 30443
 
 OUTPUT_FILES = ["bootstrap-config.json", "controller.yaml", "spire.yaml",
                 "postgresql.yaml", "temporal.yaml", "site.env"]
+OPTIONAL_FILES = sorted(PASSTHROUGH.values())
 ENV_FILE = "site.env"
 ENV_KEYS = ["SITE_NAME", "SITE_VIP"]
 PASSWORD_FILE = "db-password"
@@ -133,13 +145,69 @@ def _scalar(raw, where):
     return value, False
 
 
+def split_passthrough(text, source):
+    """Separate the PASSTHROUGH sections from the rest of the text.
+
+    Returns (remaining_lines, {section: raw_lines}). A passthrough section
+    runs from its `section:` line to the next line at column 0. Its lines are
+    kept as written, blank lines and comments included.
+    """
+    rest = []
+    raw = {}
+    current = None
+    for lineno, line in enumerate(text.splitlines(), 1):
+        where = "%s:%d" % (source, lineno)
+        if line and not line[0].isspace():
+            m = _SECTION_RE.match(line)
+            current = m.group(1) if m and m.group(1) in PASSTHROUGH else None
+            if current is not None:
+                if current in raw:
+                    raise ConfigError("%s: duplicate section %r." % (where, current))
+                raw[current] = []
+                rest.append("")
+                continue
+        # Keep the line count so error messages still name the right line.
+        rest.append("" if current is not None else line)
+        if current is not None:
+            raw[current].append(line)
+    return rest, raw
+
+
+def dedent_block(section, lines):
+    """Strip the common indentation from a passthrough block and check it is
+    a non-empty map. Returns the text helm will read."""
+    content = [l for l in lines if l.strip() and not l.strip().startswith("#")]
+    if not content:
+        raise ConfigError("%s is empty; omit the section or give it keys." % section)
+    for l in content:
+        if "\t" in l[:len(l) - len(l.lstrip())]:
+            raise ConfigError("%s: tabs are not allowed in indentation." % section)
+    indent = min(len(l) - len(l.lstrip(" ")) for l in content)
+    if indent == 0:
+        raise ConfigError("%s: entries must be indented under the section." % section)
+    if not re.match(r"[A-Za-z_][A-Za-z0-9_.-]*:(\s|$)", content[0].strip()):
+        raise ConfigError("%s must be a map of `key: value` entries, got %r." % (section, content[0].strip()))
+    out = []
+    for l in lines:
+        if not l.strip():
+            out.append("")
+        elif l[:indent].strip() == "":
+            out.append(l[indent:])
+        else:
+            out.append(l.lstrip(" "))
+    return "\n".join(out).strip("\n") + "\n"
+
+
 def parse_site_config(text, source):
-    """Parse the two-level subset into {section: {key: value-or-None}}."""
+    """Parse the two-level subset into {section: {key: value-or-None}}.
+
+    PASSTHROUGH sections come back as text under data[section].
+    """
     data = {}
     section = None
     indent = None
     pending = None  # (section, key) whose value was empty on its line
-    lines = text.splitlines()
+    lines, raw = split_passthrough(text, source)
     for lineno, line in enumerate(lines, 1):
         where = "%s:%d" % (source, lineno)
         if "\t" in line[:len(line) - len(line.lstrip())]:
@@ -183,23 +251,28 @@ def parse_site_config(text, source):
         value, is_null = _scalar(m.group(3), "%s.%s" % (section, key))
         data[section][key] = value
         pending = (section, key) if is_null else None
+    for name, block in raw.items():
+        data[name] = dedent_block(name, block)
     return data
 
 
 # --- validation --------------------------------------------------------------
 
 def flatten(data):
-    return {"%s.%s" % (s, k): v for s, keys in data.items() for k, v in keys.items()}
+    return {"%s.%s" % (s, k): v for s, keys in data.items()
+            if s not in PASSTHROUGH for k, v in keys.items()}
 
 
 def validate(data, config_dir):
+    """Return (flat, files, passthrough). passthrough maps a values file name
+    to the text it holds, for every PASSTHROUGH section present."""
     flat = flatten(data)
     known = set(REQUIRED) | set(OPTIONAL)
     for path in sorted(flat):
         if path not in known:
             raise ConfigError("unknown key %s. Known keys: %s" % (path, ", ".join(sorted(known))))
     for section in data:
-        if section not in {p.split(".")[0] for p in known}:
+        if section not in {p.split(".")[0] for p in known} and section not in PASSTHROUGH:
             raise ConfigError("unknown section %s." % section)
     for path in REQUIRED:
         if path not in flat:
@@ -246,7 +319,8 @@ def validate(data, config_dir):
         if "-----BEGIN" not in pem or marker not in pem:
             raise ConfigError("%s: %s is not a PEM %s." % (path, p, marker.lower()))
         files[path] = pem
-    return flat, files
+    passthrough = {PASSTHROUGH[s]: data[s] for s in PASSTHROUGH if s in data}
+    return flat, files, passthrough
 
 
 def split_image(ref, path):
@@ -451,7 +525,7 @@ def load_config(path):
 
 
 def cmd_render(args):
-    flat, files = load_config(args.config)
+    flat, files, passthrough = load_config(args.config)
     os.makedirs(args.out, mode=0o700, exist_ok=True)
     os.chmod(args.out, 0o700)
     password, origin = resolve_password(flat, args.out)
@@ -465,6 +539,15 @@ def cmd_render(args):
         else:
             text = to_yaml(tree)
         write_private(os.path.join(args.out, name), text)
+    # An optional file is written when its section is present and removed
+    # when it is not, so a stale copy from an earlier run cannot reach helm.
+    for name in OPTIONAL_FILES:
+        path = os.path.join(args.out, name)
+        if name in passthrough:
+            write_private(path, passthrough[name])
+        elif os.path.exists(path):
+            os.remove(path)
+            note("%s removed; the config has no %s block" % (name, _section_of(name)))
     note("db password %s" % origin)
     print("site config: %s" % args.config)
     print("out dir:     %s" % args.out)
@@ -475,15 +558,28 @@ def cmd_render(args):
             for part in path.split("."):
                 value = value[part]
             print("  %s: %s" % (path, redacted(path, value)))
+    for name, text in passthrough.items():
+        print("%s: passed through, top-level keys %s" % (name, ", ".join(top_level_keys(text))))
     print(SCHEMA_NOTE)
 
 
 def cmd_keys(args):
-    flat, files = load_config(args.config)
+    flat, files, passthrough = load_config(args.config)
     outputs = build(flat, files, args.sbom_dir, "x")
     for name, tree in outputs.items():
         for path in key_paths(tree):
             print("%s %s" % (name, path))
+    for name, text in passthrough.items():
+        for key in top_level_keys(text):
+            print("%s %s" % (name, key))
+
+
+def top_level_keys(text):
+    return re.findall(r"^([A-Za-z_][A-Za-z0-9_.-]*):", text, re.M)
+
+
+def _section_of(filename):
+    return [s for s, f in PASSTHROUGH.items() if f == filename][0]
 
 
 # Top-level keys each values file must carry. check re-reads the files
@@ -553,6 +649,18 @@ def cmd_check(args):
             if re.search(r': ""$', text, re.M) or re.search(r'^\s*- ""$', text, re.M):
                 fail("%s has an empty value" % name)
             print("PASS  %s has keys %s" % (name, ", ".join(top)))
+    for name in OPTIONAL_FILES:
+        path = os.path.join(args.out, name)
+        if not os.path.isfile(path):
+            print("PASS  %s absent; the %s release uses the committed values" % (name, _section_of(name)))
+            continue
+        if os.stat(path).st_mode & 0o077:
+            fail("%s is not mode 0600" % path)
+        with open(path) as fh:
+            top = top_level_keys(fh.read())
+        if not top:
+            fail("%s has no top-level key" % name)
+        print("PASS  %s has keys %s" % (name, ", ".join(top)))
     return 1 if failures else 0
 
 

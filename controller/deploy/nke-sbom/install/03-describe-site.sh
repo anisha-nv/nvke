@@ -2,8 +2,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Render site-config.yaml into the BootstrapConfig JSON and the four values
-# files stage 5 installs from. No cluster access.
+# Render site-config.yaml into the BootstrapConfig JSON and the values files
+# stage 5 installs from: four required, nktp.yaml when the config has an nktp
+# block. No cluster access.
 #
 # Usage: ./03-describe-site.sh [run|check]
 #

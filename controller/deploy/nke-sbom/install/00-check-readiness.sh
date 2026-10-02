@@ -21,20 +21,24 @@ set -euo pipefail
 MIN_DISK_GB="${MIN_DISK_GB:-10}"
 
 # doc-begin
-# Hosts the install pulls from. Stage 4 fetches Cluster API and cert-manager
-# from github.com. Stage 5 pulls charts and images from the rest: Postgres from
-# registry-1.docker.io, SPIRE from spiffe.github.io, Temporal from
-# go.temporal.io, CAPNICo from ghcr.io, and the nktp chart dependencies from
-# the three repositories named in nktp/deploy/charts/nktp/Chart.yaml.
+# Hosts the install pulls from, sorted by host. Stage 4 fetches Cluster API
+# and cert-manager from github.com. Stage 5 pulls charts and images from the
+# rest: Postgres and the Bitnami OCI chart from registry-1.docker.io (where
+# docker.io image pulls land), SPIRE from spiffe.github.io, Temporal from
+# go.temporal.io, CAPNICo from ghcr.io, the nktp chart dependencies from the
+# three repositories named in nktp/deploy/charts/nktp/Chart.yaml, and the
+# nktp images from docker.io, ghcr.io, quay.io and registry.k8s.io.
 EGRESS_URLS=(
-  https://github.com/
-  https://registry-1.docker.io/v2/
   https://ghcr.io/v2/
-  https://spiffe.github.io/helm-charts-hardened/index.yaml
+  https://github.com/
   https://go.temporal.io/helm-charts/index.yaml
+  https://kubernetes-sigs.github.io/metrics-server/index.yaml
   https://open-telemetry.github.io/opentelemetry-helm-charts/index.yaml
   https://prometheus-community.github.io/helm-charts/index.yaml
-  https://kubernetes-sigs.github.io/metrics-server/index.yaml
+  https://quay.io/v2/
+  https://registry-1.docker.io/v2/
+  https://registry.k8s.io/v2/
+  https://spiffe.github.io/helm-charts-hardened/index.yaml
 )
 # doc-end
 
