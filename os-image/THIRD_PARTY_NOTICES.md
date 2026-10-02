@@ -18,12 +18,12 @@ notices-check` verifies it is up to date.
 | Package | License | Module | Source |
 |---------|---------|--------|--------|
 | `github.com/go-jose/go-jose/v4` | Apache-2.0 | `github.com/go-jose/go-jose/v4@v4.1.5` | https://pkg.go.dev/github.com/go-jose/go-jose/v4@v4.1.5?tab=licenses |
-| `github.com/go-jose/go-jose/v4/json` | BSD-3-Clause | `github.com/go-jose/go-jose/v4@v4.1.5` | https://pkg.go.dev/github.com/go-jose/go-jose/v4@v4.1.5?tab=licenses |
+| `github.com/go-jose/go-jose/v4/json` | BSD-3-Clause | `github.com/go-jose/go-jose/v4@v4.1.5` | https://pkg.go.dev/github.com/go-jose/go-jose/v4/json@v4.1.5?tab=licenses |
 | `github.com/spiffe/go-spiffe/v2` | Apache-2.0 | `github.com/spiffe/go-spiffe/v2@v2.8.1` | https://pkg.go.dev/github.com/spiffe/go-spiffe/v2@v2.8.1?tab=licenses |
 | `golang.org/x/net` | BSD-3-Clause | `golang.org/x/net@v0.59.0` | https://pkg.go.dev/golang.org/x/net@v0.59.0?tab=licenses |
-| `golang.org/x/sys/unix` | BSD-3-Clause | `golang.org/x/sys@v0.48.0` | https://pkg.go.dev/golang.org/x/sys@v0.48.0?tab=licenses |
+| `golang.org/x/sys/unix` | BSD-3-Clause | `golang.org/x/sys@v0.48.0` | https://pkg.go.dev/golang.org/x/sys/unix@v0.48.0?tab=licenses |
 | `golang.org/x/text` | BSD-3-Clause | `golang.org/x/text@v0.42.0` | https://pkg.go.dev/golang.org/x/text@v0.42.0?tab=licenses |
-| `google.golang.org/genproto/googleapis/rpc/status` | Apache-2.0 | `google.golang.org/genproto/googleapis/rpc@v0.0.0-20260819154853-08b0e4226688` | https://pkg.go.dev/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260819154853-08b0e4226688?tab=licenses |
+| `google.golang.org/genproto/googleapis/rpc/status` | Apache-2.0 | `google.golang.org/genproto/googleapis/rpc@v0.0.0-20260819154853-08b0e4226688` | https://pkg.go.dev/google.golang.org/genproto/googleapis/rpc/status@v0.0.0-20260819154853-08b0e4226688?tab=licenses |
 | `google.golang.org/grpc` | Apache-2.0 | `google.golang.org/grpc@v1.83.2` | https://pkg.go.dev/google.golang.org/grpc@v1.83.2?tab=licenses |
 | `google.golang.org/protobuf` | BSD-3-Clause | `google.golang.org/protobuf@v1.36.12` | https://pkg.go.dev/google.golang.org/protobuf@v1.36.12?tab=licenses |
 

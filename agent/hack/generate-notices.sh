@@ -195,16 +195,19 @@ sort -u "${CSV}" | awk -F'\t' 'NF>=3 {
     file[pkg]=path
 } END { for (i=1;i<=n;i++) { p=order[i]; print p "\t" seen[p] "\t" file[p] } }' >"${INDEX}"
 
-# Each package links to its module's licence page on pkg.go.dev, built from
-# module@version alone, so the link is the same on every run. go-licenses often
-# names a module root that is not itself an imported package (golang.org/x/sys
-# while only golang.org/x/sys/unix is imported), so the module is found by
-# longest matching prefix.
+# Each package links to its own licence page on pkg.go.dev at its module's
+# version, built from package path and module@version alone, so the link is the
+# same on every run. The package page, not the module page: a subdirectory can
+# carry its own licence (go-jose/v4/json adds BSD-3-Clause to the module's
+# Apache-2.0), and only the package page shows it. go-licenses often names a
+# module root that is not itself an imported package (golang.org/x/sys while
+# only golang.org/x/sys/unix is imported), so the module is found by longest
+# matching prefix.
 link_for() {
     awk -v p="$1" '{
         split($2, mv, "@")
-        if ((p == mv[1] || index(p, mv[1] "/") == 1) && length(mv[1]) > length(best)) { best = mv[1]; ver = $2 }
-    } END { if (best != "") print "https://pkg.go.dev/" ver "?tab=licenses" }' "${MODMAP}"
+        if ((p == mv[1] || index(p, mv[1] "/") == 1) && length(mv[1]) > length(best)) { best = mv[1]; ver = mv[2] }
+    } END { if (best != "") print "https://pkg.go.dev/" p "@" ver "?tab=licenses" }' "${MODMAP}"
 }
 
 TMP="${WORK}/out.md"

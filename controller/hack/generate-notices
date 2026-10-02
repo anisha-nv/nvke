@@ -240,18 +240,28 @@ EOF
 
     while IFS=$'\t' read -r pkg license _ mod; do
         [[ -z "${pkg}" ]] && continue
-        # Source is built from module@version alone, not the URL go-licenses
-        # reports. That URL is discovered over the network -- for a /vN module,
-        # by a HEAD request to github.com that falls back to a different
-        # directory on any failure -- so it changed between runs on identical
-        # input, and some of what it produced was a dead link.
+        # Source is built from package path and module@version alone, not the
+        # URL go-licenses reports. That URL is discovered over the network --
+        # for a /vN module, by a HEAD request to github.com that falls back to a
+        # different directory on any failure -- so it changed between runs on
+        # identical input, and some of what it produced was a dead link.
+        #
+        # The package page, not the module page: a subdirectory can carry its
+        # own licence (go-jose/v4/json adds BSD-3-Clause to the module's
+        # Apache-2.0), and only the package page shows it. A replace to a
+        # different module path moves the package too, so that case links the
+        # replacement module instead.
         if [[ "${mod}" != *@* ]]; then
             echo "ERROR: no module@version for '${pkg}' (got '${mod}') — cannot build its Source link." >&2
             exit 1
         fi
+        src="${mod%@*}"
+        if [[ "${pkg}" == "${src}" || "${pkg}" == "${src}/"* ]]; then
+            src="${pkg}"
+        fi
         # shellcheck disable=SC2016  # backticks are literal markdown, not command substitution.
-        printf '| `%s` | %s | `%s` | https://pkg.go.dev/%s?tab=licenses |\n' \
-            "${pkg}" "${license:-Unknown}" "${mod}" "${mod}"
+        printf '| `%s` | %s | `%s` | https://pkg.go.dev/%s@%s?tab=licenses |\n' \
+            "${pkg}" "${license:-Unknown}" "${mod}" "${src}" "${mod##*@}"
     done < "${INDEX_FILE}"
 
     cat <<'EOF'

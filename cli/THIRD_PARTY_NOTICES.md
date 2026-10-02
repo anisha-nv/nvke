@@ -18,11 +18,11 @@ notices-check` verifies it is up to date.
 | Package | License | Module | Source |
 |---------|---------|--------|--------|
 | `github.com/apapsch/go-jsonmerge/v2` | MIT | `github.com/apapsch/go-jsonmerge/v2@v2.0.0` | https://pkg.go.dev/github.com/apapsch/go-jsonmerge/v2@v2.0.0?tab=licenses |
-| `github.com/davecgh/go-spew/spew` | ISC | `github.com/davecgh/go-spew@v1.1.2-0.20180830191138-d8f796af33cc` | https://pkg.go.dev/github.com/davecgh/go-spew@v1.1.2-0.20180830191138-d8f796af33cc?tab=licenses |
+| `github.com/davecgh/go-spew/spew` | ISC | `github.com/davecgh/go-spew@v1.1.2-0.20180830191138-d8f796af33cc` | https://pkg.go.dev/github.com/davecgh/go-spew/spew@v1.1.2-0.20180830191138-d8f796af33cc?tab=licenses |
 | `github.com/emicklei/go-restful/v3` | MIT | `github.com/emicklei/go-restful/v3@v3.13.0` | https://pkg.go.dev/github.com/emicklei/go-restful/v3@v3.13.0?tab=licenses |
 | `github.com/fsnotify/fsnotify` | BSD-3-Clause | `github.com/fsnotify/fsnotify@v1.9.0` | https://pkg.go.dev/github.com/fsnotify/fsnotify@v1.9.0?tab=licenses |
 | `github.com/fxamacker/cbor/v2` | MIT | `github.com/fxamacker/cbor/v2@v2.9.1` | https://pkg.go.dev/github.com/fxamacker/cbor/v2@v2.9.1?tab=licenses |
-| `github.com/getkin/kin-openapi/openapi3` | MIT | `github.com/getkin/kin-openapi@v0.149.0` | https://pkg.go.dev/github.com/getkin/kin-openapi@v0.149.0?tab=licenses |
+| `github.com/getkin/kin-openapi/openapi3` | MIT | `github.com/getkin/kin-openapi@v0.149.0` | https://pkg.go.dev/github.com/getkin/kin-openapi/openapi3@v0.149.0?tab=licenses |
 | `github.com/go-logr/logr` | Apache-2.0 | `github.com/go-logr/logr@v1.4.4` | https://pkg.go.dev/github.com/go-logr/logr@v1.4.4?tab=licenses |
 | `github.com/go-openapi/jsonpointer` | Apache-2.0 | `github.com/go-openapi/jsonpointer@v1.0.0` | https://pkg.go.dev/github.com/go-openapi/jsonpointer@v1.0.0?tab=licenses |
 | `github.com/go-openapi/jsonreference` | Apache-2.0 | `github.com/go-openapi/jsonreference@v1.0.0` | https://pkg.go.dev/github.com/go-openapi/jsonreference@v1.0.0?tab=licenses |
@@ -63,24 +63,24 @@ notices-check` verifies it is up to date.
 | `go.yaml.in/yaml/v3` | MIT | `go.yaml.in/yaml/v3@v3.0.5` | https://pkg.go.dev/go.yaml.in/yaml/v3@v3.0.5?tab=licenses |
 | `golang.org/x/net` | BSD-3-Clause | `golang.org/x/net@v0.59.0` | https://pkg.go.dev/golang.org/x/net@v0.59.0?tab=licenses |
 | `golang.org/x/oauth2` | BSD-3-Clause | `golang.org/x/oauth2@v0.37.0` | https://pkg.go.dev/golang.org/x/oauth2@v0.37.0?tab=licenses |
-| `golang.org/x/sys/unix` | BSD-3-Clause | `golang.org/x/sys@v0.48.0` | https://pkg.go.dev/golang.org/x/sys@v0.48.0?tab=licenses |
+| `golang.org/x/sys/unix` | BSD-3-Clause | `golang.org/x/sys@v0.48.0` | https://pkg.go.dev/golang.org/x/sys/unix@v0.48.0?tab=licenses |
 | `golang.org/x/term` | BSD-3-Clause | `golang.org/x/term@v0.46.0` | https://pkg.go.dev/golang.org/x/term@v0.46.0?tab=licenses |
 | `golang.org/x/text` | BSD-3-Clause | `golang.org/x/text@v0.42.0` | https://pkg.go.dev/golang.org/x/text@v0.42.0?tab=licenses |
-| `golang.org/x/time/rate` | BSD-3-Clause | `golang.org/x/time@v0.15.0` | https://pkg.go.dev/golang.org/x/time@v0.15.0?tab=licenses |
+| `golang.org/x/time/rate` | BSD-3-Clause | `golang.org/x/time@v0.15.0` | https://pkg.go.dev/golang.org/x/time/rate@v0.15.0?tab=licenses |
 | `google.golang.org/protobuf` | BSD-3-Clause | `google.golang.org/protobuf@v1.36.12` | https://pkg.go.dev/google.golang.org/protobuf@v1.36.12?tab=licenses |
 | `gopkg.in/evanphx/json-patch.v4` | BSD-3-Clause | `gopkg.in/evanphx/json-patch.v4@v4.13.0` | https://pkg.go.dev/gopkg.in/evanphx/json-patch.v4@v4.13.0?tab=licenses |
 | `gopkg.in/inf.v0` | BSD-3-Clause | `gopkg.in/inf.v0@v0.9.1` | https://pkg.go.dev/gopkg.in/inf.v0@v0.9.1?tab=licenses |
 | `gopkg.in/yaml.v3` | MIT | `gopkg.in/yaml.v3@v3.0.1` | https://pkg.go.dev/gopkg.in/yaml.v3@v3.0.1?tab=licenses |
 | `k8s.io/api` | Apache-2.0 | `k8s.io/api@v0.37.0` | https://pkg.go.dev/k8s.io/api@v0.37.0?tab=licenses |
-| `k8s.io/apimachinery/pkg` | Apache-2.0 | `k8s.io/apimachinery@v0.37.0` | https://pkg.go.dev/k8s.io/apimachinery@v0.37.0?tab=licenses |
-| `k8s.io/apimachinery/third_party/forked/golang` | BSD-3-Clause | `k8s.io/apimachinery@v0.37.0` | https://pkg.go.dev/k8s.io/apimachinery@v0.37.0?tab=licenses |
+| `k8s.io/apimachinery/pkg` | Apache-2.0 | `k8s.io/apimachinery@v0.37.0` | https://pkg.go.dev/k8s.io/apimachinery/pkg@v0.37.0?tab=licenses |
+| `k8s.io/apimachinery/third_party/forked/golang` | BSD-3-Clause | `k8s.io/apimachinery@v0.37.0` | https://pkg.go.dev/k8s.io/apimachinery/third_party/forked/golang@v0.37.0?tab=licenses |
 | `k8s.io/client-go` | Apache-2.0 | `k8s.io/client-go@v0.37.0` | https://pkg.go.dev/k8s.io/client-go@v0.37.0?tab=licenses |
 | `k8s.io/klog/v2` | Apache-2.0 | `k8s.io/klog/v2@v2.140.0` | https://pkg.go.dev/k8s.io/klog/v2@v2.140.0?tab=licenses |
-| `k8s.io/kube-openapi/pkg` | Apache-2.0 | `k8s.io/kube-openapi@v0.0.0-20260721132016-d427ff9ee9ad` | https://pkg.go.dev/k8s.io/kube-openapi@v0.0.0-20260721132016-d427ff9ee9ad?tab=licenses |
-| `k8s.io/kube-openapi/pkg/internal/third_party/go-json-experiment/json` | BSD-3-Clause | `k8s.io/kube-openapi@v0.0.0-20260721132016-d427ff9ee9ad` | https://pkg.go.dev/k8s.io/kube-openapi@v0.0.0-20260721132016-d427ff9ee9ad?tab=licenses |
-| `k8s.io/kube-openapi/pkg/validation/spec` | Apache-2.0 | `k8s.io/kube-openapi@v0.0.0-20260721132016-d427ff9ee9ad` | https://pkg.go.dev/k8s.io/kube-openapi@v0.0.0-20260721132016-d427ff9ee9ad?tab=licenses |
+| `k8s.io/kube-openapi/pkg` | Apache-2.0 | `k8s.io/kube-openapi@v0.0.0-20260721132016-d427ff9ee9ad` | https://pkg.go.dev/k8s.io/kube-openapi/pkg@v0.0.0-20260721132016-d427ff9ee9ad?tab=licenses |
+| `k8s.io/kube-openapi/pkg/internal/third_party/go-json-experiment/json` | BSD-3-Clause | `k8s.io/kube-openapi@v0.0.0-20260721132016-d427ff9ee9ad` | https://pkg.go.dev/k8s.io/kube-openapi/pkg/internal/third_party/go-json-experiment/json@v0.0.0-20260721132016-d427ff9ee9ad?tab=licenses |
+| `k8s.io/kube-openapi/pkg/validation/spec` | Apache-2.0 | `k8s.io/kube-openapi@v0.0.0-20260721132016-d427ff9ee9ad` | https://pkg.go.dev/k8s.io/kube-openapi/pkg/validation/spec@v0.0.0-20260721132016-d427ff9ee9ad?tab=licenses |
 | `k8s.io/utils` | Apache-2.0 | `k8s.io/utils@v0.0.0-20260626114624-be93311217bd` | https://pkg.go.dev/k8s.io/utils@v0.0.0-20260626114624-be93311217bd?tab=licenses |
-| `k8s.io/utils/internal/third_party/forked/golang/net` | BSD-3-Clause | `k8s.io/utils@v0.0.0-20260626114624-be93311217bd` | https://pkg.go.dev/k8s.io/utils@v0.0.0-20260626114624-be93311217bd?tab=licenses |
+| `k8s.io/utils/internal/third_party/forked/golang/net` | BSD-3-Clause | `k8s.io/utils@v0.0.0-20260626114624-be93311217bd` | https://pkg.go.dev/k8s.io/utils/internal/third_party/forked/golang/net@v0.0.0-20260626114624-be93311217bd?tab=licenses |
 | `sigs.k8s.io/json` | Apache-2.0 / BSD-3-Clause | `sigs.k8s.io/json@v0.0.0-20250730193827-2d320260d730` | https://pkg.go.dev/sigs.k8s.io/json@v0.0.0-20250730193827-2d320260d730?tab=licenses |
 | `sigs.k8s.io/randfill` | Apache-2.0 | `sigs.k8s.io/randfill@v1.0.0` | https://pkg.go.dev/sigs.k8s.io/randfill@v1.0.0?tab=licenses |
 | `sigs.k8s.io/structured-merge-diff/v6` | Apache-2.0 | `sigs.k8s.io/structured-merge-diff/v6@v6.4.2` | https://pkg.go.dev/sigs.k8s.io/structured-merge-diff/v6@v6.4.2?tab=licenses |
