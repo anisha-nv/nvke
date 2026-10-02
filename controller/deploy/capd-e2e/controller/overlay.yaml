@@ -53,7 +53,7 @@ env:
 # used to read off disk and pass as a second --values file. It is static
 # configuration -- the same on every run -- so it belongs in the overlay: a
 # deploy path that does not carry it under-describes the deployment, and a
-# reader of the generated tree could not tell how CWE was configured.
+# reader of this directory could not tell how CWE was configured.
 #
 # The Tiltfile still reads that file (controller/Tiltfile:1018,1197), so this
 # is a second copy and the two can drift. Verified equivalent at the time of

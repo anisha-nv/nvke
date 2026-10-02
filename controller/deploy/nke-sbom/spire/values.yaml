@@ -32,7 +32,7 @@ global:
 # global.spire.recommendations.enabled is true), else the release namespace.
 # controller/Tiltfile installs spire with `--namespace spire-server`, so every
 # resource lands there; the overrides below reproduce that from inside a
-# release whose namespace is temporal. The namespace must already exist --
+# release whose namespace is spire-server. The namespace must already exist --
 # helm's --create-namespace only creates the release namespace.
 # spire-agent and spiffe-csi-driver deliberately carry NO namespaceOverride:
 # they fall through to spire-system under the recommended layout. Both need
@@ -52,10 +52,11 @@ spire-agent:
     name: spire-agent
   server:
     # Where the agent dials the server, which is a separate key from where
-    # the agent's own resources land. Without it the agent derives
-    # "<release>-server.<release namespace>" and dials into temporal, where
-    # no server Service exists -- the agent then fails attestation with
-    # "no children to pick from" and the DaemonSet never becomes Available.
+    # the agent's own resources land. Pinned to the namespace spire-server is
+    # installed in rather than derived as "<release>-server.<release
+    # namespace>": a wrong namespace has no server Service, and the agent then
+    # fails attestation with "no children to pick from" and the DaemonSet
+    # never becomes Available.
     namespaceOverride: spire-server
   workloadAttestors:
     k8s:
@@ -216,15 +217,3 @@ spiffe-oidc-discovery-provider:
       - "nke.site-controller.internal"
       - "localhost"
       - "127.0.0.1"
-
-# ─── cloud-workflow-engine ───────────────────────────────────────────────────
-# image.repository/tag are left at the chart's own defaults. The nvcr-published
-# chart already carries nvcr.io/j7sbcjl3qgta/nke-controller and the
-# svc-nke-ngc-imagepull secret -- chart-publish-nvcr.yml rewrites both at
-# package time -- so pulling the chart from nvcr gets a matching image without
-# any override here.
-#
-# An installer can still repoint them, which the CAPD e2e depends on: it builds
-# the controller at HEAD and loads it into kind, so it overrides repository and
-# tag and never pulls from a registry. Keeping cloud-workflow-engine a subchart
-# with live values is what makes that possible.

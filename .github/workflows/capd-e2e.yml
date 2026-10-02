@@ -61,16 +61,17 @@ on:
         default: true
       stack-chart:
         description: >-
-          Not supported: there is no umbrella chart, and the deploy path
-          refuses to run when this is set. Each component is its own release
-          from controller/deploy/<target>.
+          Not supported: there is no umbrella chart. Ignored on the Tilt path;
+          the deploy path refuses to run when this is set. Each component is
+          its own release from controller/deploy/<target>.
         required: false
         type: string
         default: ''
       stack-version:
         description: >-
           Not supported: component versions are pinned in each item's
-          release.yaml, and the deploy path refuses to run when this is set.
+          release.yaml. Ignored on the Tilt path; the deploy path refuses to
+          run when this is set.
         required: false
         type: string
         default: ''

@@ -13,6 +13,6 @@
 #
 # An installer can still repoint them, which the CAPD e2e depends on: it builds
 # the controller at HEAD and loads it into kind, so it overrides repository and
-# tag and never pulls from a registry. Keeping cloud-workflow-engine a subchart
-# with live values is what makes that possible.
+# tag and never pulls from a registry. Keeping these values live, not baked
+# into a package, is what makes that possible.
 namespaceOverride: cloud-workflow-engine

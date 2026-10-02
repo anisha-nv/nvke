@@ -46,11 +46,12 @@ The deploy paths under `controller/deploy/` (`capd-e2e`, `capnico-e2e`, `nke-sbo
 
 - cert-manager (`cert-manager`), installed before the deploy path runs
 - SPIRE server (`spire-server`) and agent (`spire-system`, DaemonSet/ServiceAccount `spire-agent`)
-- PostgreSQL (`postgres`, in-repo chart) — **not** CNPG
+- PostgreSQL (`postgres`; in-repo chart in the e2e paths, Bitnami in nke-sbom) — **not** CNPG
 - Temporal (`temporal`)
-- CWE (`cloud-workflow-engine`, the controller chart's default `nameOverride`, default **replicaCount 1**)
+- CWE (namespace `cloud-workflow-engine` via `namespaceOverride`, default **replicaCount 1**)
+- NKTP (nke-sbom only): monitoring CRDs, node-exporter, kube-state-metrics, metrics-server, and the chart's API server, etcd and CoreDNS monitors
 
-kube-prometheus-stack (`monitoring` — Prometheus, Grafana, node-exporter, kube-state-metrics) is the scrape stack these dashboards assume. No deploy path in this repository installs it, and it **does not** scrape kubeadm etcd over TLS unless configured to.
+kube-prometheus-stack (`monitoring` — Prometheus, Grafana, node-exporter, kube-state-metrics) is the scrape stack these dashboards assume. No deploy path in this repository installs it; nke-sbom gets node-exporter and kube-state-metrics from NKTP instead. kube-prometheus-stack **does not** scrape kubeadm etcd over TLS unless configured to.
 
 **Not** in any deploy path: SWE / `site-workflow-engine`, Longhorn, Teleport `tbot`, process-exporter, sdn-monitoring, Argo CD (deploy-repo only), CNPG (docs/overlays may use it; the deploy paths do not).
 

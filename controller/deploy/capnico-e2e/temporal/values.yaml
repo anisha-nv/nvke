@@ -7,12 +7,10 @@
 # ─── temporal ────────────────────────────────────────────────────────────────
 # Owns the release namespace (see the header). The persistence host below is an
 # FQDN into postgresql's namespace, so it stays correct across the split.
-# Pin the service names so temporal-frontend.temporal.svc.cluster.local stays
-# correct regardless of the release name. controller/Tiltfile and
-# release.yaml both install this chart as release "temporal"; any other
-# release name would rename every service and break the host
-# cloud-workflow-engine dials. Same reason postgresql carries fullnameOverride
-# above.
+# Pin the service names with fullnameOverride so
+# temporal-frontend.temporal.svc.cluster.local, the host cloud-workflow-engine
+# dials, does not depend on the release name. controller/Tiltfile and
+# release.yaml both install this chart as release "temporal".
 fullnameOverride: temporal
 server:
   configMapsToMount: sprig
@@ -60,6 +58,3 @@ schema:
     enabled: true
   update:
     enabled: true
-
-# ─── spire-crds ──────────────────────────────────────────────────────────────
-# Cluster-scoped CRDs only; namespace placement does not apply.

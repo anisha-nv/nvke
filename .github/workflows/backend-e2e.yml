@@ -115,16 +115,17 @@ on:
         default: false
       stack-chart:
         description: >-
-          Not supported: there is no umbrella chart, and the deploy path
-          refuses to run when this is set. Each component is its own release
-          from controller/deploy/<target>.
+          Not supported: there is no umbrella chart. Ignored on the Tilt path;
+          the deploy path refuses to run when this is set. Each component is
+          its own release from controller/deploy/<target>.
         required: false
         type: string
         default: ''
       stack-version:
         description: >-
           Not supported: component versions are pinned in each item's
-          release.yaml, and the deploy path refuses to run when this is set.
+          release.yaml. Ignored on the Tilt path; the deploy path refuses to
+          run when this is set.
         required: false
         type: string
         default: ''
@@ -154,8 +155,9 @@ jobs:
       NKE_E2E_REQUIRE_AUTHN: ${{ inputs.require-authn }}
       NKE_E2E_NKECTL_SMOKE: ${{ inputs.nkectl-smoke }}
       INSTALL_CNI_AFTER_INIT: ${{ inputs.install-cni-after-init }}
-      # Empty unless the caller selects the umbrella-chart deploy. backend-e2e.sh
-      # branches on NKE_E2E_STACK_CHART being non-empty; Tilt stays the default.
+      # backend-e2e.sh branches on NKE_E2E_USE_STACK; Tilt stays the default.
+      # deploy-sbom.sh refuses a non-empty NKE_E2E_STACK_CHART or
+      # NKE_E2E_STACK_VERSION.
       NKE_E2E_USE_STACK: ${{ inputs.use-nke-stack }}
       NKE_E2E_STACK_CHART: ${{ inputs.stack-chart }}
       NKE_E2E_STACK_VERSION: ${{ inputs.stack-version }}
