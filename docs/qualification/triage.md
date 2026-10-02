@@ -252,10 +252,11 @@ running 20 minutes with a quiet log has not failed.
 
 ## Capacity
 
-The site offers 8 `cpu.himem.t1` slots and a `full` run needs 2 of them: the
-site node and the tenant control plane. The tenant worker is an L40S, and the
-site has 8 of those sitting idle, so himem is the only contended type. A create
-that fails immediately with a capacity error, rather than timing out, means
+The Forge site offers 8 `cpu.himem.t1` slots and a `full` run needs 2 of them:
+the Site Controller and the tenant control plane. The tenant worker is an L40S,
+and the Forge site has 8 of those sitting idle, so himem is the only contended
+type. A create that fails immediately with a capacity error, rather than
+timing out, means
 the slots are taken — often by instances from an earlier run that are still
 `Terminating`, which is its own reason to care about the section above.
 

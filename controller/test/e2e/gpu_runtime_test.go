@@ -157,10 +157,10 @@ func validateGPURuntimePostCreate(test *tenantTest) {
 
 // installTenantRuntime runs the deploy path against the tenant.
 //
-// The same script and the same deploy-path format the site install uses, so
-// there is no second installer to keep correct. It runs here on the runner
-// rather than on a node because the tenant is what it targets, and the runner
-// is where a relayed kubeconfig can reach one.
+// The same script and the same deploy-path format the Site Controller install
+// uses, so there is no second installer to keep correct. It runs here on the
+// runner rather than on a node because the tenant is what it targets, and the
+// runner is where a relayed kubeconfig can reach one.
 func installTenantRuntime(ctx context.Context, test *tenantTest) {
 	GinkgoHelper()
 

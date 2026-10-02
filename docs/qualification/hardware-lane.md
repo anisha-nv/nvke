@@ -57,9 +57,9 @@ flowchart TB
 
     S1 --> S2K --> S2N --> S3 --> S4 --> S5
 
-    P["site-stage=provision"] -.->|stops here| S1
-    B["site-stage=bootstrap"] -.->|stops here| S2K
-    F["site-stage=full"] -.->|runs everything| S5
+    P["site-controller-stage=provision"] -.->|stops here| S1
+    B["site-controller-stage=bootstrap"] -.->|stops here| S2K
+    F["site-controller-stage=full"] -.->|runs everything| S5
 ```
 
 `bootstrap` is the one worth noticing: it stops after vanilla Kubernetes and

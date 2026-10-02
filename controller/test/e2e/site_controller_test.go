@@ -103,10 +103,11 @@ func init() {
 // image registries, chart repositories, and the release downloads cloud-init
 // and the StorageClass fetch.
 //
-// The last four are the GPU runtime's. They are checked here, from the site
-// node, rather than from a tenant node: both sit on the same subnet, so the
-// site proves the path for a fraction of the cost, and it proves it before
-// the run has spent an hour getting a GPU node to the point of needing it.
+// The last four are the GPU runtime's. They are checked here, from the Site
+// Controller, rather than from a tenant node: both sit on the same subnet, so
+// the Site Controller proves the path for a fraction of the cost, and it
+// proves it before the run has spent an hour getting a GPU node to the point
+// of needing it.
 //
 // archive.ubuntu.com is http, not https, because that is what apt will really
 // do. The driver container compiles against the running kernel -- there is a

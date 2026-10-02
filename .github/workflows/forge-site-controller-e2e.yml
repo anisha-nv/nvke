@@ -273,8 +273,8 @@ jobs:
 
       # helm and python3 are what build/use-nke-sbom.sh runs on. The tenant
       # GPU runtime is installed from this runner, because the runner is where
-      # a relayed tenant kubeconfig resolves; the site install needs neither
-      # here, since it runs the same script over SSH on the node itself.
+      # a relayed tenant kubeconfig resolves; the Site Controller install needs
+      # neither here, since it runs the same script over SSH on the node itself.
       # Only `full` creates a tenant, so the other stages skip all three steps.
       - name: Resolve the Helm version
         if: env.SITE_CONTROLLER_STAGE == 'full'
