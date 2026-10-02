@@ -116,7 +116,7 @@ for the e2e lanes -- that script is the reference for these derivations.
 | OIDC domains / IP SANs | VIP plus the kind gateway | the VIP |
 | discovery URL | `https://<VIP>:30443/.well-known/openid-configuration` | the same shape |
 | Postgres / Temporal password | generated per run | site secret, on BOTH Temporal datastores |
-| controller image | built per run | a released tag |
+| controller image | built per run | `image.repository` and `image.tag` passed with `--values-for controller=`; the image is already in the node's containerd. The render fails when the repository is missing |
 | profiles image | built per run | the site's fleet profile content |
 | telemetry backend | not installed | the bundled development backend, until the site passes its own with `--values-for nktp=` |
 | telemetry `k8s.cluster.name` | not installed | `ClusterName` in the BootstrapConfig passed with `--config`; required |
