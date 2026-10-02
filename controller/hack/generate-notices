@@ -238,11 +238,20 @@ notices-check` verifies it is up to date.
 |---------|---------|--------|--------|
 EOF
 
-    while IFS=$'\t' read -r pkg license url mod; do
+    while IFS=$'\t' read -r pkg license _ mod; do
         [[ -z "${pkg}" ]] && continue
+        # Source is built from module@version alone, not the URL go-licenses
+        # reports. That URL is discovered over the network -- for a /vN module,
+        # by a HEAD request to github.com that falls back to a different
+        # directory on any failure -- so it changed between runs on identical
+        # input, and some of what it produced was a dead link.
+        if [[ "${mod}" != *@* ]]; then
+            echo "ERROR: no module@version for '${pkg}' (got '${mod}') — cannot build its Source link." >&2
+            exit 1
+        fi
         # shellcheck disable=SC2016  # backticks are literal markdown, not command substitution.
-        printf '| `%s` | %s | `%s` | %s |\n' \
-            "${pkg}" "${license:-Unknown}" "${mod:-unknown}" "${url:-n/a}"
+        printf '| `%s` | %s | `%s` | https://pkg.go.dev/%s?tab=licenses |\n' \
+            "${pkg}" "${license:-Unknown}" "${mod}" "${mod}"
     done < "${INDEX_FILE}"
 
     cat <<'EOF'
@@ -251,7 +260,7 @@ EOF
 
 EOF
 
-    while IFS=$'\t' read -r pkg license url mod; do
+    while IFS=$'\t' read -r pkg license _ mod; do
         [[ -z "${pkg}" ]] && continue
         printf '### %s\n\n' "${pkg}"
         printf '_%s — %s_\n\n' "${license:-Unknown}" "${mod:-unknown}"
