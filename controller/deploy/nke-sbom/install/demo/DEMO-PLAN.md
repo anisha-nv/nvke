@@ -2,7 +2,7 @@
 
 Review copy of the demo plan. It shows the path the install scripts in this directory are built for: build from the clone, publish artifacts to a registry, write `nke-release.yaml`, install from that spec, create a tenant. Environment-specific glue (Colima, DinD hosts, nico-sim, the demo registry) lives outside this repository and is named in backticks. Published scripts are linked.
 
-Two kinds of scripts appear below. Published scripts live in the nke repo on PR 1160 and are linked to the branch; they are never copied here. Demo-only glue lives in [demo-artifacts/](demo-artifacts/). Part-1 host scripts live in [../demo/](../demo/).
+Published scripts are linked by repository path. Demo-only glue and the part-1 host scripts live outside the repository and appear in backticks.
 
 Published scripts:
 
@@ -99,7 +99,7 @@ Only if site-config keeps the VIP as the SPIRE address: `demo-net-up.sh` adds th
 
 ## Not yet true
 
-- Everything in `demo-artifacts/` is a draft validated offline only, except `demo-build-images.sh` and stage 2, which have run for real against the site cluster.
+- Every demo-only script is a draft validated offline only, except `demo-build-images.sh` and stage 2, which have run for real against the site cluster.
 - Step 10 provider CONFIGURED and step 13 tenant nodes Ready are unproven on DinD plus nico-containers.
 - Local helm is v3.18.6; the stages warn unless the pinned v4.2.4 is on PATH in the VM.
 - Consuming the release spec does not exist yet: W27 to W30. Until then the stages read images from site-config and the local runtime, and charts from their repositories.
