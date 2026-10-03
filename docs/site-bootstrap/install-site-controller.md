@@ -10,8 +10,11 @@ To run every stage in order:
 
 ```bash
 export SITE_KUBECONFIG=./my-site.kubeconfig
+export RELEASE_FILE=./nke-release.yaml
 controller/deploy/nke-sbom/install/install-all.sh
 ```
+
+`nke-release.yaml` names every artifact the install pulls, each as an OCI reference with its digest. It is converted from `nkdctl release verify` output or assembled locally; `controller/deploy/nke-sbom/install/nke-release.example.yaml` shows the shape. Setting `RELEASE_REF` to the Release reference instead runs the verification and the conversion for you. The install README has the details.
 
 `--from NAME` resumes at a stage. `--until NAME` stops after one. `NAME` is the script name without its number, for example `--from install-cluster-api`. The [install README](../../controller/deploy/nke-sbom/install/README.md) lists every environment variable the scripts read.
 
@@ -27,9 +30,8 @@ controller/deploy/nke-sbom/install/install-all.sh
 | `kubectl`, `clusterctl` `v1.12.3`, `python3` | `clusterctl` matches `CAPI_VERSION` in `make/tool-versions.mk` |
 | Root shell access to every node | Stage 3 imports images into each node's containerd |
 | `nkectl` | For the final stage. See [Download and Install nkectl](installation.md) |
-| Egress | `github.com`, `ghcr.io`, `registry-1.docker.io`, `docker.io`, `quay.io`, `registry.k8s.io`, `spiffe.github.io`, `go.temporal.io`, `open-telemetry.github.io`, `prometheus-community.github.io`, `kubernetes-sigs.github.io`. An air-gapped site needs a mirror |
-
-The last five hosts serve the NKTP chart's dependencies and images.
+| The release spec | `nke-release.yaml`, or the Release reference it is converted from. See the install README |
+| Egress | `github.com` from the runner; from the nodes, the registry hosts in `nke-release.yaml` and the image registries `ghcr.io`, `quay.io`, `registry.k8s.io` and `docker.io`. An air-gapped site points the spec at its own registry and mirrors the images |
 
 ## Artifacts
 
@@ -38,7 +40,8 @@ The last five hosts serve the NKTP chart's dependencies and images.
 | NKE controller image | Build | `make -C cli images` builds `controller/Dockerfile` for the host architecture. The Dockerfile is architecture-neutral |
 | Profiles image | Build | Start from `controller/profiles/example`. See [Supply OS and config profiles](../../controller/profiles/README.md) |
 | CAPNICo image | Pull | Public, multi-arch. The pinned manifest at `controller/deploy/nke-sbom/capnico/capnico.yaml` names it |
-| Postgres, Temporal, SPIRE, NKTP dependency charts and images | Pull | From the egress hosts above |
+| Postgres, Temporal, SPIRE charts | Pull | From the refs in `nke-release.yaml`, by digest |
+| NKTP dependency charts and the charts' images | Pull | From the registries above |
 | cert-manager, Cluster API | Pull | `clusterctl init` fetches them from `github.com` |
 | `nkectl` | Download or build | [Download and Install nkectl](installation.md) |
 
@@ -46,35 +49,28 @@ The cluster's nodes are the cluster's container hosts. An image imported into a 
 
 ## 1. Check Readiness
 
-Confirm the tools, the checkout, egress, the node count and the architecture before anything changes.
+Confirm the release spec, the tools, the checkout, egress, the node count and the architecture before anything changes.
 
 <!-- stage:00-check-readiness begin -->
 ```bash
-# Hosts the install pulls from, sorted by host. Stage 4 fetches Cluster API
-# and cert-manager from github.com. Stage 5 pulls charts and images from the
-# rest: Postgres and the Bitnami OCI chart from registry-1.docker.io (where
-# docker.io image pulls land), SPIRE from spiffe.github.io, Temporal from
-# go.temporal.io, CAPNICo from ghcr.io, the nktp chart dependencies from the
-# three repositories named in nktp/deploy/charts/nktp/Chart.yaml, and the
-# nktp images from docker.io, ghcr.io, quay.io and registry.k8s.io.
+# Hosts the runner reaches directly, sorted by host. Stage 4 fetches Cluster
+# API and cert-manager from github.com. The rest are the image registries the
+# charts' images and CAPNICo come from: ghcr.io, quay.io and registry.k8s.io.
+# Charts are pulled from the refs in nke-release.yaml, and stage 2 pre-pulls
+# every image from the nodes, so a miss here is a warning: the nodes may
+# reach a mirror the runner does not.
 EGRESS_URLS=(
   https://ghcr.io/v2/
   https://github.com/
-  https://go.temporal.io/helm-charts/index.yaml
-  https://kubernetes-sigs.github.io/metrics-server/index.yaml
-  https://open-telemetry.github.io/opentelemetry-helm-charts/index.yaml
-  https://prometheus-community.github.io/helm-charts/index.yaml
   https://quay.io/v2/
-  https://registry-1.docker.io/v2/
   https://registry.k8s.io/v2/
-  https://spiffe.github.io/helm-charts-hardened/index.yaml
 )
 ```
 <!-- stage:00-check-readiness end -->
 
 ### Check
 
-Every tool is on `PATH` at its pinned version. The checkout holds the controller and NKTP charts. Each egress host answers. The node count is odd. The CAPNICo image has a manifest for the node architecture. A warning names API authentication as off.
+The release spec parses; its lane and scope are printed, and a lane other than `pipeline-attested` is a warning. The checkout is at the tag the spec names, and every chart version in the spec equals the pin in `release.yaml` there. Each registry host in the spec answers from a node when `NODE_EXEC` says how to reach one. Every tool is on `PATH` at its pinned version. The checkout holds the controller and NKTP charts. An egress host the runner cannot reach is a warning, because the nodes do the pulling. The node count is odd. The CAPNICo image has a manifest for the node architecture. A warning names API authentication as off.
 
 ### If It Fails
 

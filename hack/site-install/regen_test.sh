@@ -66,10 +66,13 @@ cmp -s "${work}/doc1/guide.md" "${work}/doc2/guide.md" ||
 # 3. The stage runs in dry-run mode, prints argv only, and leaves no temp dir.
 mkdir -p "${work}/install"
 cp "${repo_root}/controller/deploy/nke-sbom/install/lib.sh" "${work}/install/"
+cp "${repo_root}/controller/deploy/nke-sbom/install/release_spec.py" "${work}/install/"
+# lib.sh needs a release spec; the example has the right shape.
+release_file="${repo_root}/controller/deploy/nke-sbom/install/nke-release.example.yaml"
 cp "${work}/out/05-install-site-controller.sh" "${work}/install/"
 : >"${work}/kubeconfig"
 if ! (cd "${work}" && DRY_RUN=1 SITE_KUBECONFIG="${work}/kubeconfig" OUT_DIR="${work}/site-out" \
-  SBOM_DIR="${repo_root}/controller/deploy" TMPDIR="${work}" \
+  SBOM_DIR="${repo_root}/controller/deploy" TMPDIR="${work}" RELEASE_FILE="${release_file}" \
   ./install/05-install-site-controller.sh run >"${work}/dry.out" 2>"${work}/dry.err"); then
   cat "${work}/dry.err" >&2
   error "dry-run of the generated stage failed"
@@ -84,7 +87,7 @@ grep -E '^helm .* upgrade --install nktp .*--values [^ ]*nke-sbom/nktp/values.ya
 mkdir -p "${work}/site-out"
 printf 'otel-lgtm:\n  enabled: false\n' >"${work}/site-out/nktp.yaml"
 if ! (cd "${work}" && DRY_RUN=1 SITE_KUBECONFIG="${work}/kubeconfig" OUT_DIR="${work}/site-out" \
-  SBOM_DIR="${repo_root}/controller/deploy" TMPDIR="${work}" \
+  SBOM_DIR="${repo_root}/controller/deploy" TMPDIR="${work}" RELEASE_FILE="${release_file}" \
   ./install/05-install-site-controller.sh run >"${work}/dry2.out" 2>"${work}/dry2.err"); then
   cat "${work}/dry2.err" >&2
   error "dry-run of the generated stage with nktp.yaml failed"

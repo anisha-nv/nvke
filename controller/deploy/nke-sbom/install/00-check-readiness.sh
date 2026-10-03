@@ -2,8 +2,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Report whether the runner, the repository checkout and the site cluster are
-# ready for the install. Changes nothing. `run` and `check` are the same.
+# Report whether the release spec, the runner, the repository checkout and
+# the site cluster are ready for the install. Changes nothing. `run` and
+# `check` are the same.
 #
 # Usage: ./00-check-readiness.sh [run|check]
 #
@@ -20,27 +21,121 @@ set -euo pipefail
 # Free space the runner needs for rendered values, diagnostics and image tarballs.
 MIN_DISK_GB="${MIN_DISK_GB:-10}"
 
+# Stage 2 pulls from the nodes, so the registry hosts in the release spec are
+# probed from a node when NODE_EXEC says how to reach one (see 02-stage-images.sh
+# for the convention). NODE is the node name NODE_EXEC is applied to; the
+# default is the first node of the cluster.
+NODE_EXEC="${NODE_EXEC:-}"
+NODE="${NODE:-}"
+
 # doc-begin
-# Hosts the install pulls from, sorted by host. Stage 4 fetches Cluster API
-# and cert-manager from github.com. Stage 5 pulls charts and images from the
-# rest: Postgres and the Bitnami OCI chart from registry-1.docker.io (where
-# docker.io image pulls land), SPIRE from spiffe.github.io, Temporal from
-# go.temporal.io, CAPNICo from ghcr.io, the nktp chart dependencies from the
-# three repositories named in nktp/deploy/charts/nktp/Chart.yaml, and the
-# nktp images from docker.io, ghcr.io, quay.io and registry.k8s.io.
+# Hosts the runner reaches directly, sorted by host. Stage 4 fetches Cluster
+# API and cert-manager from github.com. The rest are the image registries the
+# charts' images and CAPNICo come from: ghcr.io, quay.io and registry.k8s.io.
+# Charts are pulled from the refs in nke-release.yaml, and stage 2 pre-pulls
+# every image from the nodes, so a miss here is a warning: the nodes may
+# reach a mirror the runner does not.
 EGRESS_URLS=(
   https://ghcr.io/v2/
   https://github.com/
-  https://go.temporal.io/helm-charts/index.yaml
-  https://kubernetes-sigs.github.io/metrics-server/index.yaml
-  https://open-telemetry.github.io/opentelemetry-helm-charts/index.yaml
-  https://prometheus-community.github.io/helm-charts/index.yaml
   https://quay.io/v2/
-  https://registry-1.docker.io/v2/
   https://registry.k8s.io/v2/
-  https://spiffe.github.io/helm-charts-hardened/index.yaml
 )
 # doc-end
+
+# check_release parses the spec and reports its lane and scope. Everything
+# after this depends on the parse, so a parse error ends the release checks.
+check_release() {
+  local err
+  if ! err="$(python3 "${INSTALL_DIR}/release_spec.py" meta "${RELEASE_FILE}" 2>&1 >/dev/null)"; then
+    check_fail "release spec: ${err}"
+    return 1
+  fi
+  release_meta
+  check_pass "release spec: ${RELEASE_FILE}"
+  printf 'INFO  release: %s lane=%s scope=%s\n' "${RELEASE}" "${LANE}" "${SCOPE}"
+  if [[ "${LANE}" != "pipeline-attested" ]]; then
+    check_warn "release lane is ${LANE}, not pipeline-attested. The artifacts were not verified by nkdctl release verify"
+  fi
+}
+
+# check_release_source compares the checkout with source.tag and source.commit.
+# The chart versions below are read from this checkout, so it must be the one
+# the Release was pinned from. Under DRY_RUN this is a WARN: a dry run is a
+# rehearsal from any branch, not an install from the pinned tag.
+check_release_source() {
+  local tag head msg
+  tag="$(git -C "${SBOM_DIR}" describe --tags --exact-match 2>/dev/null || true)"
+  head="$(git -C "${SBOM_DIR}" rev-parse HEAD 2>/dev/null || true)"
+  if [[ -n "${SOURCE_COMMIT}" && "${head}" == "${SOURCE_COMMIT}" ]]; then
+    check_pass "release source: checkout is at ${SOURCE_COMMIT} (${SOURCE_TAG})"
+    return 0
+  fi
+  if [[ -z "${SOURCE_COMMIT}" && "${tag}" == "${SOURCE_TAG}" ]]; then
+    check_pass "release source: checkout is at tag ${SOURCE_TAG}"
+    return 0
+  fi
+  msg="release source: checkout ${SBOM_DIR} is at ${tag:-${head:-unknown}}, the spec pins ${SOURCE_TAG}${SOURCE_COMMIT:+ (${SOURCE_COMMIT})}. git -C \"${SBOM_DIR}\" checkout ${SOURCE_TAG}"
+  if [[ -n "${DRY_RUN}" ]]; then
+    check_warn "${msg} (DRY_RUN)"
+  else
+    check_fail "${msg}"
+  fi
+}
+
+# check_release_versions compares each chart item's version with the
+# chart.version pin in nke-sbom/<name>/release.yaml.
+check_release_versions() {
+  local name version pin file
+  while IFS=$'\t' read -r name _ _ version; do
+    file="${SBOM_DIR}/nke-sbom/${name}/release.yaml"
+    if [[ ! -f "${file}" ]]; then
+      check_fail "release versions: ${name} has no deploy item at ${file}"
+      continue
+    fi
+    pin="$(python3 "${SBOM_DIR}/../../build/nke-sbom-items.py" release "${file}" | awk -F$'\x1f' '{ print $3 }')"
+    if [[ "${pin}" == "${version}" ]]; then
+      check_pass "release versions: ${name} ${version} matches release.yaml"
+    else
+      check_fail "release versions: ${name} is ${version} in the spec and ${pin:-unknown} in ${file}"
+    fi
+  done < <(release_items chart)
+}
+
+# check_release_registries probes each distinct registry host in the refs
+# from a node, because stage 2 pulls there and only the node knows the site's
+# mirrors and plain-HTTP registries. A host with a port falls back to http.
+check_release_registries() {
+  local hosts host prefix url
+  hosts="$(release_items | cut -f3 | sed 's|/.*||' | sort -u)"
+  if [[ -z "${NODE_EXEC}" ]]; then
+    check_skip "release registries: NODE_EXEC is not set; stage 2 will find out when it pulls from the nodes (hosts: $(printf '%s ' ${hosts}))"
+    return 0
+  fi
+  if [[ -n "${DRY_RUN}" ]]; then
+    check_skip "release registries: $(printf '%s ' ${hosts})(DRY_RUN)"
+    return 0
+  fi
+  if [[ -z "${NODE}" ]]; then
+    NODE="$(kc get nodes -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  fi
+  if [[ -z "${NODE}" ]]; then
+    check_skip "release registries: no node to probe from; set NODE or SITE_KUBECONFIG"
+    return 0
+  fi
+  prefix="${NODE_EXEC//\{node\}/${NODE}}"
+  for host in ${hosts}; do
+    url="https://${host}/v2/"
+    # shellcheck disable=SC2086
+    if ${prefix} curl -sS --max-time 10 -o /dev/null "${url}" 2>/dev/null; then
+      check_pass "release registries: ${host} answers from ${NODE}"
+    elif [[ "${host}" == *:* ]] && ${prefix} curl -sS --max-time 10 -o /dev/null "http://${host}/v2/" 2>/dev/null; then
+      check_pass "release registries: ${host} answers plain http from ${NODE}"
+    else
+      check_fail "release registries: ${host} is not reachable from ${NODE} within 10s"
+    fi
+  done
+}
 
 check_tools() {
   local tool
@@ -127,7 +222,7 @@ check_egress() {
     elif curl -sSI --max-time 10 -o /dev/null "${url}" 2>/dev/null; then
       check_pass "egress: ${url}"
     else
-      check_fail "egress: ${url} not reachable within 10s"
+      check_warn "egress: ${url} not reachable from the runner within 10s; stage 2 pulls from the nodes"
     fi
   done
 }
@@ -174,6 +269,11 @@ check_disk() {
 }
 
 stage_check() {
+  if check_release; then
+    check_release_source
+    check_release_versions
+    check_release_registries
+  fi
   check_tools
   check_helm_version
   check_checkout

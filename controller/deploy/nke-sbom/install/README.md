@@ -9,7 +9,8 @@ The guide is the authority. When a script and the guide disagree, the guide wins
 All stages, in order. Each stage runs, then checks. The first failure stops the run:
 
 ```bash
-SITE_KUBECONFIG=~/.kube/site.kubeconfig ./install-all.sh
+export SITE_KUBECONFIG=~/.kube/site.kubeconfig RELEASE_FILE=./nke-release.yaml
+./install-all.sh
 ./install-all.sh --from install-cluster-api          # resume
 ./install-all.sh --until stage-images                # stop after a stage
 ./install-all.sh --dry-run                           # print kubectl and helm argv only
@@ -24,6 +25,21 @@ One stage:
 
 Stage names drop the numeric prefix: `--from install-cluster-api` selects `04-install-cluster-api.sh`.
 `install-all.sh` runs the stage scripts present in this directory.
+
+## Release spec
+
+Every stage except 3 reads `nke-release.yaml`, the one file that names every artifact the install pulls: the controller image, the four external charts and the `nkectl` binary, each as an OCI ref with its digest. Point `RELEASE_FILE` at one, or set `RELEASE_REF` to an NKD Release reference and `lib.sh` runs `nkdctl release verify --reference "$RELEASE_REF" $RELEASE_VERIFY_ARGS`, saves the description to `$OUT_DIR/nkd-release.json` and converts it with `nkd-release-to-nke.py` into `$OUT_DIR/nke-release.yaml`. The description carries no source pin and no chart versions, so that path needs `RELEASE_SOURCE_REPO`, `RELEASE_SOURCE_TAG` (`RELEASE_SOURCE_COMMIT` is optional) and `RELEASE_CHART_VERSIONS=postgresql=18.5.15,...`. The converted file is reused while its `release:` equals `RELEASE_REF`. [nke-release.example.yaml](nke-release.example.yaml) shows the shape with placeholder digests; the grammar is in the docstring of `release_spec.py`. Neither variable set is an error that names both.
+
+`release_spec.py` is the parser every stage calls. Its CLI is a contract:
+
+```bash
+release_spec.py meta   FILE                          # RELEASE=.. LANE=.. SCOPE=.. SOURCE_REPO=.. SOURCE_TAG=.. SOURCE_COMMIT=.., single-quoted, for eval
+release_spec.py items  FILE [--type image|chart|binary]  # name<TAB>type<TAB>ref<TAB>version per item, file order; version empty unless chart
+release_spec.py ref    FILE NAME                     # the item's ref; exit 1 when absent
+release_spec.py digest FILE NAME                     # sha256:<hex> from the ref
+```
+
+`lib.sh` wraps them as `release_meta` (evals the meta lines into the shell), `release_ref NAME` and `release_items [TYPE]`. Any line the parser does not recognise is an error naming the file and line. Stage 0 prints the lane and scope, warns when the lane is not `pipeline-attested`, checks the checkout is at `source.tag` (or `source.commit` when set), compares each chart item's `version` with `chart.version` in `nke-sbom/<name>/release.yaml`, and probes each registry host in the refs from a node when `NODE_EXEC` is set.
 
 ## Stage images
 
@@ -59,6 +75,11 @@ Stage 2 imports the controller and profiles images into every node's `k8s.io` co
 | Variable | Default | Purpose |
 |---|---|---|
 | `SITE_KUBECONFIG` | required | Site cluster kubeconfig. Every kubectl and helm call uses it |
+| `RELEASE_FILE` | required unless `RELEASE_REF` | Path of `nke-release.yaml`. Stage 3 does not read it |
+| `RELEASE_REF` | unset | OCI reference of an NKD Release. `nkdctl release verify` output is converted into `$OUT_DIR/nke-release.yaml` |
+| `RELEASE_VERIFY_ARGS` | unset | Extra arguments for `nkdctl release verify`: `--lane`, `--scope`, `--identity`, `--issuer`, `--cosign`, `--cosign-digest` |
+| `RELEASE_SOURCE_REPO`, `RELEASE_SOURCE_TAG`, `RELEASE_SOURCE_COMMIT` | required with `RELEASE_REF`; commit optional | The NKE repository, tag and commit the Release was pinned from. Written to `source:` |
+| `RELEASE_CHART_VERSIONS` | required with `RELEASE_REF` | `name=version,...` for every chart item, from `release.yaml` at the source tag |
 | `SITE_CONFIG` | `./site-config.yaml` | Site description. Holds credentials; keep it out of git |
 | `OUT_DIR` | `./.site-install` | Rendered values, generated password, diagnostics. Mode 0700. Ignored by git |
 | `SBOM_DIR` | `controller/deploy` | Deploy tree the stages install from |
@@ -67,7 +88,7 @@ Stage 2 imports the controller and profiles images into every node's `k8s.io` co
 | `DRY_RUN` | unset | Set to any value to print kubectl and helm argv instead of running them |
 | `IMAGES` | from `site.env` or `SITE_CONFIG` | Stage 2: controller and profiles images, space separated. `EXTRA_IMAGES` adds more |
 | `CAPNICO_IMAGE` | `image:` in `nke-sbom/capnico/capnico.yaml` | Stage 2 pulls and stages it; stage 5 repoints the manifest at it |
-| `NODE_EXEC` | unset (run on the node) | Stage 2: command prefix that reaches a node, with `{node}` in it. `NODE_MAP` renames nodes as `name=target` pairs |
+| `NODE_EXEC` | unset (run on the node) | Stage 2: command prefix that reaches a node, with `{node}` in it. `NODE_MAP` renames nodes as `name=target` pairs. Stage 0 probes the release registries through it from `NODE`, the first node by default; unset, that check is skipped |
 | `IMAGE_CLI` | `nerdctl` or `docker`, whichever holds the images | Stage 2: local runtime the images are exported from |
 
 On a failed `run`, `lib.sh` writes `$OUT_DIR/diagnostics/<stage>/` with nodes, pods, events, `helm list` and controller logs.
@@ -91,7 +112,7 @@ node IP. To require a token, follow
 
 ## Test
 
-The renderer has fixtures under `testdata/`. Python 3 only, no cluster:
+The renderer and the release spec parser have fixtures under `testdata/`. Python 3 only, no cluster:
 
 ```bash
 make test            # or ./testdata/test.sh

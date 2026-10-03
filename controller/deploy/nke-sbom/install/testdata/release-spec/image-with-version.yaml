@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: nke.nvidia.com/release/v1
+release: registry.example.test:5000/nke/releases@sha256:0000000000000000000000000000000000000000000000000000000000000000
+lane: local-assembly
+scope: none
+source:
+  repo: https://github.com/dsx-ai-factory/nke
+  tag: controller/v0.1.1
+  commit: 0123456789abcdef0123456789abcdef01234567
+items:
+  - {name: controller, type: image, ref: registry.example.test:5000/nke/cwe@sha256:0000000000000000000000000000000000000000000000000000000000000000, version: "0.1.1"}

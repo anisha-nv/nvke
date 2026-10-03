@@ -1,0 +1,17 @@
+{
+  "apiVersion": "nkd.dev/release/v3",
+  "subject": "ghcr.io/example/nke-recipes/releases@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "lane": "pipeline-attested",
+  "scope": "artifact-publication",
+  "contentSubject": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "policyDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "artifacts": [
+    {"name": "cwe", "kind": "oci", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "reference": "ghcr.io/example/nke-recipes/cwe@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "buildDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "components": ["cwe", "capnico"]},
+    {"name": "postgresql", "kind": "helm-oci", "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "reference": "ghcr.io/example/nke-recipes/postgresql@sha256:0000000000000000000000000000000000000000000000000000000000000000", "buildDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "components": ["postgresql"]},
+    {"name": "spire-crds", "kind": "helm-oci", "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "reference": "ghcr.io/example/nke-recipes/spire-crds@sha256:0000000000000000000000000000000000000000000000000000000000000000", "buildDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "components": ["spire-crds"]},
+    {"name": "temporal", "kind": "helm-oci", "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "buildDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "components": ["temporal"]},
+    {"name": "spire", "kind": "helm-oci", "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "reference": "ghcr.io/example/nke-recipes/spire@sha256:0000000000000000000000000000000000000000000000000000000000000000", "buildDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "components": ["spire"]},
+    {"name": "nke-os", "kind": "apt-repository", "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "reference": "ghcr.io/example/nke-recipes/nke-os@sha256:0000000000000000000000000000000000000000000000000000000000000000", "buildDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "components": []},
+    {"name": "nkectl", "kind": "executable", "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "reference": "ghcr.io/example/nke-recipes/nkectl@sha256:0000000000000000000000000000000000000000000000000000000000000000", "buildDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "components": ["nkectl"]}
+  ]
+}

@@ -12,7 +12,12 @@
 # Commands between `# doc-begin` and `# doc-end` are extracted verbatim into
 # the guide. Keep them copy-pasteable: use the lib variables, no functions.
 set -euo pipefail
+# shellcheck disable=SC2034 # read by lib.sh
 STAGE_NEEDS_KUBECONFIG=0
+# The renderer reads site-config.yaml only; the release spec is for the
+# stages that pull artifacts.
+# shellcheck disable=SC2034 # read by lib.sh
+STAGE_NEEDS_RELEASE=0
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 stage_run() {

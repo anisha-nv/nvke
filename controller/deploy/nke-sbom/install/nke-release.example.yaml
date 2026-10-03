@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# DEMO shape only. The digests are placeholders; replace every ref with the
+# one `nkdctl release verify` prints, or let lib.sh convert that output by
+# setting RELEASE_REF. Item names match the deploy items in nke-deploy.yaml;
+# `ref` carries the digest, so there is no separate checksum. release_spec.py
+# documents the grammar. `source` is the NKE checkout the Release was pinned
+# from: stage 0 checks the tree is at that tag, and compares each chart
+# version with release.yaml there. `commit` may be empty; it is compared
+# when set.
+apiVersion: nke.nvidia.com/release/v1
+release: ghcr.io/example/nke-recipes/releases@sha256:0000000000000000000000000000000000000000000000000000000000000000
+lane: pipeline-attested
+scope: artifact-publication
+source:
+  repo: https://github.com/dsx-ai-factory/nke
+  tag: controller/v0.1.1
+  commit: ""
+items:
+  - {name: controller, type: image,  ref: ghcr.io/example/nke-recipes/cwe@sha256:0000000000000000000000000000000000000000000000000000000000000000}
+  - {name: postgresql, type: chart,  ref: ghcr.io/example/nke-recipes/postgresql@sha256:0000000000000000000000000000000000000000000000000000000000000000, version: "18.5.15"}
+  - {name: spire-crds, type: chart,  ref: ghcr.io/example/nke-recipes/spire-crds@sha256:0000000000000000000000000000000000000000000000000000000000000000, version: "0.6.1"}
+  - {name: temporal,   type: chart,  ref: ghcr.io/example/nke-recipes/temporal@sha256:0000000000000000000000000000000000000000000000000000000000000000,   version: "0.74.0"}
+  - {name: spire,      type: chart,  ref: ghcr.io/example/nke-recipes/spire@sha256:0000000000000000000000000000000000000000000000000000000000000000,      version: "0.30.1"}
+  - {name: nkectl,     type: binary, ref: ghcr.io/example/nke-recipes/nkectl@sha256:0000000000000000000000000000000000000000000000000000000000000000}

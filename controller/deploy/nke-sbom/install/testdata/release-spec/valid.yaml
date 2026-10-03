@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: nke.nvidia.com/release/v1
+release: registry.example.test:5000/nke/releases@sha256:0000000000000000000000000000000000000000000000000000000000000000
+lane: local-assembly
+scope: none
+source:
+  repo: https://github.com/dsx-ai-factory/nke
+  tag: controller/v0.1.1
+  commit: 0123456789abcdef0123456789abcdef01234567
+items:
+  # A comment between items is fine.
+  - {name: controller, type: image,  ref: registry.example.test:5000/nke/cwe@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+  - {name: postgresql, type: chart,  ref: registry.example.test:5000/nke/postgresql@sha256:0000000000000000000000000000000000000000000000000000000000000000, version: "18.5.15"}
+  - {name: spire-crds, type: chart,  ref: registry.example.test:5000/nke/spire-crds@sha256:0000000000000000000000000000000000000000000000000000000000000000, version: "0.6.1"}
+  - {name: temporal,   type: chart,  ref: registry.example.test:5000/nke/temporal@sha256:0000000000000000000000000000000000000000000000000000000000000000,   version: "0.74.0"}
+  - {name: spire,      type: chart,  ref: registry.example.test:5000/nke/spire@sha256:0000000000000000000000000000000000000000000000000000000000000000,      version: "0.30.1"}
+  - {name: nkectl,     type: binary, ref: registry.example.test:5000/nke/nkectl@sha256:0000000000000000000000000000000000000000000000000000000000000000}

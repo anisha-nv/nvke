@@ -2,5 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 .PHONY: test
-test: ## Run the renderer tests in testdata/.
+test: ## Run the renderer and release spec tests in testdata/.
 	./testdata/test.sh
+	./testdata/test_release_spec.sh

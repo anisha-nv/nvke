@@ -137,6 +137,78 @@ require_cmd() {
   done
 }
 
+# The release spec names every artifact the install pulls: nke-release.yaml,
+# parsed by release_spec.py. Either RELEASE_FILE points at one, or RELEASE_REF
+# names an NKD Release and `nkdctl release verify` output is converted into
+# ${OUT_DIR}/nke-release.yaml. A stage that does not read the spec sets
+# STAGE_NEEDS_RELEASE=0 before sourcing this file.
+STAGE_NEEDS_RELEASE="${STAGE_NEEDS_RELEASE:-1}"
+RELEASE_FILE="${RELEASE_FILE:-}"
+RELEASE_REF="${RELEASE_REF:-}"
+RELEASE_VERIFY_ARGS="${RELEASE_VERIFY_ARGS:-}"
+RELEASE_SOURCE_REPO="${RELEASE_SOURCE_REPO:-}"
+RELEASE_SOURCE_TAG="${RELEASE_SOURCE_TAG:-}"
+RELEASE_SOURCE_COMMIT="${RELEASE_SOURCE_COMMIT:-}"
+RELEASE_CHART_VERSIONS="${RELEASE_CHART_VERSIONS:-}"
+
+# release_meta evaluates RELEASE, LANE, SCOPE, SOURCE_REPO, SOURCE_TAG and
+# SOURCE_COMMIT into the current shell.
+release_meta() {
+  eval "$(python3 "${INSTALL_DIR}/release_spec.py" meta "${RELEASE_FILE}")"
+}
+# release_ref NAME prints the item's ref. Fails when the item is absent.
+release_ref() { python3 "${INSTALL_DIR}/release_spec.py" ref "${RELEASE_FILE}" "$1"; }
+# release_items [TYPE] prints "name<TAB>type<TAB>ref<TAB>version" per item.
+release_items() {
+  if [[ $# -ge 1 && -n "$1" ]]; then
+    python3 "${INSTALL_DIR}/release_spec.py" items "${RELEASE_FILE}" --type "$1"
+  else
+    python3 "${INSTALL_DIR}/release_spec.py" items "${RELEASE_FILE}"
+  fi
+}
+
+# resolve_release_ref verifies RELEASE_REF and converts the description into
+# ${OUT_DIR}/nke-release.yaml. The converted file is reused while its
+# `release:` still equals RELEASE_REF, so every stage does not re-verify.
+# Runs for real under DRY_RUN: the stages need the file to print their argv.
+resolve_release_ref() {
+  local out="${OUT_DIR}/nke-release.yaml" json="${OUT_DIR}/nkd-release.json" current=""
+  if [[ -f "${out}" ]]; then
+    current="$(python3 "${INSTALL_DIR}/release_spec.py" meta "${out}" 2>/dev/null |
+      sed -n "s/^RELEASE='\(.*\)'$/\1/p")"
+    if [[ "${current}" == "${RELEASE_REF}" ]]; then
+      RELEASE_FILE="${out}"
+      return 0
+    fi
+  fi
+  [[ -n "${RELEASE_SOURCE_REPO}" && -n "${RELEASE_SOURCE_TAG}" ]] ||
+    die "RELEASE_REF needs the source pin the description lacks. Export RELEASE_SOURCE_REPO and RELEASE_SOURCE_TAG (RELEASE_SOURCE_COMMIT is optional) and RELEASE_CHART_VERSIONS=name=version,..."
+  require_cmd nkdctl python3
+  log "verifying release ${RELEASE_REF}"
+  # shellcheck disable=SC2086
+  nkdctl release verify --reference "${RELEASE_REF}" ${RELEASE_VERIFY_ARGS} >"${json}" ||
+    die "nkdctl release verify failed for ${RELEASE_REF}"
+  python3 "${INSTALL_DIR}/nkd-release-to-nke.py" "${json}" \
+    --source-repo "${RELEASE_SOURCE_REPO}" --source-tag "${RELEASE_SOURCE_TAG}" \
+    --source-commit "${RELEASE_SOURCE_COMMIT}" --versions "${RELEASE_CHART_VERSIONS}" >"${out}.tmp" ||
+    die "converting ${json} into ${out} failed"
+  mv "${out}.tmp" "${out}"
+  RELEASE_FILE="${out}"
+}
+
+if [[ "${STAGE_NEEDS_RELEASE}" != "0" ]]; then
+  if [[ -z "${RELEASE_FILE}" && -z "${RELEASE_REF}" ]]; then
+    die "neither RELEASE_FILE nor RELEASE_REF is set. Export RELEASE_FILE=<path to nke-release.yaml> or RELEASE_REF=<OCI reference of an NKD Release>."
+  fi
+  if [[ -z "${RELEASE_FILE}" ]]; then
+    resolve_release_ref
+  fi
+  [[ -f "${RELEASE_FILE}" ]] ||
+    die "RELEASE_FILE=${RELEASE_FILE} does not exist."
+  RELEASE_FILE="$(abs_path "${RELEASE_FILE}")"
+fi
+export RELEASE_FILE RELEASE_REF RELEASE_VERIFY_ARGS
+
 # One line per finding. Only check_fail counts towards the exit code: WARN
 # is advice, SKIP marks a check that needs a cluster or the network and was
 # not run, as under DRY_RUN.
