@@ -29,6 +29,10 @@
 #   controller/deploy/...                   -> "${SBOM_DIR}/..."
 #   HELM_REPOSITORY_*=<mktemp>/...          -> "${HELM_TMP}/...", created once, removed by a trap
 #   template item apply lines               -> render at apply time into ${RENDER_TMP}, apply, remove
+#   helm <chart> --repo <url> --version <v>   -> the chart item of the release spec, pulled by digest
+#   helm oci://<repository>/<chart> --version  with oras into ${OUT_DIR}/charts/<item>/, its sha256
+#                                              checked against the chart layer of the manifest the
+#                                              ref names, then installed from the file
 #   helm items deploy-sbom.sh gives --values-for -> --values "${OUT_DIR}/<item>.yaml" appended after
 #                                              the item's own values files, so the site file wins
 #   the nktp item                           -> the same, but only when "${OUT_DIR}/nktp.yaml" exists
@@ -261,6 +265,11 @@ item=""
 item_type=""
 in_template=0
 releases=""
+chart_releases=""
+rel_chart=""
+rel_ver=""
+rel_name=""
+rel_ns=""
 cwe_ns=""
 pending_blank=0
 
@@ -285,6 +294,12 @@ while IFS= read -r line; do
       rel="${rest#* -> release }"
       rel_name="${rel%% *}"
       rel_ns="${rel##* in }"
+      rel_chart="${rel#* (}"
+      rel_chart="${rel_chart%% *}"
+      rel_ver="${rel#* (}"
+      rel_ver="${rel_ver#* }"
+      rel_ver="${rel_ver%%)*}"
+      [[ -n "${rel_chart}" && -n "${rel_ver}" ]] || die "cannot parse chart and version: ${rest}"
       releases="${releases}${rel_name} ${rel_ns}"$'\n'
       [[ "${rest%% *}" != "controller" ]] || cwe_ns="${rel_ns}"
       in_template=0
@@ -370,7 +385,40 @@ while IFS= read -r line; do
     rest="${line#helm }"
     rest="${rest/ --kubeconfig \/dev\/null/}"
     rest="${rest/--timeout 15m/${phase_timeout}}"
-    if optional_values_item "${item}"; then
+    set -- ${rest}
+    [[ "$3" == "${rel_name}" ]] || die "release ${rel_name} announced, helm line installs $3: ${line}"
+    chart_arg="$4"
+    if [[ "${chart_arg}" != "${sbom_arg}/"* ]]; then
+      # A published chart. The executor's reference, `oci://<repository>/<chart>`
+      # or `<chart> --repo <url>`, plus `--version <v>`, is replaced by the
+      # release spec's item of the same name, pulled by digest.
+      tail="${rest#upgrade --install ${rel_name} ${chart_arg} }"
+      [[ "${chart_arg}" == oci://* || "${tail}" == "--repo "* ]] ||
+        die "chart ${chart_arg} of ${item} is neither a path nor a repository reference: ${line}"
+      [[ "${tail}" != "--repo "* ]] || tail="${tail#--repo * }"
+      [[ "${tail}" == "--version ${rel_ver} --namespace "* ]] ||
+        die "unexpected argv after the chart reference of ${item}: ${tail}"
+      tail="${tail#--version ${rel_ver} }"
+      chart_releases="${chart_releases}${item} ${rel_name} ${rel_ns} ${rel_chart}"$'\n'
+      emit "  # The chart is the ${item} item of the release spec, pulled by digest. The ref"
+      emit "  # names a manifest with one chart layer: its title is the file name, its"
+      emit "  # digest the sha256 of the file. The pull is skipped when the file is there."
+      emit "  chart_ref=\"\$(release_ref ${item})\" || die \"no chart item ${item} in \${RELEASE_FILE}\""
+      emit "  chart_dir=\"\${OUT_DIR}/charts/${item}\""
+      emit "  layer=\"\$(chart_layer \"\${chart_ref}\" ${rel_chart}-${rel_ver}.tgz)\" || die \"cannot read the chart layer of \${chart_ref}\""
+      emit "  chart_digest=\"\${layer%% *}\""
+      emit "  chart_file=\"\${chart_dir}/\${layer#* }\""
+      emit "  if [[ \"\$(sha256_file \"\${chart_file}\")\" != \"\${chart_digest}\" ]]; then"
+      emit "    run oras pull \"\${chart_ref}\" -o \"\${chart_dir}\""
+      emit "  fi"
+      emit "  chart_have=\"\$(sha256_file \"\${chart_file}\")\""
+      emit "  if [[ -n \"\${DRY_RUN}\" ]]; then"
+      emit "    check_skip \"chart ${item}: layer digest check needs the pulled file (DRY_RUN)\""
+      emit "  elif [[ \"\${chart_have}\" != \"\${chart_digest}\" ]]; then"
+      emit "    die \"chart ${item}: \${chart_file} is \${chart_have:-missing}; the spec's chart layer is \${chart_digest}\""
+      emit "  fi"
+      emit "  hl upgrade --install ${rel_name} \"\${chart_file}\" $(paths "${tail}" 1)$(site_values_arg "${item}")"
+    elif optional_values_item "${item}"; then
       # The array is empty when the file is absent. \${arr[@]+"\${arr[@]}"}
       # expands an empty array under set -u on bash 3.2, where "\${arr[@]}"
       # alone is an unbound variable.
@@ -396,6 +444,7 @@ done <"${raw}"
 
 [[ "${items}" -gt 0 ]] || die "dry-run produced no items"
 [[ -n "${releases}" ]] || die "dry-run produced no helm releases"
+[[ -n "${chart_releases}" ]] || die "dry-run produced no published chart"
 [[ -n "${cwe_ns}" ]] || die "no controller release in the dry-run"
 
 for leak in "/dev/null " "${tmp_base}" "${sbom_arg}/"; do
@@ -420,7 +469,10 @@ gen_stage="${work}/gen/${stage_file}"
 # Code generated by ${here}/regen.sh. DO NOT EDIT.
 #
 # Install the site controller: apply the ${items} items of ${sbom_arg}/${target}
-# in list order, then check the provider and the management plane.
+# in list order, then check the provider and the management plane. The
+# published charts come from the release spec: each is pulled by digest with
+# oras into \${OUT_DIR}/charts/<item>/ and its sha256 checked against the chart
+# layer of the manifest before helm installs it from the file.
 #
 # Usage: ./${stage_file} [run|check]
 #
@@ -449,7 +501,7 @@ cleanup_tmp() {
 }
 
 stage_run() {
-  require_cmd kubectl helm python3
+  require_cmd kubectl helm python3 oras
   for f in bootstrap-config.json$(for item in ${site_values_items}; do printf ' %s.yaml' "${item}"; done); do
     [[ -n "\${DRY_RUN}" || -f "\${OUT_DIR}/\${f}" ]] ||
       die "\${OUT_DIR}/\${f} not found. Run 03-describe-site.sh first."
@@ -511,8 +563,8 @@ EOF
   # Every release must be deployed. A failed release recovers by rerunning this
   # stage. A pending release needs \`helm uninstall\` first.
   releases="\$(hl list -A -o json 2>/dev/null |
-    python3 -c 'import json, sys; [print(r["name"], r["namespace"], r["status"]) for r in json.load(sys.stdin)]' 2>/dev/null || true)"
-  while read -r name ns status; do
+    python3 -c 'import json, sys; [print(r["name"], r["namespace"], r["status"], r["chart"]) for r in json.load(sys.stdin)]' 2>/dev/null || true)"
+  while read -r name ns status _; do
     [[ -n "\${name}" ]] || continue
     case "\${status}" in
     deployed) check_pass "helm release \${ns}/\${name} deployed" ;;
@@ -534,6 +586,25 @@ EOF
       check_fail "helm release \$2/\$1 missing: rerun this stage"
     fi
   done
+  # Each published chart release runs the chart version the spec names.
+  while IFS=\$'\t' read -r item _ _ version; do
+    [[ -n "\${item}" ]] || continue
+    case "\${item}" in
+EOF
+  while read -r citem crel cns cchart; do
+    [[ -n "${citem}" ]] || continue
+    printf '    %s) rel="%s"; ns="%s"; chart="%s" ;;\n' "${citem}" "${crel}" "${cns}" "${cchart}"
+  done <<<"${chart_releases}"
+  cat <<EOF
+    *) check_warn "chart item \${item} in the spec is not a release this stage installs"; continue ;;
+    esac
+    have="\$(printf '%s\n' "\${releases}" | awk -v n="\${rel}" -v s="\${ns}" '\$1 == n && \$2 == s { print \$4; exit }')"
+    if [[ "\${have}" == "\${chart}-\${version}" ]]; then
+      check_pass "helm release \${ns}/\${rel} runs chart \${have}"
+    else
+      check_fail "helm release \${ns}/\${rel} runs chart \${have:-none}; the spec names \${chart}-\${version}"
+    fi
+  done < <(release_items chart)
   if [[ "\$(kc -n ${cwe_ns} get deployment ${cwe_deploy} -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null)" == "True" ]]; then
     check_pass "Deployment ${cwe_ns}/${cwe_deploy} Available"
   else

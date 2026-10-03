@@ -139,7 +139,7 @@ check_release_registries() {
 
 check_tools() {
   local tool
-  for tool in kubectl helm clusterctl python3 curl; do
+  for tool in kubectl helm clusterctl python3 curl oras; do
     if command -v "${tool}" >/dev/null 2>&1; then
       check_pass "tool ${tool}: $(command -v "${tool}")"
     else

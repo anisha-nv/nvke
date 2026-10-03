@@ -63,7 +63,23 @@ grep -q 'WARN: marker for 99-no-such-stage' "${work}/doc1.err" ||
 cmp -s "${work}/doc1/guide.md" "${work}/doc2/guide.md" ||
   error "guide extraction is not idempotent"
 
-# 3. The stage runs in dry-run mode, prints argv only, and leaves no temp dir.
+# 3. The published charts come from the release spec: one oras pull per item
+# into its own directory, and no repository reference at install time.
+for item in postgresql spire-crds temporal spire; do
+  grep -qF "chart_dir=\"\${OUT_DIR}/charts/${item}\"" "${work}/out/05-install-site-controller.sh" ||
+    error "generated stage does not pull ${item} into \${OUT_DIR}/charts/${item}"
+done
+if [[ "$(grep -cF 'run oras pull "${chart_ref}" -o "${chart_dir}"' "${work}/out/05-install-site-controller.sh")" -ne 4 ]]; then
+  error "generated stage does not hold four oras pull lines"
+fi
+grep -E 'hl upgrade --install .* (--repo |oci://)' "${work}/out/05-install-site-controller.sh" >/dev/null &&
+  error "generated stage still installs a chart from a repository reference"
+grep -q 'hl upgrade --install controller "${SBOM_DIR}/' "${work}/out/05-install-site-controller.sh" ||
+  error "generated stage does not install the controller chart from the tree"
+grep -q 'hl upgrade --install nktp "${SBOM_DIR}/' "${work}/out/05-install-site-controller.sh" ||
+  error "generated stage does not install the nktp chart from the tree"
+
+# 4. The stage runs in dry-run mode, prints argv only, and leaves no temp dir.
 mkdir -p "${work}/install"
 cp "${repo_root}/controller/deploy/nke-sbom/install/lib.sh" "${work}/install/"
 cp "${repo_root}/controller/deploy/nke-sbom/install/release_spec.py" "${work}/install/"
@@ -81,6 +97,16 @@ grep -q '^helm --kubeconfig .* upgrade --install controller ' "${work}/dry.out" 
   error "dry-run did not print the controller release"
 grep -q '/dev/null' "${work}/dry.out" &&
   error "dry-run argv still names /dev/null"
+if [[ "$(grep -c '^oras pull ghcr.io/example/nke-recipes/[a-z-]*@sha256:[0-9a-f]* -o ' "${work}/dry.out")" -ne 4 ]]; then
+  error "dry-run did not print four oras pull lines from the release spec"
+fi
+grep -E '^helm .* upgrade --install temporal [^ ]*/site-out/charts/temporal/temporal-0.74.0.tgz --namespace temporal ' "${work}/dry.out" >/dev/null ||
+  error "dry-run does not install temporal from the pulled chart file"
+grep -E '^helm .* upgrade --install postgres [^ ]*/site-out/charts/postgresql/postgresql-18.5.15.tgz --namespace postgres ' "${work}/dry.out" >/dev/null ||
+  error "dry-run does not install postgres from the pulled chart file"
+if [[ "$(grep -c '^SKIP  chart .*(DRY_RUN)$' "${work}/dry.out")" -ne 4 ]]; then
+  error "dry-run did not skip the four digest checks with a SKIP line"
+fi
 # The nktp release takes ${OUT_DIR}/nktp.yaml only when stage 3 wrote it.
 grep -E '^helm .* upgrade --install nktp .*--values [^ ]*nke-sbom/nktp/values.yaml *$' "${work}/dry.out" >/dev/null ||
   error "dry-run without nktp.yaml did not end the nktp release at the committed values"

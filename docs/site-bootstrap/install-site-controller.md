@@ -271,7 +271,7 @@ A hang on cert-manager means the control-plane taint is still present. Run stage
 
 Apply the deploy items in list order: base configuration, SPIRE node ports, CAPNICo, then the NKTP, Postgres, SPIRE, Temporal and controller releases.
 
-The four external charts, Postgres, SPIRE CRDs, Temporal and SPIRE, are pulled from their refs in the spec with `oras` into `OUT_DIR/charts/<name>-<version>.tgz`. The chart layer digest is checked against the ref before the release is installed from the package. The controller and NKTP charts are installed from the tree.
+The four external charts, Postgres, SPIRE CRDs, Temporal and SPIRE, are pulled from their refs in the spec with `oras` into `OUT_DIR/charts/<item>/<chart>-<version>.tgz`. The ref names a manifest; the sha256 of the pulled file must equal the digest of the chart layer in that manifest before the release is installed from the file. The controller and NKTP charts are installed from the tree.
 
 ### Choices
 
@@ -337,17 +337,68 @@ hl upgrade --install nktp "${SBOM_DIR}/nke-sbom/../../../nktp/deploy/charts/nktp
 # item postgresql (helm)
 
 # postgresql -> release postgres (postgresql 18.5.15) in postgres
-hl upgrade --install postgres oci://registry-1.docker.io/bitnamicharts/postgresql --version 18.5.15 --namespace postgres --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/postgresql/values.yaml" --values "${OUT_DIR}/postgresql.yaml"
+# The chart is the postgresql item of the release spec, pulled by digest. The ref
+# names a manifest with one chart layer: its title is the file name, its
+# digest the sha256 of the file. The pull is skipped when the file is there.
+chart_ref="$(release_ref postgresql)" || die "no chart item postgresql in ${RELEASE_FILE}"
+chart_dir="${OUT_DIR}/charts/postgresql"
+layer="$(chart_layer "${chart_ref}" postgresql-18.5.15.tgz)" || die "cannot read the chart layer of ${chart_ref}"
+chart_digest="${layer%% *}"
+chart_file="${chart_dir}/${layer#* }"
+if [[ "$(sha256_file "${chart_file}")" != "${chart_digest}" ]]; then
+  run oras pull "${chart_ref}" -o "${chart_dir}"
+fi
+chart_have="$(sha256_file "${chart_file}")"
+if [[ -n "${DRY_RUN}" ]]; then
+  check_skip "chart postgresql: layer digest check needs the pulled file (DRY_RUN)"
+elif [[ "${chart_have}" != "${chart_digest}" ]]; then
+  die "chart postgresql: ${chart_file} is ${chart_have:-missing}; the spec's chart layer is ${chart_digest}"
+fi
+hl upgrade --install postgres "${chart_file}" --namespace postgres --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/postgresql/values.yaml" --values "${OUT_DIR}/postgresql.yaml"
 
 # item spire-crds (helm)
 
 # spire-crds -> release spire-crds (spire-crds 0.6.1) in spire-server
-hl upgrade --install spire-crds spire-crds --repo https://spiffe.github.io/helm-charts-hardened/ --version 0.6.1 --namespace spire-server --wait --timeout "${PHASE_TIMEOUT:-15m}"
+# The chart is the spire-crds item of the release spec, pulled by digest. The ref
+# names a manifest with one chart layer: its title is the file name, its
+# digest the sha256 of the file. The pull is skipped when the file is there.
+chart_ref="$(release_ref spire-crds)" || die "no chart item spire-crds in ${RELEASE_FILE}"
+chart_dir="${OUT_DIR}/charts/spire-crds"
+layer="$(chart_layer "${chart_ref}" spire-crds-0.6.1.tgz)" || die "cannot read the chart layer of ${chart_ref}"
+chart_digest="${layer%% *}"
+chart_file="${chart_dir}/${layer#* }"
+if [[ "$(sha256_file "${chart_file}")" != "${chart_digest}" ]]; then
+  run oras pull "${chart_ref}" -o "${chart_dir}"
+fi
+chart_have="$(sha256_file "${chart_file}")"
+if [[ -n "${DRY_RUN}" ]]; then
+  check_skip "chart spire-crds: layer digest check needs the pulled file (DRY_RUN)"
+elif [[ "${chart_have}" != "${chart_digest}" ]]; then
+  die "chart spire-crds: ${chart_file} is ${chart_have:-missing}; the spec's chart layer is ${chart_digest}"
+fi
+hl upgrade --install spire-crds "${chart_file}" --namespace spire-server --wait --timeout "${PHASE_TIMEOUT:-15m}"
 
 # item temporal (helm)
 
 # temporal -> release temporal (temporal 0.74.0) in temporal
-hl upgrade --install temporal temporal --repo https://go.temporal.io/helm-charts --version 0.74.0 --namespace temporal --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/temporal/values.yaml" --values "${SBOM_DIR}/nke-sbom/temporal/overlay.yaml" --values "${OUT_DIR}/temporal.yaml"
+# The chart is the temporal item of the release spec, pulled by digest. The ref
+# names a manifest with one chart layer: its title is the file name, its
+# digest the sha256 of the file. The pull is skipped when the file is there.
+chart_ref="$(release_ref temporal)" || die "no chart item temporal in ${RELEASE_FILE}"
+chart_dir="${OUT_DIR}/charts/temporal"
+layer="$(chart_layer "${chart_ref}" temporal-0.74.0.tgz)" || die "cannot read the chart layer of ${chart_ref}"
+chart_digest="${layer%% *}"
+chart_file="${chart_dir}/${layer#* }"
+if [[ "$(sha256_file "${chart_file}")" != "${chart_digest}" ]]; then
+  run oras pull "${chart_ref}" -o "${chart_dir}"
+fi
+chart_have="$(sha256_file "${chart_file}")"
+if [[ -n "${DRY_RUN}" ]]; then
+  check_skip "chart temporal: layer digest check needs the pulled file (DRY_RUN)"
+elif [[ "${chart_have}" != "${chart_digest}" ]]; then
+  die "chart temporal: ${chart_file} is ${chart_have:-missing}; the spec's chart layer is ${chart_digest}"
+fi
+hl upgrade --install temporal "${chart_file}" --namespace temporal --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/temporal/values.yaml" --values "${SBOM_DIR}/nke-sbom/temporal/overlay.yaml" --values "${OUT_DIR}/temporal.yaml"
 
 # item spire (helm)
 
@@ -359,7 +410,24 @@ at is the nke-base-config item, from ${SBOM_DIR}/k8s/oidc-upstream-ca.yaml."
 kc -n spire-server wait --for=condition=Ready certificate/oidc-provider-upstream-ca --timeout="${REQUIRE_TIMEOUT:-180s}"
 
 # spire -> release spire (spire 0.30.1) in spire-server
-hl upgrade --install spire spire --repo https://spiffe.github.io/helm-charts-hardened/ --version 0.30.1 --namespace spire-server --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/spire/values.yaml" --values "${SBOM_DIR}/nke-sbom/spire/overlay.yaml" --values "${OUT_DIR}/spire.yaml"
+# The chart is the spire item of the release spec, pulled by digest. The ref
+# names a manifest with one chart layer: its title is the file name, its
+# digest the sha256 of the file. The pull is skipped when the file is there.
+chart_ref="$(release_ref spire)" || die "no chart item spire in ${RELEASE_FILE}"
+chart_dir="${OUT_DIR}/charts/spire"
+layer="$(chart_layer "${chart_ref}" spire-0.30.1.tgz)" || die "cannot read the chart layer of ${chart_ref}"
+chart_digest="${layer%% *}"
+chart_file="${chart_dir}/${layer#* }"
+if [[ "$(sha256_file "${chart_file}")" != "${chart_digest}" ]]; then
+  run oras pull "${chart_ref}" -o "${chart_dir}"
+fi
+chart_have="$(sha256_file "${chart_file}")"
+if [[ -n "${DRY_RUN}" ]]; then
+  check_skip "chart spire: layer digest check needs the pulled file (DRY_RUN)"
+elif [[ "${chart_have}" != "${chart_digest}" ]]; then
+  die "chart spire: ${chart_file} is ${chart_have:-missing}; the spec's chart layer is ${chart_digest}"
+fi
+hl upgrade --install spire "${chart_file}" --namespace spire-server --wait --timeout "${PHASE_TIMEOUT:-15m}" --values "${SBOM_DIR}/nke-sbom/spire/values.yaml" --values "${SBOM_DIR}/nke-sbom/spire/overlay.yaml" --values "${OUT_DIR}/spire.yaml"
 
 # item controller (helm)
 

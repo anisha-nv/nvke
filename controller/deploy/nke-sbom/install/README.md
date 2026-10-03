@@ -70,6 +70,10 @@ SITE_CONFIG=./site-config.yaml ./03-describe-site.sh run
 
 Every artifact comes from the OCI ref `nke-release.yaml` names, by digest. `RELEASE_FILE` points at the file; `RELEASE_REF` names an NKD Release instead, and stage 0 runs `nkdctl release verify` and converts the output with `nkd-release-to-nke.py` into `$OUT_DIR/nke-release.yaml`. Stage 0 prints the lane and scope, checks the checkout is at `source.tag`, checks every chart item's `version` against its `release.yaml`, and checks the ref hosts are reachable from a node. Stage 3 defaults `images.controller` to the `controller` ref and writes `images.txt` and `version-bom.cdx.json`. Stage 5 pulls the four external charts with `oras` into `$OUT_DIR/charts/` and checks the layer digest before installing. The guide's "Release Spec" section has the file.
 
+## Charts come from the spec
+
+Stage 5 installs the four published charts, Postgres, SPIRE CRDs, Temporal and SPIRE, from the release spec and not from their upstream repositories. For each chart item it reads the ref with `release_ref`, fetches the manifest the ref names with `oras manifest fetch` and takes the chart layer from it: the one with the Helm chart content media type, else the first. The ref pins the manifest digest; the layer digest is the sha256 of the unchanged `.tgz`, and the layer's `org.opencontainers.image.title` is the file name. `oras pull "$ref" -o "$OUT_DIR/charts/<item>"` writes that file, the stage computes its sha256 and compares it with the layer digest, and a mismatch stops the run naming the item, the file's digest and the layer digest. Nothing is installed for that item. A file already there with the right digest is not pulled again. `helm upgrade --install` then takes the file, with the same namespace, wait, timeout and values arguments as before. The controller and NKTP charts stay in the tree. `oras` must be on `PATH` at the version `make/tool-versions.mk` pins; stage 0 checks for it with the other tools. Under `DRY_RUN` the `oras` argv is printed and the digest check is reported as `SKIP`.
+
 ## Environment
 
 | Variable | Default | Purpose |

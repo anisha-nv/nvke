@@ -167,6 +167,36 @@ release_items() {
   fi
 }
 
+# sha256_file FILE prints sha256:<hex> of FILE, or nothing when FILE is absent.
+sha256_file() {
+  [[ -f "$1" ]] || return 0
+  python3 -c 'import hashlib, sys; print("sha256:" + hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$1"
+}
+
+# chart_layer REF FALLBACK prints "<digest> <file>" for the chart archive of
+# the Helm OCI artifact REF names. REF carries the manifest digest, so the
+# manifest is fetched and the chart layer read from it: the layer with the
+# Helm chart content media type, else the first. Its digest is the sha256 of
+# the unchanged .tgz; its org.opencontainers.image.title is the file name
+# `oras pull` writes, FALLBACK when the layer has none. Under DRY_RUN nothing
+# is fetched: the argv is printed and a placeholder digest with FALLBACK.
+chart_layer() {
+  local ref="$1" fallback="$2"
+  if [[ -n "${DRY_RUN}" ]]; then
+    run oras manifest fetch "${ref}" >&2
+    printf 'sha256:dry-run %s\n' "${fallback}"
+    return 0
+  fi
+  oras manifest fetch "${ref}" | python3 -c '
+import json, sys
+layers = json.load(sys.stdin).get("layers", [])
+chart = [l for l in layers if l.get("mediaType") == "application/vnd.cncf.helm.chart.content.v1.tar+gzip"] or layers[:1]
+if not chart:
+    sys.exit("manifest has no layers")
+print(chart[0]["digest"], chart[0].get("annotations", {}).get("org.opencontainers.image.title") or sys.argv[1])
+' "${fallback}"
+}
+
 # resolve_release_ref verifies RELEASE_REF and converts the description into
 # ${OUT_DIR}/nke-release.yaml. The converted file is reused while its
 # `release:` still equals RELEASE_REF, so every stage does not re-verify.
