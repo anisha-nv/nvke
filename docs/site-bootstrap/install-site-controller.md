@@ -2,6 +2,8 @@
 
 `nkectl bootstrap site` leaves a plain Kubernetes cluster. This page installs the management plane onto it: Postgres, Temporal, SPIRE, [CAPNICo](https://github.com/dsx-ai-factory/cluster-api-provider-nico), NKTP and the NKE controller.
 
+The installer takes two inputs. `nke-release.yaml`, the release spec, says which artifacts to install and where to pull each one from, by digest. `site-config.yaml` says what is specific to the site. `RELEASE_FILE` points at the spec on disk. `RELEASE_REF` names an NKD Release instead, and stage 1 produces the spec from `nkdctl release verify`. Everything else is derived.
+
 The install has seven stages. Each stage has a run step and a check step. Each run step is safe to repeat. You can stop after any stage and resume later.
 
 An executable form of this guide lives at [`controller/deploy/nke-sbom/install/`](../../controller/deploy/nke-sbom/install/), one script per stage. The command blocks on this page are extracted from those scripts. This page is the authority. When a script and this page disagree, this page wins.
@@ -18,38 +20,77 @@ controller/deploy/nke-sbom/install/install-all.sh
 
 `--from NAME` resumes at a stage. `--until NAME` stops after one. `NAME` is the script name without its number, for example `--from install-cluster-api`. The [install README](../../controller/deploy/nke-sbom/install/README.md) lists every environment variable the scripts read.
 
+## Release Spec
+
+`nke-release.yaml` names every artifact the install pulls. It has the shape of `nke-deploy.yaml`: a flat `items` list, one entry per artifact, named after the deploy item it serves. `ref` carries the digest, so there is no separate checksum file.
+
+```yaml
+apiVersion: nke.nvidia.com/release/v1
+release: ghcr.io/example/nke-recipes/releases@sha256:<index>
+lane: pipeline-attested
+scope: artifact-publication
+source:
+  repo: https://github.com/dsx-ai-factory/nke
+  tag: controller/v0.1.1
+  commit: <sha>
+items:
+  - {name: controller, type: image,  ref: ghcr.io/example/nke-recipes/cwe@sha256:<manifest>}
+  - {name: postgresql, type: chart,  ref: ghcr.io/example/nke-recipes/postgresql@sha256:<manifest>, version: "18.5.15"}
+  - {name: spire-crds, type: chart,  ref: ghcr.io/example/nke-recipes/spire-crds@sha256:<manifest>, version: "0.6.1"}
+  - {name: temporal,   type: chart,  ref: ghcr.io/example/nke-recipes/temporal@sha256:<manifest>,   version: "0.74.0"}
+  - {name: spire,      type: chart,  ref: ghcr.io/example/nke-recipes/spire@sha256:<manifest>,      version: "0.30.1"}
+  - {name: nkectl,     type: binary, ref: ghcr.io/example/nke-recipes/nkectl@sha256:<manifest>}
+```
+
+| Field | Meaning |
+|---|---|
+| `release` | The OCI reference of the Release the spec came from. Informational |
+| `lane`, `scope` | How the artifacts were verified. Stage 1 prints both. A hand-written spec says `lane: local-assembly` and `scope: none` |
+| `source` | The repository, tag and commit the deploy path comes from. The checkout must be at `source.tag` |
+| `items[].name` | The deploy item in `nke-deploy.yaml` the artifact serves. The names are equal |
+| `items[].type` | `image`, `chart` or `binary` |
+| `items[].ref` | Where to pull from, by digest. The registry can be public, a mirror or private. The installer does not distinguish |
+| `items[].version` | Charts only. Must equal the pin in that item's `release.yaml` at `source.tag` |
+
+There are two ways to get the file.
+
+- **From an NKD Release.** `nkdctl release verify` checks the signature and provenance of a Release and prints its artifacts with references. The converter `nkd-release-to-nke.py` in `controller/deploy/nke-sbom/install/` turns that output into this file. NKD's description carries no source pin, so you add `source` yourself. With `RELEASE_REF` set, stage 1 does both.
+- **By hand.** Build the artifacts, push them to a registry the nodes reach, and write the file with those refs. See [Artifacts](#artifacts). An air-gapped site points every ref at its own registry.
+
 ## Before You Begin
 
 | Requirement | Notes |
 |---|---|
 | The site cluster kubeconfig | Written by `nkectl bootstrap site`. Every command below takes it through `SITE_KUBECONFIG` |
+| A release spec | `nke-release.yaml` through `RELEASE_FILE`, or an NKD Release through `RELEASE_REF`. See [Release Spec](#release-spec) |
 | An odd node count | One, three or five nodes, all control-plane |
 | The bootstrap site spec | You need its `spire.trustDomain`, `spire.caCertFile` and `spire.caKeyFile` values. See [Configuration](configuration.md) |
-| A full checkout of this repository | The controller chart and the NKTP chart are installed from the tree, not from a registry |
+| A full checkout of this repository | At `source.tag` from the spec. The controller chart and the NKTP chart are installed from the tree, not from a registry |
 | `helm` `v4.2.4` | The version `make/tool-versions.mk` pins. Helm 3 cannot install these charts |
+| `oras` `1.3.3` | The version `make/tool-versions.mk` pins. Stage 6 pulls the external charts with it |
 | `kubectl`, `clusterctl` `v1.12.3`, `python3` | `clusterctl` matches `CAPI_VERSION` in `make/tool-versions.mk` |
-| Root shell access to every node | Stage 3 imports images into each node's containerd |
+| Root shell access to every node | Stage 3 pulls images through each node's containerd |
 | `nkectl` | For the final stage. See [Download and Install nkectl](installation.md) |
 | The release spec | `nke-release.yaml`, or the Release reference it is converted from. See the install README |
-| Egress | `github.com` from the runner; from the nodes, the registry hosts in `nke-release.yaml` and the image registries `ghcr.io`, `quay.io`, `registry.k8s.io` and `docker.io`. An air-gapped site points the spec at its own registry and mirrors the images |
+| Egress | The registries your refs point at, reachable from the nodes. The nodes also pull the images the charts, the CAPNICo manifest and the Cluster API providers run, and `clusterctl init` fetches from `github.com`. An air-gapped site mirrors those images |
 
 ## Artifacts
 
-| Artifact | Build or pull | How |
-|---|---|---|
-| NKE controller image | Build | `make -C cli images` builds `controller/Dockerfile` for the host architecture. The Dockerfile is architecture-neutral |
-| Profiles image | Build | Start from `controller/profiles/example`. See [Supply OS and config profiles](../../controller/profiles/README.md) |
-| CAPNICo image | Pull | Public, multi-arch. The pinned manifest at `controller/deploy/nke-sbom/capnico/capnico.yaml` names it |
-| Postgres, Temporal, SPIRE charts | Pull | From the refs in `nke-release.yaml`, by digest |
-| NKTP dependency charts and the charts' images | Pull | From the registries above |
-| cert-manager, Cluster API | Pull | `clusterctl init` fetches them from `github.com` |
-| `nkectl` | Download or build | [Download and Install nkectl](installation.md) |
+Build three artifacts from the clone at `source.tag`.
 
-The cluster's nodes are the cluster's container hosts. An image imported into a node's `k8s.io` containerd namespace resolves with `imagePullPolicy: IfNotPresent` and needs no registry or pull secret. That is how the controller and profiles images reach the cluster. CAPNICo is the one image the cluster pulls.
+| Artifact | How |
+|---|---|
+| NKE controller image | `make -C cli images` builds `controller/Dockerfile` for the host architecture. Push it to a registry the nodes reach. Its ref is the `controller` item in the spec |
+| Profiles image | Start from `controller/profiles/example`. See [Supply OS and config profiles](../../controller/profiles/README.md). Push it to a registry the nodes reach and name it in `images.profiles` |
+| `nkectl` | `make build`, or [Download and Install nkectl](installation.md) |
+
+Pull the four external charts at the versions each item's `release.yaml` pins, with `helm pull`, and push them to a registry the nodes reach with `helm push` or `oras push`. Put each ref and version in the spec.
+
+The cluster pulls the rest itself: the CAPNICo image the pinned manifest at `controller/deploy/nke-sbom/capnico/capnico.yaml` names, cert-manager and Cluster API through `clusterctl init`, and the images the charts run.
 
 ## 1. Check Readiness
 
-Confirm the release spec, the tools, the checkout, egress, the node count and the architecture before anything changes.
+Confirm the tools, the checkout, the release spec, egress, the node count and the architecture before anything changes. With `RELEASE_REF` set, the stage runs `nkdctl release verify` first and writes `nke-release.yaml` into `OUT_DIR`.
 
 <!-- stage:00-check-readiness begin -->
 ```bash
@@ -74,7 +115,7 @@ The release spec parses; its lane and scope are printed, and a lane other than `
 
 ### If It Fails
 
-The report names the missing item. Fix it and run the stage again. Nothing on the cluster has changed.
+The report names the missing item. Fix it and run the stage again. Nothing on the cluster has changed. A version mismatch names the item, the version in the spec and the pin in `release.yaml`. Move the checkout to `source.tag`, or fix the spec.
 
 ## 2. Prepare the Site Cluster
 
@@ -115,7 +156,7 @@ Two default StorageClasses fail the check. Remove the `storageclass.kubernetes.i
 
 ## 3. Stage Images
 
-Import the controller, profiles and CAPNICo images into the `k8s.io` containerd namespace of every node, so the install pulls nothing. Build the controller and profiles images first; the CAPNICo image is public and is pulled for the node architecture. The script exports each image from the local nerdctl or docker and reaches a node through `NODE_EXEC`, a command prefix with `{node}` in it: unset when the script runs on the node, `ssh root@{node}` for hosts, `nerdctl exec -i {node}` for container nodes. The image list comes from `images.controller` and `images.profiles` in `site-config.yaml`, or from `IMAGES`.
+Pull every image onto every node before anything schedules. The controller image is pulled by digest from its ref in the spec, through each node's containerd, into the `k8s.io` namespace. The external images are pre-pulled the same way: the images the charts run, the profiles image among them, the CAPNICo image and the Cluster API provider images, as listed in `images.txt`. Only the node's containerd knows the site's mirrors, so the pull happens there and not on the machine running the install. The script reaches a node through `NODE_EXEC`, a command prefix with `{node}` in it: unset when the script runs on the node, `ssh root@{node}` for hosts, `nerdctl exec -i {node}` for container nodes.
 
 <!-- stage:02-stage-images begin -->
 ```bash
@@ -155,17 +196,19 @@ done
 
 ### Check
 
-`ctr -n k8s.io images ls` on each node lists every image. The check prints each digest and fails on a missing or stale one.
+`ctr -n k8s.io images ls` on each node lists the controller image at the digest in the spec and every pre-pulled image. The check prints each digest and fails on a missing or stale one.
 
 ### If It Fails
 
-The namespace is `k8s.io`, not `default`. An image in the wrong namespace is invisible to the kubelet and the controller pod fails with a pull error. Import single-manifest images; an OCI index with an attestation manifest makes the kubelet pull by digest. The kubelet garbage-collects unused images under disk pressure, so stage 6 repeats this check first.
+A failed pull names the registry that refused and the node. Make that registry reachable from the node, or point the ref at one that is. The namespace is `k8s.io`, not `default`. An image in the wrong namespace is invisible to the kubelet and the controller pod fails with a pull error. The kubelet garbage-collects unused images under disk pressure, so stage 6 repeats this check first.
 
 ## 4. Describe Your Site
 
 Write one `site-config.yaml` and render it into the values and configuration the install needs.
 
 The file holds credentials. Keep it out of git. The renderer writes to `OUT_DIR` with mode `0700`, prints a redacted summary, and writes no Secret to disk. The schema is unstable and may change between releases.
+
+The stage also writes two inventory files to `OUT_DIR`. `images.txt` lists every external image: the images the charts run with these values, the CAPNICo image and the Cluster API provider images. `version-bom.cdx.json` is a CycloneDX inventory with one component per spec item, keyed by deploy item and digest.
 
 | Key | Feeds | Rule |
 |---|---|---|
@@ -175,7 +218,8 @@ The file holds credentials. Keep it out of git. The renderer writes to `OUT_DIR`
 | `site.arch` | TPM attestor server checksum | Required. `amd64` or `arm64` |
 | `spire.caCertFile`, `spire.caKeyFile` | SPIRE upstream authority | Required. The same files the bootstrap site spec names |
 | `db.password` | Postgres, both Temporal datastores, the controller database | Optional. Generated once and reused from `OUT_DIR` on rerun |
-| `images.controller`, `images.profiles` | Controller chart | Required. No default |
+| `images.controller` | Controller chart | Optional. Defaults to the `controller` ref in the release spec. Set it only to override |
+| `images.profiles` | Controller chart | Required. Your profiles image, in a registry the nodes reach |
 | `nico.endpoint`, `nico.orgId`, `nico.token`, `nico.apiName` | `nico-credentials` Secret | Required |
 | `registry.server`, `registry.username`, `registry.token` | `ghcr-imagepull` Secret | Required. A fine-grained token with `read:packages` is enough |
 | `tenant.user`, `tenant.password` | `dgxc-tenant-credentials` Secret | Required |
@@ -226,6 +270,8 @@ A hang on cert-manager means the control-plane taint is still present. Run stage
 ## 6. Install the Site Controller
 
 Apply the deploy items in list order: base configuration, SPIRE node ports, CAPNICo, then the NKTP, Postgres, SPIRE, Temporal and controller releases.
+
+The four external charts, Postgres, SPIRE CRDs, Temporal and SPIRE, are pulled from their refs in the spec with `oras` into `OUT_DIR/charts/<name>-<version>.tgz`. The chart layer digest is checked against the ref before the release is installed from the package. The controller and NKTP charts are installed from the tree.
 
 ### Choices
 
@@ -337,6 +383,8 @@ Run `helm status <release> -n <namespace>` for the release the check names.
 
 A `--wait` timeout leaves the release `failed`. A killed helm process leaves it `pending-*`. The scripts write pods, events, `helm list` and controller logs to `OUT_DIR/diagnostics/<stage>/` on failure. `PHASE_TIMEOUT` sets the per-release wait; the default is 15 minutes.
 
+A digest mismatch names the item, the digest in the spec and the digest of the pulled chart. The registry does not hold what the spec names. Nothing was installed for that item; fix the spec or the registry and run the stage again.
+
 A pull error on the controller pod means the image is missing from a node. Run stage 3 again.
 
 ## 7. Secure and Register the Site
@@ -389,8 +437,8 @@ Helm leaves PersistentVolumeClaims behind. Delete the `postgres` and `spire-serv
 
 ## Upgrade
 
-1. Build the new controller image and run stage 3 to import it.
-2. Update `images.controller` in `site-config.yaml` and run stage 4.
+1. Build and push the new controller image. Put its ref in the release spec.
+2. Run stage 3 to pull it on every node, then stage 4 to render.
 3. Run `install-all.sh --from install-site-controller`.
 
 Stage 7 runs again as part of that range. [Tenant Cluster Kubernetes Upgrades](../operations/upgrade.md) covers upgrades of tenant clusters.
@@ -399,7 +447,7 @@ Stage 7 runs again as part of that range. [Tenant Cluster Kubernetes Upgrades](.
 
 The manual install above is the baseline. Every item in `nke-deploy.yaml` is a Helm chart plus values files, or plain YAML. A GitOps tool can deliver the same items without changing the deploy path.
 
-- **Source.** The clone is a valid git source. The controller and NKTP charts are in the tree, at `controller/deploy/charts/controller` and `nktp/deploy/charts/nktp`. Postgres, SPIRE and Temporal are referenced by chart repository and version in each item's `release.yaml`.
+- **Source.** The clone is a valid git source. The controller and NKTP charts are in the tree, at `controller/deploy/charts/controller` and `nktp/deploy/charts/nktp`. Postgres, SPIRE CRDs, Temporal and SPIRE come from the refs in the release spec. An OCI registry is a valid Helm source, so the same refs serve Argo CD.
 - **Order.** The item list order maps to sync waves, one wave per item.
 - **The Certificate.** The `spire` item declares a `requires:` on the `oidc-provider-upstream-ca` Certificate. In GitOps that is a wave boundary or a health check on the Certificate, not a `kubectl wait`.
 - **Secrets.** The `nke-base-config` item renders three Secrets: `nico-credentials`, `ghcr-imagepull` and `dgxc-tenant-credentials`. Under GitOps those come from the operator's secret store. The namespaces and the Certificate chain in the same item are plain YAML and stay in git.
@@ -407,7 +455,7 @@ The manual install above is the baseline. Every item in `nke-deploy.yaml` is a H
 
 The per-site values stage 4 renders belong in your own repository or your secret store. [Deploy Repository](deploy-repository.md) describes the `argocd` item type for a deploy path that carries Argo CD Applications.
 
-The Application below delivers the `temporal` item. It is illustrative and untested. The chart source is the repository and version from `temporal/release.yaml`. The values come from the two in-tree values files through the clone as a second source. The sync wave is the item's position in the list.
+The Application below delivers the `temporal` item. It is illustrative and untested. The chart source is the repository and version from `temporal/release.yaml`; with a release spec, `repoURL` points at the registry in the `temporal` ref instead. The values come from the two in-tree values files through the clone as a second source. The sync wave is the item's position in the list.
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
