@@ -33,9 +33,12 @@ spire:
 #   password: REPLACE_DB_PASSWORD
 
 images:
-  # Controller image as repository:tag. Must be staged on every node. No default.
-  controller: REPLACE_CONTROLLER_IMAGE
-  # Profiles content image as repository:tag. Must be staged on every node. No default.
+  # Optional. Controller image as repository:tag or repository@sha256:<digest>.
+  # Defaults to the controller item's ref in the release spec (RELEASE_FILE).
+  # Set it only to override.
+  # controller: REPLACE_CONTROLLER_IMAGE
+  # Profiles content image as repository:tag or repository@sha256:<digest>, in a
+  # registry the nodes reach. No default: NKD does not build it.
   profiles: REPLACE_PROFILES_IMAGE
 
 nico:
@@ -55,6 +58,14 @@ registry:
   username: REPLACE_REGISTRY_USERNAME
   # Registry token. A fine-grained token with read:packages is enough.
   token: REPLACE_REGISTRY_TOKEN
+  # Optional. Registry the external images are pulled from instead of their
+  # upstream registries, as host[:port][/prefix], no scheme. Each image keeps
+  # its upstream path under it: <mirror>/temporalio/server, <mirror>/spiffe/spire-server,
+  # <mirror>/bitnami/postgresql. Rendered into the Bitnami, Temporal and SPIRE
+  # values files and into capnico-kustomization.yaml. Does not reach the
+  # Cluster API and cert-manager images stage 4 installs; a hosts.toml on the
+  # nodes covers those.
+  # mirror: REPLACE_MIRROR_HOST
 
 tenant:
   # Login user rendered into every tenant node's cloud-init.
