@@ -1,0 +1,66 @@
+# A slice of `helm template` output, for the image extraction test. Covers the
+# shapes the charts render: quoted and bare, a digest-pinned ref, a short name,
+# a list item under initContainers, an image named in a flag, and a duplicate.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-frontend
+spec:
+  template:
+    spec:
+      containers:
+        - name: frontend
+          image: "temporalio/server:1.30.3"
+          imagePullPolicy: IfNotPresent
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-postgresql
+spec:
+  template:
+    spec:
+      containers:
+        - name: postgresql
+          image: registry-1.docker.io/bitnami/postgresql@sha256:b74b23f091dcc87041bcae557d840c36458af46b955279cb13aedec4c32d7f71
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: spire-agent
+spec:
+  template:
+    spec:
+      initContainers:
+      - image: "busybox:1.37.0-uclibc"
+        name: fsgroupfix
+      - image: "cgr.dev/chainguard/bash:latest@sha256:90041f375e30f41aa7e0390075d8a69dc61900771d52fa98d63ee5d03d866a58"
+        name: init
+      containers:
+        - name: spire-agent
+          image: "ghcr.io/spiffe/spire-agent:1.15.3"
+        - name: again
+          image: 'ghcr.io/spiffe/spire-agent:1.15.3'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opentelemetry-operator
+spec:
+  template:
+    spec:
+      containers:
+        - name: manager
+          image: ghcr.io/open-telemetry/opentelemetry-operator/opentelemetry-operator:0.127.0
+          args:
+            - --collector-image=ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-k8s:0.127.0
+            - --target-allocator-image=ghcr.io/open-telemetry/opentelemetry-operator/target-allocator:0.127.0
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: not-an-image
+data:
+  note: "image: this is text inside a value, not a container image"
+  imagePullPolicy: Always

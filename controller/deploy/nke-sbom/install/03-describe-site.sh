@@ -4,7 +4,10 @@
 #
 # Render site-config.yaml into the BootstrapConfig JSON and the values files
 # stage 5 installs from: four required, nktp.yaml when the config has an nktp
-# block. No cluster access.
+# block. Write the two inventory files: images.txt, every external image the
+# install pulls, and version-bom.cdx.json, one component per release spec
+# item. No cluster access. `helm template` needs the chart sources, so
+# images.txt needs the network unless IMAGES_TXT_SKIP=1.
 #
 # Usage: ./03-describe-site.sh [run|check]
 #
@@ -14,19 +17,34 @@
 set -euo pipefail
 # shellcheck disable=SC2034 # read by lib.sh
 STAGE_NEEDS_KUBECONFIG=0
-# The renderer reads site-config.yaml only; the release spec is for the
-# stages that pull artifacts.
-# shellcheck disable=SC2034 # read by lib.sh
-STAGE_NEEDS_RELEASE=0
+# The release spec is optional here. With one, images.controller defaults to
+# the controller item's ref and the BOM is written. Without one,
+# images.controller must be set and no BOM is written.
+if [[ -z "${RELEASE_FILE:-}" && -z "${RELEASE_REF:-}" ]]; then
+  # shellcheck disable=SC2034 # read by lib.sh
+  STAGE_NEEDS_RELEASE=0
+fi
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+IMAGES_TXT_SKIP="${IMAGES_TXT_SKIP:-}"
+RELEASE_CONTROLLER_REF="${RELEASE_CONTROLLER_REF:-}"
+export IMAGES_TXT_SKIP
 
 stage_run() {
   require_cmd python3
   [[ -f "${SITE_CONFIG}" ]] ||
     die "SITE_CONFIG=${SITE_CONFIG} does not exist. Copy site-config.example.yaml and fill it in."
+  # The renderer does not parse the spec. The controller ref reaches it as an
+  # environment variable; the BOM items come from release_spec.py, which it
+  # calls by the CLI contract.
+  if [[ -n "${RELEASE_FILE}" && -z "${RELEASE_CONTROLLER_REF}" ]]; then
+    RELEASE_CONTROLLER_REF="$(release_ref controller 2>/dev/null || true)"
+  fi
+  export RELEASE_CONTROLLER_REF
   # doc-begin
   python3 "${INSTALL_DIR}/describe_site.py" render \
-    --config "${SITE_CONFIG}" --out "${OUT_DIR}" --sbom-dir "${SBOM_DIR}"
+    --config "${SITE_CONFIG}" --out "${OUT_DIR}" --sbom-dir "${SBOM_DIR}" \
+    --release-file "${RELEASE_FILE}"
   # doc-end
 }
 

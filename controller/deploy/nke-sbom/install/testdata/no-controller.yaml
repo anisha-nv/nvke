@@ -1,0 +1,23 @@
+# Every key present, two-level, mixed quoting.
+site:
+  name: demo-site
+  trustDomain: "demo-site.nke.local"
+  vip: '192.0.2.10'  # VIP, single quoted
+  arch: arm64
+spire:
+  caCertFile: ca.crt
+  caKeyFile: ca.key
+images:
+  profiles: cwe-profiles:demo
+nico:
+  endpoint: http://nico.example.test:18080
+  orgId: novxwn552ssc
+  token: nico-token
+  apiName: forge
+registry:
+  server: ghcr.io
+  username: octocat
+  token: ghp_example
+tenant:
+  user: nke
+  password: "tenant-pass"

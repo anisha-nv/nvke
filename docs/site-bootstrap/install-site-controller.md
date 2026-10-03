@@ -160,36 +160,31 @@ Pull every image onto every node before anything schedules. The controller image
 
 <!-- stage:02-stage-images begin -->
 ```bash
-# The provider image is public. Pull it for the node architecture here, so
-# the nodes need no registry credential.
-if ! "${IMAGE_CLI}" image inspect "${CAPNICO_IMAGE}" >/dev/null 2>&1; then
-  run "${IMAGE_CLI}" pull --platform "linux/${NODE_ARCH}" "${CAPNICO_IMAGE}"
-fi
-
-# One tarball per image, imported into every node that lacks the digest.
-# Namespace k8s.io: an image in any other namespace is invisible to the kubelet.
-mkdir -p "${OUT_DIR}/images"
-for image in ${IMAGES} ${CAPNICO_IMAGE}; do
-  digest="$(local_digest "${image}")"
-  missing=""
-  for node in ${NODES}; do
-    if [[ -z "${DRY_RUN}" && -n "${digest}" && "$(node_digest "${node}" "${image}")" == "${digest}" ]]; then
-      continue
-    fi
-    missing="${missing} ${node}"
-  done
-  if [[ -z "${missing}" ]]; then
-    log "${image} ${digest} is on every node"
+# The controller image, by digest from the release spec, pulled through the
+# node's containerd. Namespace k8s.io: an image in any other namespace is
+# invisible to the kubelet. --hosts-dir applies the node's hosts.toml
+# mirrors and plain-http registries to this pull as to the kubelet's.
+for node in ${NODES}; do
+  if [[ -z "${DRY_RUN}" && "$(node_digest "${node}" "${CONTROLLER_REF}")" == "${CONTROLLER_DIGEST}" ]]; then
+    log "${node}: ${CONTROLLER_REF} present"
     continue
   fi
-  tar="${OUT_DIR}/images/$(printf '%s' "${image}" | tr '/:@' '___').tar"
-  run "${IMAGE_CLI}" save -o "${tar}" "${image}"
-  for node in ${missing}; do
-    log "${image} -> ${node}"
+  exec_prefix="$(node_exec "${node}")"
+  run ${exec_prefix} ctr -n k8s.io images pull --hosts-dir "${HOSTS_DIR}" "${CONTROLLER_REF}" ||
+    die "${node}: pull of ${CONTROLLER_REF} failed; registry $(registry_host "${CONTROLLER_REF}") is not serving it to the node"
+done
+
+# Every external image in images.txt, pre-pulled on every node so a registry
+# the node cannot reach fails here and not when a pod schedules.
+for image in ${EXTERNAL_IMAGES}; do
+  for node in ${NODES}; do
+    if [[ -z "${DRY_RUN}" && -n "$(node_digest "${node}" "${image}")" ]]; then
+      continue
+    fi
     exec_prefix="$(node_exec "${node}")"
-    run_from "${tar}" ${exec_prefix} ctr -n k8s.io images import -
+    run ${exec_prefix} ctr -n k8s.io images pull --hosts-dir "${HOSTS_DIR}" "${image}" ||
+      die "${node}: pull of ${image} failed; registry $(registry_host "${image}") is not serving it to the node"
   done
-  rm -f "${tar}"
 done
 ```
 <!-- stage:02-stage-images end -->
@@ -229,7 +224,8 @@ The trust domain and the CA are the two values that tie the permanent SPIRE serv
 <!-- stage:03-describe-site begin -->
 ```bash
 python3 "${INSTALL_DIR}/describe_site.py" render \
-  --config "${SITE_CONFIG}" --out "${OUT_DIR}" --sbom-dir "${SBOM_DIR}"
+  --config "${SITE_CONFIG}" --out "${OUT_DIR}" --sbom-dir "${SBOM_DIR}" \
+  --release-file "${RELEASE_FILE}"
 ```
 <!-- stage:03-describe-site end -->
 
