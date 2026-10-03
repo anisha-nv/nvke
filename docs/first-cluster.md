@@ -183,7 +183,7 @@ CWE consumes, and it becomes a SPIRE exec-auth kubeconfig when OIDC is on.
 ## Real Site
 
 Real hardware, a real NICo site, and a site controller that outlives your
-terminal. Steps 1 to 4 have been run end to end on leased bare metal with calico, to a
+terminal. Steps 1 to 4 have been run end to end on leased bare metal, to a
 `Ready` control-plane node; steps 5 to 7 have been run against mock NICo rather
 than a real site. Treat a surprise here as a bug in this page and say so.
 
@@ -195,14 +195,14 @@ IP and its **TPM EK thumbprint**: the site cluster attests nodes by TPM, and a
 node with no thumbprint cannot join.
 
 **kubeadm on each node, installed by your cloud-init.** An image built from
-[`os-image/`](https://github.com/dsx-ai-factory/nke/tree/main/os-image) only *stages* the packages in a local apt repo at
+[`os-image/`](../os-image/) only *stages* the packages in a local apt repo at
 `/usr/lib/nke/debs`; nothing installs them for a pre-provisioned node, because
 CWE writes no cloud-init for hosts it did not create. Install them yourself:
 
 ```yaml
 runcmd:
   - DEBIAN_FRONTEND=noninteractive apt-get install -y nke-kubeadm-distro-<k8s-version>
-  - DEBIAN_FRONTEND=noninteractive apt-get install -y nke-cni-ovn-images-<stream> nke-cni-ovn-charts-<stream>
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y nke-cni-calico-images-<stream> nke-cni-calico-manifests-<stream>
 ```
 
 Skip this and the bootstrap runs its full 30 minutes before failing on
@@ -266,17 +266,13 @@ cp-03,10.10.50.4,<sha256 of the node's TPM EK>
 
 ```bash
 nkectl generate sitespec my-site --nodes hosts.csv \
-  --set cluster.controlPlaneVIP=10.10.50.10 \
-  --set cluster.podCidr=10.244.0.0/16 \
+  --set cluster.cniName=calico \
   --set spire.trustDomain=site.example.com \
   --set spire.caCertFile=./spire-ca.crt \
   --set spire.caKeyFile=./spire-ca.key > sitespec.yaml
 
 nkectl bootstrap site -f sitespec.yaml --dry-run   # validate, touch nothing
 ```
-
-`cluster.controlPlaneVIP` is advertised over BGP, so the network must peer
-with the nodes. See [sitespec.md](../cli/docs/sitespec.md).
 
 Read what it rendered. Unset fields get defaults that are silent rather than
 absent — the Kubernetes version, `systemReservedMemory` at 16Gi, and a literal
@@ -295,13 +291,12 @@ bootstrap side-loads them by default. To use images you pushed to a registry
 instead, name them:
 
 ```bash
-export NKECTL_CONTROLLER_IMAGE=<nke-controller image>
+export NKECTL_CWE_IMAGE=<nke-controller image>
 export NKECTL_CAPI_PROVISIONED_IMAGE=<provisioned provider image>
 ```
 
-The `--controller-image` and `--provisioned-provider-image` flags do the same for one
-run. `nkectl` carries the CWE chart and the provisioned provider's manifests.
-Step 4 lists what it fetches.
+`nkectl` carries the CWE chart and the provisioned provider's manifests. Step 4
+lists what it fetches.
 
 ### 4. Bootstrap
 
@@ -312,19 +307,18 @@ REGISTRY_API_KEY=<key> nkectl bootstrap site -f sitespec.yaml
 The key can come from the environment, from `--registry-api-key`, or from
 `registry.apiKey` in the spec; the flag wins.
 
-`nkectl get bootstrap-manifest` lists the charts and images the bootstrap
-fetches. It leaves out the kind node image and what `clusterctl init` installs.
-[`hack/mirror-bootstrap-images.sh`](../hack/mirror-bootstrap-images.sh) copies
-the listed images into a local or private registry. To change where they come
-from:
-
-- `NKECTL_BOOTSTRAP_DOCKERHUB_MIRROR=<host>` pulls the Docker Hub images from a mirror.
-- `NKECTL_CONTROLLER_TEMPORAL_CHART`, `NKECTL_CONTROLLER_SPIRE_CHART` and
-  `NKECTL_CONTROLLER_SPIRE_CRDS_CHART` take an OCI reference or a local path.
-
-Images from `ghcr.io`, `registry.k8s.io` and `cgr.dev` come from those
-registries. Cluster API and cert-manager come from `github.com` through
-`clusterctl init`.
+Where Docker Hub is slow or blocked, point the seed cluster at a mirror with
+`NKECTL_BOOTSTRAP_DOCKERHUB_MIRROR`. The Postgres and controller charts are
+carried in the `nkectl` binary and are never pulled. The Temporal and SPIRE
+charts are, and each has a knob — `NKECTL_CWE_TEMPORAL_CHART`,
+`NKECTL_CWE_SPIRE_CHART` and `NKECTL_CWE_SPIRE_CRDS_CHART`, an OCI reference or
+a local path — so every Helm chart the bootstrap pulls can come from a mirror
+or from disk.
+`clusterctl init` still fetches Cluster API and cert-manager from `github.com`.
+For the full set of third-party images
+the bootstrap pulls — Postgres, Temporal, and the SPIRE stack — and to mirror
+them into a local or private registry,
+see [`hack/mirror-bootstrap-images.sh`](../hack/mirror-bootstrap-images.sh).
 
 It creates a throwaway kind cluster, installs Postgres, Temporal, SPIRE, CAPI and
 CWE into it, builds the site cluster on your hosts through `nke-agent`, and
@@ -349,28 +343,19 @@ controller. CWE reads the `Machine` and `NicoMachine` CRDs once, at process
 start, and silently skips three of its controllers when they are absent — so
 installing it first means restarting it afterward, or losing them until you do.
 
-The control-plane nodes must be schedulable first or every `--wait` hangs.
-`nkectl bootstrap site` removes the taint; check with
-`kubectl --kubeconfig ./my-site.kubeconfig get nodes -o jsonpath='{.items[*].spec.taints}'`,
-and if it is still there run
-`kubectl --kubeconfig ./my-site.kubeconfig taint nodes --all node-role.kubernetes.io/control-plane:NoSchedule-`.
-Full steps, both a Helm and a `clusterctl` route, and how to verify the result
-with `kubectl`: [Infrastructure Providers](site-bootstrap/infrastructure-providers.md).
+Untaint the control-plane nodes first or every `--wait` hangs:
+`kubectl taint nodes --all node-role.kubernetes.io/control-plane-`. Full steps,
+both a Helm and a `clusterctl` route, and how to verify the result with
+`kubectl`: [Infrastructure Providers](site-bootstrap/infrastructure-providers.md).
 
 ### 6. Install the site controller
 
 The bootstrap leaves you a plain Kubernetes cluster. Installing CWE onto it is a
 separate job, and the largest step here — `nkectl` has no command for it.
 
-**There is no storage class.** CWE's database and SPIRE both want a volume and
-sit `Pending` on `no persistent volumes available for this claim and no storage
-class is set`. Install a provisioner, or run them without persistence.
-
-Use the chart in
-[`controller/deploy/charts/controller`](https://github.com/dsx-ai-factory/nke/tree/main/controller/deploy/charts/controller).
-It installs **CWE alone**, against a database and a Temporal you provide, and
-defaults to a ClusterIP service with ingress off, so nothing reaches the API
-until you change that.
+Follow [Install the Site Controller](site-bootstrap/install-site-controller.md).
+It installs the whole management plane, Postgres, Temporal, SPIRE, CAPNICo,
+NKTP and CWE, from a release spec, in seven stages.
 
 ```bash
 nkectl config set-site --name my-site --url https://<cwe-url> \
@@ -379,8 +364,7 @@ nkectl config set-site --name my-site --url https://<cwe-url> \
 
 That kubeconfig is also how `nkectl` authenticates to CWE once the site has API
 authentication on. The CLI always mints for `nke-clients/nke-client` and reads
-the audience from ConfigMap `nke-auth-config` in namespace `nke-controller`, or
-in `cloud-workflow-engine` when that is absent. Create that service
+the audience from `cloud-workflow-engine/nke-auth-config`. Create that service
 account, admit it, and grant the kubeconfig identity the permissions in
 [Configuring NKE API Authentication](../controller/docs/configuring-api-authentication.md).
 Without them, `get clusters` fails at minting or CWE returns 403.

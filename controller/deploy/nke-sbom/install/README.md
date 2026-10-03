@@ -9,7 +9,7 @@ The guide is the authority. When a script and the guide disagree, the guide wins
 All stages, in order. Each stage runs, then checks. The first failure stops the run:
 
 ```bash
-SITE_KUBECONFIG=~/.kube/site.kubeconfig ./install-all.sh
+SITE_KUBECONFIG=~/.kube/site.kubeconfig RELEASE_FILE=./nke-release.yaml ./install-all.sh
 ./install-all.sh --from install-cluster-api          # resume
 ./install-all.sh --until stage-images                # stop after a stage
 ./install-all.sh --dry-run                           # print kubectl and helm argv only
@@ -27,7 +27,7 @@ Stage names drop the numeric prefix: `--from install-cluster-api` selects `04-in
 
 ## Stage images
 
-Stage 2 imports the controller, profiles and CAPNICo images into the `k8s.io` containerd namespace of every node, so the install pulls nothing. The controller and profiles images come from `IMAGES`, else `site.env` when stage 3 has run, else `images.controller` and `images.profiles` in `SITE_CONFIG`; build them first with `make -C cli images` and `docker build` on the profiles tree. The CAPNICo image is pulled for the node architecture from the public registry. `NODE_EXEC` says how the script reaches a node: unset when it runs on the node, `ssh root@{node}` for hosts, `nerdctl exec -i {node}` for container nodes. A node that already holds an image at the same digest is skipped.
+Stage 2 pulls the controller image by digest from its `ref` in the release spec through every node's containerd, into the `k8s.io` namespace. It then pre-pulls every entry in `images.txt` the same way. A failed pull names the registry that refused and the node. `NODE_EXEC` says how the script reaches a node: unset when it runs on the node, `ssh root@{node}` for hosts, `nerdctl exec -i {node}` for container nodes. A node that already holds an image at the same digest is skipped.
 
 ```bash
 NODE_EXEC='ssh root@{node}' ./02-stage-images.sh run
@@ -50,25 +50,26 @@ SITE_CONFIG=./site-config.yaml ./03-describe-site.sh run
 ./03-describe-site.sh check
 ```
 
-## Images
+## Release spec
 
-Stage 2 imports the controller and profiles images into every node's `k8s.io` containerd namespace. Build them single-manifest (`docker buildx build --provenance=false --output type=docker`): an OCI index with an attestation manifest makes the pull go by digest instead of by the imported tag. See "Before this runs" in [the deploy path README](../README.md).
+Every artifact comes from the OCI ref `nke-release.yaml` names, by digest. `RELEASE_FILE` points at the file; `RELEASE_REF` names an NKD Release instead, and stage 0 runs `nkdctl release verify` and converts the output with `nkd-release-to-nke.py` into `$OUT_DIR/nke-release.yaml`. Stage 0 prints the lane and scope, checks the checkout is at `source.tag`, checks every chart item's `version` against its `release.yaml`, and checks the ref hosts are reachable from a node. Stage 3 defaults `images.controller` to the `controller` ref and writes `images.txt` and `version-bom.cdx.json`. Stage 5 pulls the four external charts with `oras` into `$OUT_DIR/charts/` and checks the layer digest before installing. The guide's "Release Spec" section has the file.
 
 ## Environment
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `SITE_KUBECONFIG` | required | Site cluster kubeconfig. Every kubectl and helm call uses it |
+| `RELEASE_FILE` | required unless `RELEASE_REF` is set | Path to `nke-release.yaml`. Every artifact is pulled from the refs it names |
+| `RELEASE_REF` | unset | NKD Release reference. Stage 0 runs `nkdctl release verify` and writes `$OUT_DIR/nke-release.yaml` from the output |
 | `SITE_CONFIG` | `./site-config.yaml` | Site description. Holds credentials; keep it out of git |
 | `OUT_DIR` | `./.site-install` | Rendered values, generated password, diagnostics. Mode 0700. Ignored by git |
 | `SBOM_DIR` | `controller/deploy` | Deploy tree the stages install from |
 | `PHASE_TIMEOUT` | `15m` | `helm --wait` timeout per release |
 | `REQUIRE_TIMEOUT` | `180s` | `kubectl wait` timeout for preconditions |
 | `DRY_RUN` | unset | Set to any value to print kubectl and helm argv instead of running them |
-| `IMAGES` | from `site.env` or `SITE_CONFIG` | Stage 2: controller and profiles images, space separated. `EXTRA_IMAGES` adds more |
-| `CAPNICO_IMAGE` | `image:` in `nke-sbom/capnico/capnico.yaml` | Stage 2 pulls and stages it; stage 5 repoints the manifest at it |
+| `IMAGES` | the `controller` ref and `images.txt` | Stage 2: images to pull on every node, space separated. `EXTRA_IMAGES` adds more |
+| `CAPNICO_IMAGE` | `image:` in `nke-sbom/capnico/capnico.yaml` | Stage 2 pre-pulls it on every node; stage 5 repoints the manifest at it |
 | `NODE_EXEC` | unset (run on the node) | Stage 2: command prefix that reaches a node, with `{node}` in it. `NODE_MAP` renames nodes as `name=target` pairs |
-| `IMAGE_CLI` | `nerdctl` or `docker`, whichever holds the images | Stage 2: local runtime the images are exported from |
 
 On a failed `run`, `lib.sh` writes `$OUT_DIR/diagnostics/<stage>/` with nodes, pods, events, `helm list` and controller logs.
 
