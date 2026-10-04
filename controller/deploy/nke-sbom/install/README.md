@@ -67,7 +67,7 @@ A line the parser does not recognise is an error naming the file and line.
 - External images come from `$OUT_DIR/images.txt`, plus `EXTRA_IMAGES`. Each node pre-pulls them the same way.
 - `NODE_EXEC` says how to reach a node: unset on the node itself, `ssh root@{node}` for hosts, `nerdctl exec -i {node}` for container nodes. `NODE_MAP` renames nodes as `name=target` pairs.
 - A node that holds an image is skipped. A failed pull names the node, the image and the registry.
-- Stage 3 writes `images.txt`, and it runs after this stage. On a first pass only the controller image is pulled. Rerun this stage after stage 3, or let the kubelet pull the rest. The check fails on the controller digest and warns on external images.
+- Stage 3 writes `images.txt`, and it runs after this stage. `install-all.sh` runs this stage a second time after stage 3, when both are in the selected range, so the external images are pre-pulled before stage 5. Run by hand, rerun this stage after stage 3 yourself, or let the kubelet pull the rest. The check fails on the controller digest and warns on external images.
 
 ```bash
 NODE_EXEC='ssh root@{node}' ./02-stage-images.sh run

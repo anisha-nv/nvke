@@ -158,6 +158,8 @@ Two default StorageClasses fail the check. Remove the `storageclass.kubernetes.i
 
 Pull every image onto every node before anything schedules. The controller image is pulled by digest from its ref in the spec, through each node's containerd, into the `k8s.io` namespace. The external images are pre-pulled the same way: the images the charts run, the profiles image among them, the CAPNICo image and the Cluster API provider images, as listed in `images.txt`. Only the node's containerd knows the site's mirrors, so the pull happens there and not on the machine running the install. The script reaches a node through `NODE_EXEC`, a command prefix with `{node}` in it: unset when the script runs on the node, `ssh root@{node}` for hosts, `nerdctl exec -i {node}` for container nodes.
 
+`images.txt` is written by stage 4, so a first run of this stage pulls only the controller image and the check reports the external images as not written yet. `install-all.sh` runs this stage again after stage 4 to pre-pull them. Running the stages by hand, run `02-stage-images.sh run` again after stage 4, or let the kubelet pull them when the pods schedule.
+
 <!-- stage:02-stage-images begin -->
 ```bash
 # The controller image, by digest from the release spec, pulled through the
@@ -191,7 +193,7 @@ done
 
 ### Check
 
-`ctr -n k8s.io images ls` on each node lists the controller image at the digest in the spec and every pre-pulled image. The check prints each digest and fails on a missing or stale one.
+`ctr -n k8s.io images ls` on each node lists the controller image at the digest in the spec and every pre-pulled image. The check prints each digest. A missing or stale controller image fails the check. A missing external image is a warning, because the kubelet can still pull it.
 
 ### If It Fails
 
