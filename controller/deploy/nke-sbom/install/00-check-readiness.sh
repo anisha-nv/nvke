@@ -128,7 +128,7 @@ check_release_registries() {
     check_skip "release registries: no node to probe from; set NODE or SITE_KUBECONFIG"
     return 0
   fi
-  prefix="${NODE_EXEC//\{node\}/${NODE}}"
+  prefix="$(node_exec "${NODE}")"
   for host in ${hosts}; do
     url="https://${host}/v2/"
     # shellcheck disable=SC2086

@@ -48,7 +48,6 @@ set -euo pipefail
 HOSTS_DIR="${HOSTS_DIR:-/etc/containerd/certs.d}"
 EXTRA_IMAGES="${EXTRA_IMAGES:-}"
 NODE_EXEC="${NODE_EXEC:-}"
-NODE_MAP="${NODE_MAP:-}"
 IMAGES_TXT="${OUT_DIR}/images.txt"
 CONTROLLER_REF=""
 CONTROLLER_DIGEST=""
@@ -81,14 +80,6 @@ resolve_nodes() {
   [[ -n "${NODES// /}" ]] || die "no nodes found with ${SITE_KUBECONFIG}"
 }
 
-# node_exec prints the NODE_EXEC prefix for a node, NODE_MAP applied.
-node_exec() {
-  local node="$1" target="$1" pair
-  for pair in ${NODE_MAP}; do
-    [[ "${pair%%=*}" != "${node}" ]] || target="${pair#*=}"
-  done
-  printf '%s' "${NODE_EXEC//\{node\}/${target}}"
-}
 
 # node_sh runs a command on a node through the NODE_EXEC prefix.
 node_sh() {

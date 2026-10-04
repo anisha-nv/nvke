@@ -40,6 +40,21 @@ STAGE_MODE=""
 CHECK_FAILURES=0
 ON_FAIL_DONE=""
 
+# NODE_EXEC reaches a node: a command prefix with {node} in it, empty when the
+# script runs on the node. NODE_MAP renames nodes as name=target pairs when the
+# node name is not the address NODE_EXEC needs.
+NODE_EXEC="${NODE_EXEC:-}"
+NODE_MAP="${NODE_MAP:-}"
+# node_exec prints the NODE_EXEC prefix for a node, NODE_MAP applied.
+node_exec() {
+  local node="$1" target="$1" pair
+  for pair in ${NODE_MAP}; do
+    [[ "${pair%%=*}" != "${node}" ]] || target="${pair#*=}"
+  done
+  printf '%s' "${NODE_EXEC//\{node\}/${target}}"
+}
+
+
 log() { printf '\n=== [%s] %s\n' "${STAGE_NAME}" "$*" >&2; }
 warn() { printf '[%s] WARN: %s\n' "${STAGE_NAME}" "$*" >&2; }
 die() {
