@@ -667,9 +667,14 @@ def normalize_image(ref):
     kubelet fills in docker.io, library/ and :latest; ctr does not."""
     name, sep, rest = ref.partition("@")
     digest = sep + rest if sep else ""
-    first = name.split("/", 1)[0]
-    if "." not in first and ":" not in first and first != "localhost":
-        name = "docker.io/" + ("library/" + name if "/" not in name else name)
+    if "/" not in name:
+        # One component: the colon, if any, is the tag, so this is a Docker
+        # Hub library image.
+        name = "docker.io/library/" + name
+    else:
+        first = name.split("/", 1)[0]
+        if "." not in first and ":" not in first and first != "localhost":
+            name = "docker.io/" + name
     path = name.rsplit("/", 1)[-1]
     if not digest and ":" not in path:
         name += ":latest"

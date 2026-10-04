@@ -204,6 +204,7 @@ fi
 # normalize_image: ctr needs fully qualified references; the kubelet does not.
 norm() { (cd "${INSTALL_DIR}" && python3 -c 'import sys, describe_site; print(describe_site.normalize_image(sys.argv[1]))' "$1"); }
 [[ "$(norm busybox)" == "docker.io/library/busybox:latest" ]] && pass "normalize: short library name" || fail "normalize: busybox -> $(norm busybox)"
+[[ "$(norm busybox:1.37.0-uclibc)" == "docker.io/library/busybox:1.37.0-uclibc" ]] && pass "normalize: library name with a tag" || fail "normalize: busybox:tag -> $(norm busybox:1.37.0-uclibc)"
 [[ "$(norm grafana/otel-lgtm:0.32.0)" == "docker.io/grafana/otel-lgtm:0.32.0" ]] && pass "normalize: short org name" || fail "normalize: grafana"
 [[ "$(norm quay.io/prometheus/node-exporter:v1.12.1)" == "quay.io/prometheus/node-exporter:v1.12.1" ]] && pass "normalize: qualified unchanged" || fail "normalize: quay"
 [[ "$(norm 'cgr.dev/chainguard/bash:latest@sha256:90041f375e30f41aa7e0390075d8a69dc61900771d52fa98d63ee5d03d866a58')" == 'cgr.dev/chainguard/bash:latest@sha256:90041f375e30f41aa7e0390075d8a69dc61900771d52fa98d63ee5d03d866a58' ]] && pass "normalize: digest ref unchanged" || fail "normalize: digest"
