@@ -30,14 +30,19 @@ NODE="${NODE:-}"
 
 # doc-begin
 # Hosts the runner reaches directly, sorted by host. Stage 4 fetches Cluster
-# API and cert-manager from github.com. The rest are the image registries the
-# charts' images and CAPNICo come from: ghcr.io, quay.io and registry.k8s.io.
-# Charts are pulled from the refs in nke-release.yaml, and stage 2 pre-pulls
-# every image from the nodes, so a miss here is a warning: the nodes may
-# reach a mirror the runner does not.
+# API and cert-manager from github.com. Stage 5 builds the NKTP chart
+# dependencies from the three github.io Helm repositories; an air-gapped site
+# vendors nktp/deploy/charts/nktp/charts/ instead. The rest are the image
+# registries the charts' images and CAPNICo come from: ghcr.io, quay.io and
+# registry.k8s.io. Charts are pulled from the refs in nke-release.yaml, and
+# stage 2 pre-pulls every image from the nodes, so a miss here is a warning:
+# the nodes may reach a mirror the runner does not.
 EGRESS_URLS=(
   https://ghcr.io/v2/
   https://github.com/
+  https://kubernetes-sigs.github.io/metrics-server/index.yaml
+  https://open-telemetry.github.io/opentelemetry-helm-charts/index.yaml
+  https://prometheus-community.github.io/helm-charts/index.yaml
   https://quay.io/v2/
   https://registry.k8s.io/v2/
 )

@@ -72,7 +72,7 @@ There are two ways to get the file.
 | Root shell access to every node | Stage 3 pulls images through each node's containerd |
 | `nkectl` | For the final stage. See [Download and Install nkectl](installation.md) |
 | The release spec | `nke-release.yaml`, or the Release reference it is converted from. See the install README |
-| Egress | The registries your refs point at, reachable from the nodes. The nodes also pull the images the charts, the CAPNICo manifest and the Cluster API providers run, and `clusterctl init` fetches from `github.com`. An air-gapped site mirrors those images |
+| Egress | The registries your refs point at, reachable from the nodes. The nodes also pull the images the charts, the CAPNICo manifest and the Cluster API providers run, and `clusterctl init` fetches from `github.com`. Stage 6 builds the NKTP chart dependencies on the machine running the install, from `kubernetes-sigs.github.io`, `open-telemetry.github.io` and `prometheus-community.github.io`. An air-gapped site mirrors those images and vendors `nktp/deploy/charts/nktp/charts/` first |
 
 ## Artifacts
 
@@ -95,14 +95,19 @@ Confirm the tools, the checkout, the release spec, egress, the node count and th
 <!-- stage:00-check-readiness begin -->
 ```bash
 # Hosts the runner reaches directly, sorted by host. Stage 4 fetches Cluster
-# API and cert-manager from github.com. The rest are the image registries the
-# charts' images and CAPNICo come from: ghcr.io, quay.io and registry.k8s.io.
-# Charts are pulled from the refs in nke-release.yaml, and stage 2 pre-pulls
-# every image from the nodes, so a miss here is a warning: the nodes may
-# reach a mirror the runner does not.
+# API and cert-manager from github.com. Stage 5 builds the NKTP chart
+# dependencies from the three github.io Helm repositories; an air-gapped site
+# vendors nktp/deploy/charts/nktp/charts/ instead. The rest are the image
+# registries the charts' images and CAPNICo come from: ghcr.io, quay.io and
+# registry.k8s.io. Charts are pulled from the refs in nke-release.yaml, and
+# stage 2 pre-pulls every image from the nodes, so a miss here is a warning:
+# the nodes may reach a mirror the runner does not.
 EGRESS_URLS=(
   https://ghcr.io/v2/
   https://github.com/
+  https://kubernetes-sigs.github.io/metrics-server/index.yaml
+  https://open-telemetry.github.io/opentelemetry-helm-charts/index.yaml
+  https://prometheus-community.github.io/helm-charts/index.yaml
   https://quay.io/v2/
   https://registry.k8s.io/v2/
 )
@@ -111,7 +116,7 @@ EGRESS_URLS=(
 
 ### Check
 
-The release spec parses; its lane and scope are printed, and a lane other than `pipeline-attested` is a warning. The checkout is at the tag the spec names, and every chart version in the spec equals the pin in `release.yaml` there. Each registry host in the spec answers from a node when `NODE_EXEC` says how to reach one. Every tool is on `PATH` at its pinned version. The checkout holds the controller and NKTP charts. An egress host the runner cannot reach is a warning, because the nodes do the pulling. The node count is odd. The CAPNICo image has a manifest for the node architecture. A warning names API authentication as off.
+The release spec parses; its lane and scope are printed, and a lane other than `pipeline-attested` is a warning. The checkout is at the tag the spec names, and every chart version in the spec equals the pin in `release.yaml` there. Each registry host in the spec answers from a node when `NODE_EXEC` says how to reach one. `kubectl`, `helm`, `clusterctl`, `oras`, `python3` and `curl` are on `PATH`. Only `helm` is compared with its pin, and a mismatch is a warning. The checkout holds the controller and NKTP charts. An egress host the runner cannot reach is a warning, because the nodes do the pulling. The node count is odd. Mixed node architectures are a warning. A warning names API authentication as off.
 
 ### If It Fails
 
@@ -125,7 +130,7 @@ Make the nodes schedulable and give the cluster a default StorageClass.
 
 Every node is a control-plane node and carries the `NoSchedule` taint. Nothing in later stages tolerates it, so the stage removes it.
 
-A bare site ships no StorageClass. Postgres and SPIRE need one. The stage installs a local-path provisioner. It stores data on one node's disk, so it is single-node durability. A site with real storage should use its own CSI driver instead: set `SKIP_STORAGECLASS=1` and create a default StorageClass yourself before the check.
+A bare site ships no StorageClass. Postgres and SPIRE need one. The stage installs rancher local-path-provisioner `v0.0.31`, fetched from its GitHub release; `LOCAL_PATH_VERSION` changes the pin. It stores data on one node's disk, so it is single-node durability. A site with real storage should use its own CSI driver instead: set `SKIP_STORAGECLASS=1` and create a default StorageClass yourself before the check.
 
 <!-- stage:01-prepare-cluster begin -->
 ```bash
@@ -205,7 +210,7 @@ Write one `site-config.yaml` and render it into the values and configuration the
 
 The file holds credentials. Keep it out of git. The renderer writes to `OUT_DIR` with mode `0700`, prints a redacted summary, and writes no Secret to disk. The schema is unstable and may change between releases.
 
-The stage also writes two inventory files to `OUT_DIR`. `images.txt` lists every external image: the images the charts run with these values, the CAPNICo image and the Cluster API provider images. `version-bom.cdx.json` is a CycloneDX inventory with one component per spec item, keyed by deploy item and digest.
+The stage also writes two inventory files to `OUT_DIR`. `images.txt` lists every external image: the images the charts run with these values, the CAPNICo image and the Cluster API provider images. The chart images come from `helm template`, so this stage needs `helm` and network access to the chart sources; `IMAGES_TXT_SKIP=1` skips that step and lists only the static entries. `version-bom.cdx.json` is a CycloneDX inventory with one component per spec item, keyed by deploy item and digest.
 
 | Key | Feeds | Rule |
 |---|---|---|
@@ -213,13 +218,14 @@ The stage also writes two inventory files to `OUT_DIR`. `images.txt` lists every
 | `site.trustDomain` | SPIRE, controller `spiffe.trustDomain` | Required. Must equal `spire.trustDomain` in the bootstrap site spec. Never derived from the name |
 | `site.vip` | SPIRE server address, OIDC discovery URL, IP SANs, the `set-site` URL | Required |
 | `site.arch` | TPM attestor server checksum | Required. `amd64` or `arm64` |
-| `spire.caCertFile`, `spire.caKeyFile` | SPIRE upstream authority | Required. The same files the bootstrap site spec names |
+| `spire.caCertFile`, `spire.caKeyFile` | SPIRE upstream authority | Required. The same files the bootstrap site spec names. Relative paths resolve from the config file |
 | `db.password` | Postgres, both Temporal datastores, the controller database | Optional. Generated once and reused from `OUT_DIR` on rerun |
 | `images.controller` | Controller chart | Optional. Defaults to the `controller` ref in the release spec. Set it only to override |
 | `images.profiles` | Controller chart | Required. Your profiles image, in a registry the nodes reach |
-| `nico.endpoint`, `nico.orgId`, `nico.token`, `nico.apiName` | `nico-credentials` Secret | Required |
+| `nico.endpoint`, `nico.orgId`, `nico.token`, `nico.apiName` | `nico-credentials` Secret | Required. `nico.apiName` is the NICo API name, for example `forge` |
 | `registry.server`, `registry.username`, `registry.token` | `ghcr-imagepull` Secret | Required. A fine-grained token with `read:packages` is enough |
-| `tenant.user`, `tenant.password` | `dgxc-tenant-credentials` Secret | Required |
+| `registry.mirror` | Postgres, Temporal and SPIRE values; the CAPNICo kustomization | Optional. A registry host, with an optional path and no scheme, that serves the chart images under their upstream paths |
+| `tenant.user`, `tenant.password` | `dgxc-tenant-credentials` Secret | Required. The login the controller renders into every tenant node's cloud-init |
 
 The trust domain and the CA are the two values that tie the permanent SPIRE server to the bootstrap. Every node's SPIRE agent already trusts the bootstrap CA and carries the bootstrap trust domain. Reusing both lets the agents move to the permanent server. Changing either changes every SPIFFE ID and strands the agents. See [A SPIFFE trust domain](../first-cluster.md#real-site).
 
@@ -237,7 +243,7 @@ The renderer exits 0. No referenced key is empty. When a Postgres Secret already
 
 ### If It Fails
 
-The renderer names the empty or missing key. A password mismatch means `OUT_DIR` was deleted after an install. Restore it, or set `db.password` to the live value from the `postgres` namespace.
+The renderer names the empty or missing key. A password mismatch means `OUT_DIR` was deleted after an install. The live value is key `postgres-password` of Secret `postgres-postgresql` in namespace `postgres`; the rendered one is `OUT_DIR/db-password`. Restore `OUT_DIR`, or set `db.password` to the live value.
 
 ## 5. Install Cluster API
 
@@ -436,7 +442,7 @@ hl upgrade --install controller "${SBOM_DIR}/nke-sbom/../charts/controller" --na
 
 ### Check
 
-Two checks run. The provider check: CAPNICo CRDs are Established, the `capnico-system` Deployment is Available, and `nico-credentials` exists. The plane check: every release in `helm list -A` is `deployed`, `/readyz` reports the database and Temporal as ok, and the controller log has no "CRD not installed" warning.
+Two checks run. The provider check: CAPNICo CRDs are Established, the `capnico-system` Deployment is Available, and `nico-credentials` exists. The plane check: every release in `helm list -A` is `deployed`, `/readyz` reports the database and Temporal as ok, and the controller log has no `NicoMachine CRD not installed` warning. `/readyz` is read with `kubectl exec` inside the `cloud-workflow-engine` Deployment, on port 8080 of the pod, not through the NodePort.
 
 ### If It Fails
 
@@ -453,9 +459,13 @@ A digest mismatch names the item, the digest in the spec and the digest of the p
 
 A pull error on the controller pod means the image is missing from a node. Run stage 3 again.
 
+`NicoMachine CRD not installed` in the controller log means the controller started before CAPNICo registered its CRDs. The controller reads them once at start. Run `kubectl -n cloud-workflow-engine rollout restart deployment/cloud-workflow-engine`, then run the check again.
+
 ## 7. Secure and Register the Site
 
 Patch the Cluster API controllers to authenticate to tenant clusters with SPIFFE JWTs, then register the site with `nkectl`.
+
+`SITE_NAME` and `SITE_VIP` come from `OUT_DIR/site.env`, written by stage 4, else from `site.name` and `site.vip` in `site-config.yaml`. Setting either variable in the environment overrides both.
 
 ### Choices
 
