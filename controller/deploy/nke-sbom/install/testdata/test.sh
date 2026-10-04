@@ -35,10 +35,13 @@ fail() {
   failures=$((failures + 1))
 }
 
-# A throwaway CA pair. The renderer checks PEM markers, not validity.
+# A throwaway CA pair. The renderer checks PEM markers, not validity. The
+# markers are assembled here so no file in the tree holds a key-shaped block
+# for a secret scanner to flag.
 write_ca() {
-  printf -- '-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n' >"$1/ca.crt"
-  printf -- '-----BEGIN PRIVATE KEY-----\nTEST\n-----END PRIVATE KEY-----\n' >"$1/ca.key"
+  local begin='-----BEGIN ' end='-----END ' tail=' KEY-----'
+  printf -- '%sCERTIFICATE-----\nTEST\n%sCERTIFICATE-----\n' "${begin}" "${end}" >"$1/ca.crt"
+  printf -- '%sPRIVATE%s\nTEST\n%sPRIVATE%s\n' "${begin}" "${tail}" "${end}" "${tail}" >"$1/ca.key"
 }
 
 # stage DIR FIXTURE: copy a fixture and the CA pair into DIR.

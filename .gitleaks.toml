@@ -76,3 +76,19 @@ regexes = [
   '''nvapi-0123456789abcdefghij''',
   '''8f14e45fceea167a5a36dedd4bea2543''',
 ]
+
+[[allowlists]]
+description = """The renderer test once wrote a marker-only CA fixture as a
+literal: BEGIN PRIVATE KEY, the word TEST, END PRIVATE KEY. The tree no longer
+holds that literal; the test assembles the markers at run time. The commits
+behind the branch that introduced it still carry it, and the workflow scans
+origin/main..HEAD. The repository squash-merges and deletes the branch, so the
+literal never reaches main's history. Scoped to that one test file and to that
+exact three-line body; a real key in that file is still caught."""
+paths = [
+  '''^controller/deploy/nke-sbom/install/testdata/test\.sh$''',
+]
+regexes = [
+  '''-----BEGIN PRIVATE KEY-----\\nTEST\\n-----END PRIVATE KEY-----''',
+]
+regexTarget = "match"
