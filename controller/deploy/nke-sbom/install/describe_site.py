@@ -662,6 +662,20 @@ def extract_images(manifests):
     return sorted(found)
 
 
+def normalize_image(ref):
+    """The fully qualified form of an image reference, as ctr wants it. The
+    kubelet fills in docker.io, library/ and :latest; ctr does not."""
+    name, sep, rest = ref.partition("@")
+    digest = sep + rest if sep else ""
+    first = name.split("/", 1)[0]
+    if "." not in first and ":" not in first and first != "localhost":
+        name = "docker.io/" + ("library/" + name if "/" not in name else name)
+    path = name.rsplit("/", 1)[-1]
+    if not digest and ":" not in path:
+        name += ":latest"
+    return name + digest
+
+
 def same_image(ref, other):
     """Two references name one image when their digests match, or the
     strings do."""
@@ -776,7 +790,7 @@ def inventory_images(flat, sbom_dir, out_dir):
                 for ref in extract_images(template_item(item, out_dir, helm_home)):
                     if same_image(ref, controller_ref):
                         continue
-                    images.add(ref)
+                    images.add(normalize_image(ref))
         finally:
             shutil.rmtree(helm_home, ignore_errors=True)
 

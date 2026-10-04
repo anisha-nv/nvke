@@ -201,6 +201,14 @@ else
   fail "site.env holds $(grep -c . "${out}/site.env") lines, expected 4"
 fi
 
+# normalize_image: ctr needs fully qualified references; the kubelet does not.
+norm() { (cd "${INSTALL_DIR}" && python3 -c 'import sys, describe_site; print(describe_site.normalize_image(sys.argv[1]))' "$1"); }
+[[ "$(norm busybox)" == "docker.io/library/busybox:latest" ]] && pass "normalize: short library name" || fail "normalize: busybox -> $(norm busybox)"
+[[ "$(norm grafana/otel-lgtm:0.32.0)" == "docker.io/grafana/otel-lgtm:0.32.0" ]] && pass "normalize: short org name" || fail "normalize: grafana"
+[[ "$(norm quay.io/prometheus/node-exporter:v1.12.1)" == "quay.io/prometheus/node-exporter:v1.12.1" ]] && pass "normalize: qualified unchanged" || fail "normalize: quay"
+[[ "$(norm 'cgr.dev/chainguard/bash:latest@sha256:90041f375e30f41aa7e0390075d8a69dc61900771d52fa98d63ee5d03d866a58')" == 'cgr.dev/chainguard/bash:latest@sha256:90041f375e30f41aa7e0390075d8a69dc61900771d52fa98d63ee5d03d866a58' ]] && pass "normalize: digest ref unchanged" || fail "normalize: digest"
+[[ "$(norm 'localhost:5000/x/y')" == "localhost:5000/x/y:latest" ]] && pass "normalize: port host gets :latest" || fail "normalize: localhost -> $(norm localhost:5000/x/y)"
+
 # images.txt: the skip note and the static entries, read from the pins.
 expect_line images.txt '^# skipped: helm template not run \(IMAGES_TXT_SKIP=1\)'
 expect_line images.txt "^ghcr.io/dsx-ai-factory/cluster-api-provider-nico/controller:v[0-9.]+\$"
