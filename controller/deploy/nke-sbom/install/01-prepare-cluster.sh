@@ -22,7 +22,7 @@ set -euo pipefail
 # under /opt/local-path-provisioner on the node that schedules the pod. It is
 # a single-node answer; it does not survive that node.
 LOCAL_PATH_VERSION="${LOCAL_PATH_VERSION:-v0.0.31}"
-LOCAL_PATH_URL="https://github.com/rancher/local-path-provisioner/releases/download/${LOCAL_PATH_VERSION}/local-path-storage.yaml"
+LOCAL_PATH_URL="https://raw.githubusercontent.com/rancher/local-path-provisioner/${LOCAL_PATH_VERSION}/deploy/local-path-storage.yaml"
 # Set to any value to leave StorageClasses alone.
 SKIP_STORAGECLASS="${SKIP_STORAGECLASS:-}"
 export LOCAL_PATH_VERSION LOCAL_PATH_URL SKIP_STORAGECLASS
