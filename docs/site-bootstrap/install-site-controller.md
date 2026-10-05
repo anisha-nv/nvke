@@ -359,7 +359,11 @@ layer="$(chart_layer "${chart_ref}" postgresql-18.5.15.tgz)" || die "cannot read
 chart_digest="${layer%% *}"
 chart_file="${chart_dir}/${layer#* }"
 if [[ "$(sha256_file "${chart_file}")" != "${chart_digest}" ]]; then
-  run oras pull "${chart_ref}" -o "${chart_dir}"
+  # oras pull skips a layer without a title annotation, which a helm-pushed
+  # chart has none of; fetch the layer blob by its digest into our own name.
+  mkdir -p "${chart_dir}"
+  # shellcheck disable=SC2046
+  run oras blob fetch $(oras_flags "${chart_ref}") --output "${chart_file}" "${chart_ref%%@*}@${chart_digest}"
 fi
 chart_have="$(sha256_file "${chart_file}")"
 if [[ -n "${DRY_RUN}" ]]; then
@@ -381,7 +385,11 @@ layer="$(chart_layer "${chart_ref}" spire-crds-0.6.1.tgz)" || die "cannot read t
 chart_digest="${layer%% *}"
 chart_file="${chart_dir}/${layer#* }"
 if [[ "$(sha256_file "${chart_file}")" != "${chart_digest}" ]]; then
-  run oras pull "${chart_ref}" -o "${chart_dir}"
+  # oras pull skips a layer without a title annotation, which a helm-pushed
+  # chart has none of; fetch the layer blob by its digest into our own name.
+  mkdir -p "${chart_dir}"
+  # shellcheck disable=SC2046
+  run oras blob fetch $(oras_flags "${chart_ref}") --output "${chart_file}" "${chart_ref%%@*}@${chart_digest}"
 fi
 chart_have="$(sha256_file "${chart_file}")"
 if [[ -n "${DRY_RUN}" ]]; then
@@ -403,7 +411,11 @@ layer="$(chart_layer "${chart_ref}" temporal-0.74.0.tgz)" || die "cannot read th
 chart_digest="${layer%% *}"
 chart_file="${chart_dir}/${layer#* }"
 if [[ "$(sha256_file "${chart_file}")" != "${chart_digest}" ]]; then
-  run oras pull "${chart_ref}" -o "${chart_dir}"
+  # oras pull skips a layer without a title annotation, which a helm-pushed
+  # chart has none of; fetch the layer blob by its digest into our own name.
+  mkdir -p "${chart_dir}"
+  # shellcheck disable=SC2046
+  run oras blob fetch $(oras_flags "${chart_ref}") --output "${chart_file}" "${chart_ref%%@*}@${chart_digest}"
 fi
 chart_have="$(sha256_file "${chart_file}")"
 if [[ -n "${DRY_RUN}" ]]; then
@@ -432,7 +444,11 @@ layer="$(chart_layer "${chart_ref}" spire-0.30.1.tgz)" || die "cannot read the c
 chart_digest="${layer%% *}"
 chart_file="${chart_dir}/${layer#* }"
 if [[ "$(sha256_file "${chart_file}")" != "${chart_digest}" ]]; then
-  run oras pull "${chart_ref}" -o "${chart_dir}"
+  # oras pull skips a layer without a title annotation, which a helm-pushed
+  # chart has none of; fetch the layer blob by its digest into our own name.
+  mkdir -p "${chart_dir}"
+  # shellcheck disable=SC2046
+  run oras blob fetch $(oras_flags "${chart_ref}") --output "${chart_file}" "${chart_ref%%@*}@${chart_digest}"
 fi
 chart_have="$(sha256_file "${chart_file}")"
 if [[ -n "${DRY_RUN}" ]]; then
