@@ -276,7 +276,7 @@ For security patches that cannot wait for the next regular release:
 
 1. Branch from the tag that needs patching: `git checkout -b fix/v0.1.1 v0.1.0`
 2. Cherry-pick or apply the fix.
-3. Follow steps 1–4 above with the patch version incremented.
+3. For a base-managed component, update its `VERSION` on this branch, then follow steps 1–4 above with the patch version incremented.
 4. Backport to `main` if the fix applies there too.
 
 ## Pre-releases
