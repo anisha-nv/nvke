@@ -114,6 +114,12 @@ jobs:
             go.work.sum
             **/go.sum
 
+      - name: Validate component release lineage
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: ./.github/actions/check-component-release
+        with:
+          component: agent
+
       - name: Install the Debian packaging tools
         run: |
           set -euo pipefail

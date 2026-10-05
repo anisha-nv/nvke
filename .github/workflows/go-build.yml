@@ -100,6 +100,9 @@ jobs:
       - name: Check the Go version copies agree with go.work
         run: make go-version-check
 
+      - name: Test release tag checks
+        run: go test -race ./hack/check-release.go ./hack/check-release_test.go
+
       # make/tool-versions.mk owns every tool pin. This is what notices a
       # second declaration of one, which is the only way two can disagree.
       # Reads files only, so it is safe for a fork pull request.

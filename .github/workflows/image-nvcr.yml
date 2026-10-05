@@ -86,6 +86,12 @@ jobs:
           fetch-depth: 0          # git describe needs history and tags
           persist-credentials: false
 
+      - name: Validate component release lineage
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: ./.github/actions/check-component-release
+        with:
+          component: controller
+
       # The docker-container driver runs BuildKit in its own container, so it
       # does not inherit the daemon's registry-mirror configuration. NVIDIA
       # runners ship a prepopulated buildkitd.toml pointing at the local mirror;

@@ -92,6 +92,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Validate component release lineage
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: ./.github/actions/check-component-release
+        with:
+          component: controller
+
       # Version pins come from make/versions.mk, so `make show-versions` and CI
       # cannot disagree.
       - name: Read pinned tool versions

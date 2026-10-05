@@ -259,6 +259,17 @@ transitively through `checksums.txt`, which names the chart archive whose
 digest is the chart layer on GHCR; the rest are follow-up work along the pattern in
 `image-nvcr.yml`.
 
+## Component tag checks
+
+The next bases are in `controller/VERSION`, `agent/VERSION`, `cli/VERSION`,
+`os-image/VERSION` and `cluster-api-provider-provisioned/VERSION`. Start their
+new RC series at `rc.0`; after GA, bump the intended base in a reviewed PR.
+
+Tag publishers check the namespace, configured base, remote commit and same-line
+GA history before publication. The five base-managed components require an
+initial `rc.0`; other components keep their existing version policy. Tag creation
+remains manual. Historical commits retain their historical workflows.
+
 ## Hotfix releases
 
 For security patches that cannot wait for the next regular release:
@@ -271,7 +282,7 @@ For security patches that cannot wait for the next regular release:
 ## Pre-releases
 
 For release candidates, append `-rc.N` to the version: `v0.2.0-rc.1`, or
-`cli/v0.2.0-rc.1` for one component. Tag and push the same way.
+`cli/v0.2.0-rc.0` for one component. Tag and push the same way.
 
 **The dot in `-rc.N` is load-bearing.** `.github/workflows/release.yml` marks
 the release as a pre-release by looking for `-rc.`, so `v0.2.0-rc1` without it

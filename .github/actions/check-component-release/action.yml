@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Check component release
+description: Validate the triggering tag against its component base and remote GA history.
+inputs:
+  component:
+    description: Component directory, or repository for a root tag
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.work
+    - shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+        GH_TOKEN: ${{ github.token }}
+      run: go run ./hack/check-release.go "${COMPONENT}"

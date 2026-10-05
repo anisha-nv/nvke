@@ -43,6 +43,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Validate component release lineage
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: ./.github/actions/check-component-release
+        with:
+          component: nktp
+
       - name: Read pinned tool versions
         id: versions
         run: |

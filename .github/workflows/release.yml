@@ -125,6 +125,11 @@ jobs:
         with:
           go-version-file: go.work
 
+      - name: Validate component release lineage
+        uses: ./.github/actions/check-component-release
+        with:
+          component: ${{ steps.component.outputs.dir || 'repository' }}
+
       # What each component ships differs, so it is declared rather than guessed.
       # A component with no artifacts still gets a release: the tag and its notes
       # are the point and the files are a bonus.

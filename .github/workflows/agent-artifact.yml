@@ -85,6 +85,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Validate component release lineage
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: ./.github/actions/check-component-release
+        with:
+          component: agent
+
       # go.work carries the highest Go version of any member module, so the
       # toolchain it selects satisfies all of them.
       - name: Set up Go
