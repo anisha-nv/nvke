@@ -480,6 +480,8 @@ Patch the Cluster API controllers to authenticate to tenant clusters with SPIFFE
 
 **API authentication is off by default.** The controller API is plain HTTP on NodePort `30080` on every node IP, with no token required. Anyone who can reach a node can call every endpoint. Turn authentication on before exposing the site: [Configuring NKE API Authentication](../../controller/docs/configuring-api-authentication.md).
 
+**The API is reachable from in-cluster pods only by default.** The default install exposes the API on NodePort `30080`, and the chart's NetworkPolicy admits that port only from pods in the cluster. Every other ingress is denied, so `nkectl` on an operator machine times out. Set `API_CLIENT_CIDRS` to the operator's network, space separated, before running this stage: `API_CLIENT_CIDRS="10.0.0.0/8" ./06-secure-and-register.sh run`. The stage then applies a second NetworkPolicy, `cloud-workflow-engine-api-clients`, that admits those CIDRs to the controller pod on port 8080. Server-side apply makes it safe to rerun with another list. Unset, nothing is applied and the API is unreachable from outside the cluster.
+
 <!-- stage:06-secure-and-register begin -->
 ```bash
 run "${HACK_DIR}/apply-capi-spiffe-exec-auth.sh" --kubeconfig "${SITE_KUBECONFIG}"
@@ -495,13 +497,15 @@ run nkectl get providers
 
 ### Check
 
-The patched Cluster API Deployments finish their rollout. `nkectl get providers` lists `nico` as `CONFIGURED`.
+The patched Cluster API Deployments finish their rollout. `nkectl get providers` lists `nico` as `CONFIGURED`. `GET http://SITE_VIP:30080/api/version` answers `200` from the runner within 10 seconds. `nkectl get providers` reads the kubeconfig, not the API, so this request is the proof that the API answers off the nodes.
 
 `CONFIGURED` means the CRDs are established, the controller runs and the credentials Secret exists. It does not prove the credentials work. CAPNICo reads the Secret on every reconcile, so a corrected Secret takes effect without a restart.
 
 ### If It Fails
 
 The rollout waits for the `csi.spiffe.io` CSIDriver, which the SPIRE release installs. If it is missing, stage 6 did not finish. `clusterctl upgrade` replaces the patched Deployments, so run this stage again after every Cluster API upgrade.
+
+`/api/version` does not answer from the runner when the runner's network is not in `API_CLIENT_CIDRS`. Export it and run the stage again. `kubectl -n cloud-workflow-engine get networkpolicy` lists the chart's policy and, when applied, `cloud-workflow-engine-api-clients`.
 
 ## Remove
 
