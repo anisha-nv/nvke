@@ -57,6 +57,8 @@ internal-config-check: ## Check the tree names no internal infrastructure. (run 
 # with --online, which also resolves and renders each chart for real.
 deploy-path-check: ## Check the tenant runtime deploy path is installable and self-contained. (run by the merge gate)
 	@python3 -B hack/deploy-path-namespaces_test.py -q
+	@python3 -B hack/deploy-path-images_test.py -q
+	@python3 -B hack/deploy-path-check_test.py -q
 	@./hack/deploy-path-check.sh
 
 # helm lint and helm template both pass on a manifest Kubernetes would reject, so

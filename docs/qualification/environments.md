@@ -112,13 +112,14 @@ instance types can still host a tenant control plane with
 only GPU requests take `gpu`: a run naming `gpu=gb200` is choosing the model
 for its GPU worker pools, not asking for a GPU tenant control plane, and
 adding the key to a CPU request would leave nothing at the Forge site able to
-answer it.
+answer it. A `machineType` in `-e2e.capabilities` fails the run, naming the
+two flags above, rather than being dropped.
 
 **Tenant worker pools ask by position.** `clusterShape.workerPoolCapabilities`
 holds one capability set per entry in `workerPools`; a pool with no entry gets
 a CPU instance type, so a tenant cluster can carry a CPU worker pool beside a
 GPU worker pool. The `nico-forge` entry has one worker pool and asks for
-`{machineType: gpu, arch: amd64}`, answered
+`{machineType: gpu}`, plus the run's `arch` if it names one, answered
 with `gpu.l40sx8.ovx.t1.ib`. Run 36209850156 selected it and the node came back
 as an `NVIDIA-L40S` on driver `580.126.20`, so a single run exercises both
 types the site declares. Asking by property rather than by id is what makes

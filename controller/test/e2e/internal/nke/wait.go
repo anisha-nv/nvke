@@ -57,35 +57,58 @@ func (c *Client) WaitForClusterReady(ctx context.Context, id openapi_types.UUID)
 // still there. It is deliberately distinct from a deletion CWE reports as
 // failed, so a caller willing to tolerate infrastructure that is merely slow
 // can match this one and still fail on the other.
+//
+// It is returned only when the last poll read the cluster back. A budget spent
+// on transport errors or unexpected statuses says nothing about the delete, so
+// that timeout is a plain error carrying the last failure instead.
 var ErrClusterDeleteTimeout = errors.New("cluster delete timed out")
 
 // WaitForClusterDeleted polls the cluster until it returns 404, erroring if the
-// Deleting condition flips to False, the deadline passes, or ctx is done.
+// Deleting condition flips to False, Options.Delete passes, or ctx is done.
 func (c *Client) WaitForClusterDeleted(ctx context.Context, id openapi_types.UUID) error {
-	deadline := time.After(c.opts.Delete)
+	return c.WaitForClusterDeletedWithin(ctx, id, c.opts.Delete)
+}
+
+// WaitForClusterDeletedWithin is WaitForClusterDeleted with budget in place of
+// Options.Delete, for a caller whose own timeout is shorter than that.
+func (c *Client) WaitForClusterDeletedWithin(ctx context.Context, id openapi_types.UUID, budget time.Duration) error {
+	deadline := time.After(budget)
 	ticker := time.NewTicker(c.opts.Poll)
 	defer ticker.Stop()
 
+	observed := false
+	lastError := noLastError
 	for {
 		select {
 		case <-deadline:
-			return fmt.Errorf("%w: cluster %s after %v", ErrClusterDeleteTimeout, id, c.opts.Delete)
+			if observed {
+				return fmt.Errorf("%w: cluster %s after %v", ErrClusterDeleteTimeout, id, budget)
+			}
+			return fmt.Errorf("timeout after %v waiting for cluster %s to be deleted, and the last poll could not read it (last error: %s)", budget, id, lastError)
 		case <-ctx.Done():
-			return fmt.Errorf("waiting for cluster %s to be deleted: %w", id, ctx.Err())
+			return fmt.Errorf("waiting for cluster %s to be deleted (last error: %s): %w", id, lastError, ctx.Err())
 		case <-ticker.C:
 			resp, err := c.api.GetClusterWithResponse(ctx, id)
 			if err != nil {
-				// Transient network error; keep polling until the deadline.
+				// Possibly transient; keep polling, but stop counting the
+				// cluster as observed until a read succeeds again.
+				observed = false
+				lastError = err.Error()
 				continue
 			}
-			if resp.StatusCode() == 404 {
+			switch {
+			case resp.StatusCode() == 404:
 				return nil
-			}
-			if resp.StatusCode() == 200 && resp.JSON200 != nil {
+			case resp.StatusCode() == 200 && resp.JSON200 != nil:
 				cluster := resp.JSON200
 				if cluster.Conditions.Deleting.Status == api.ConditionStatusFalse {
 					return fmt.Errorf("cluster %s deletion failed: %s", cluster.Name, cluster.Conditions.Deleting.Message)
 				}
+				observed = true
+				lastError = noLastError
+			default:
+				observed = false
+				lastError = fmt.Sprintf("unexpected status %s: %s", resp.Status(), resp.Body)
 			}
 		}
 	}

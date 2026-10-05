@@ -222,19 +222,25 @@ func (r *Runner) DeleteCluster(ctx context.Context, id openapi_types.UUID) error
 // erroring if Timeouts.Delete passes or ctx is done. The cluster must already
 // be known to this Runner: a listing would stop finding it partway through.
 func (r *Runner) WaitForClusterDeleted(ctx context.Context, id openapi_types.UUID) error {
+	return r.WaitForClusterDeletedWithin(ctx, id, r.timeouts.Delete)
+}
+
+// WaitForClusterDeletedWithin is WaitForClusterDeleted with budget in place of
+// Timeouts.Delete.
+func (r *Runner) WaitForClusterDeletedWithin(ctx context.Context, id openapi_types.UUID, budget time.Duration) error {
 	name, ok := r.clusterNames[id]
 	if !ok {
 		return fmt.Errorf("no cached name for cluster %s, so its deletion cannot be awaited", id)
 	}
 
-	deadline := time.After(r.timeouts.Delete)
+	deadline := time.After(budget)
 	ticker := time.NewTicker(r.timeouts.Poll)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-deadline:
-			return fmt.Errorf("timeout after %v waiting for cluster %s to be deleted", r.timeouts.Delete, name)
+			return fmt.Errorf("timeout after %v waiting for cluster %s to be deleted", budget, name)
 		case <-ctx.Done():
 			return fmt.Errorf("waiting for cluster %s to be deleted: %w", name, ctx.Err())
 		case <-ticker.C:

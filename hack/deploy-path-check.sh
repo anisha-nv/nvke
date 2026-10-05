@@ -72,14 +72,13 @@ declare -a PUBLIC_IMAGE_REPOS=(
   'registry.k8s.io'
 )
 
-# image_refs FILE...: the image repositories YAML names -- each `repository:`
-# value, and each `image:` value carrying a path. A bare `image: driver` is a
-# name under a separate `repository:`, which is the one checked.
+# image_refs FILE...: the image references YAML names -- each `repository:`
+# value, each `image:` value carrying a path, and a container's own `image:`
+# even without one. Any other bare `image: driver` is a name under a separate
+# `repository:`, which is the one checked. hack/deploy-path-images.py says how
+# the two are told apart.
 image_refs() {
-  grep -hE '^[[:space:]]*-?[[:space:]]*(repository|image):' "$@" 2>/dev/null |
-    sed -E -e 's/^[[:space:]]*-?[[:space:]]*(repository|image):[[:space:]]*//' \
-      -e 's/[[:space:]]+#.*$//' -e "s/^[\"']//" -e "s/[\"']$//" |
-    grep '/' | sort -u || true
+  python3 -B hack/deploy-path-images.py "$@"
 }
 
 # check_image_refs LABEL < refs: fail each reference outside the allowlist.
@@ -96,6 +95,8 @@ check_image_refs() {
     done
     if [[ -n "${ok}" ]]; then
       pass "${label}: image ${ref}"
+    elif [[ "${ref}" != */* ]]; then
+      fail "${label}: image ${ref} names no registry, so it would pull from Docker Hub"
     else
       fail "${label}: image ${ref} is not from an allowlisted public registry"
     fi
@@ -299,7 +300,9 @@ if [[ -n "${ONLINE}" ]]; then
       check_image_refs "${item} rendered" < <(printf '%s\n' "${out}" | image_refs -)
     else
       fail "${item}: ${chart} ${version} did not render:"
-      printf '        %s\n' "${out}" | head -20
+      # sed rather than head: head exits early, and under pipefail the
+      # SIGPIPE that leaves printf would end the script before the summary.
+      printf '%s\n' "${out}" | sed -n -e '1,20s/^/        /p'
     fi
   done
 fi

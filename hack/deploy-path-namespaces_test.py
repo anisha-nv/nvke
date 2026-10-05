@@ -41,6 +41,15 @@ class Namespaces(unittest.TestCase):
         text = "kind: Namespace\nmetadata: {name: gpu-operator, labels: {a: b}}\n"
         self.assertEqual(names(text), ["gpu-operator"])
 
+    def test_flow_metadata_quoted_key(self):
+        for text in ('kind: Namespace\nmetadata: {"name": "gpu-operator"}\n',
+                     "kind: Namespace\nmetadata: {'name': 'gpu-operator'}\n"):
+            self.assertEqual(names(text), ["gpu-operator"], text)
+
+    def test_block_quoted_key(self):
+        for key in ('"name"', "'name'"):
+            self.assertEqual(names(NS.replace("  name:", "  %s:" % key)), ["gpu-operator"], key)
+
     def test_flow_metadata_nested_name_ignored(self):
         text = "kind: Namespace\nmetadata: {labels: {name: gpu-operator}, name: actual-namespace}\n"
         self.assertEqual(names(text), ["actual-namespace"])

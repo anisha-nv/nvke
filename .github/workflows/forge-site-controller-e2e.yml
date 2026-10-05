@@ -271,24 +271,46 @@ jobs:
             go.work.sum
             **/go.sum
 
-      # helm and python3 are what build/use-nke-sbom.sh runs on. The tenant
-      # GPU runtime is installed from this runner, because the runner is where
-      # a relayed tenant kubeconfig resolves; the Site Controller install needs
-      # neither here, since it runs the same script over SSH on the node itself.
-      # Only `full` creates a tenant, so the other stages skip all three steps.
-      - name: Resolve the Helm version
+      # helm, kubectl and python3 are what build/use-nke-sbom.sh runs on. The
+      # tenant GPU runtime is installed from this runner, because the runner is
+      # where a relayed tenant kubeconfig resolves; the Site Controller install
+      # needs none of them here, since it runs the same script over SSH on the
+      # node itself. Only `full` creates a tenant, so the other stages skip the
+      # steps below.
+      #
+      # Each value is checked before it is written: `set -e` does not fire on a
+      # failed $(...) inside `echo "k=$(...)"`, and setup-helm resolves an empty
+      # version to its own default rather than failing.
+      - name: Resolve the tool versions
         if: env.SITE_CONTROLLER_STAGE == 'full'
         id: versions
         shell: bash
         run: |
           set -Eeuo pipefail
-          echo "helm_version=$(make --no-print-directory print-HELM_VERSION)" >> "$GITHUB_OUTPUT"
+          for var in HELM_VERSION KIND_VERSION KUBECTL_VERSION; do
+            value="$(make --no-print-directory "print-${var}")"
+            if [ -z "${value}" ]; then
+              echo "::error::make print-${var} returned nothing; make/tool-versions.mk is broken"
+              exit 1
+            fi
+            echo "$(echo "${var}" | tr '[:upper:]' '[:lower:]')=${value}" >> "$GITHUB_OUTPUT"
+          done
 
       - name: Set up Helm
         if: env.SITE_CONTROLLER_STAGE == 'full'
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: ${{ steps.versions.outputs.helm_version }}
+
+      # The kubectl the namespaces item applies with, pinned and digest-checked
+      # rather than whatever the runner image ships. setup-kind is the one
+      # action that installs it; the kind binary it adds goes unused here.
+      - name: Set up kubectl
+        if: env.SITE_CONTROLLER_STAGE == 'full'
+        uses: ./.github/actions/setup-kind
+        with:
+          kind_version: ${{ steps.versions.outputs.kind_version }}
+          kubectl_version: ${{ steps.versions.outputs.kubectl_version }}
 
       # Checked here so a missing interpreter, or a deploy path that cannot
       # install, fails in the first minute rather than after forty minutes of
@@ -304,6 +326,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           helm version --short
+          kubectl version --client
           python3 --version
           ./hack/deploy-path-check.sh --online
 

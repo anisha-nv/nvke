@@ -70,7 +70,9 @@ jobs:
             # in step with what the smoke asserts on; capd-e2e.yml mirrors it as
             # push globs. The rest of cli/ cannot break against CWE, and skips.
             cwe_facing='^cli/(cmd/|internal/(clients|clusterstate|cwe|providers|bootstrap/sitecluster|util)/)'
-            e2e_unrelated='(^|/)docs/|^cli/|^cluster-api-provider-provisioned/'
+            # The tenant GPU runtime is installed only by the Forge lane, which
+            # does not use this filter; deploy-path-check gates it in the merge gate.
+            e2e_unrelated='(^|/)docs/|^cli/|^cluster-api-provider-provisioned/|^controller/deploy/tenant-runtime/'
 
             if [[ -n "$changed_files" ]] && ! grep -qEv "$e2e_unrelated" <<< "$changed_files"; then
               if grep -qE "$cwe_facing" <<< "$changed_files"; then

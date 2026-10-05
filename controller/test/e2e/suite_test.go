@@ -122,7 +122,7 @@ func instanceTypeRequest(flagName, flagValue string, defaults map[string]string)
 	if err != nil {
 		return nil, err
 	}
-	return environment.InstanceTypeRequest(defaults, override, run), nil
+	return environment.InstanceTypeRequest(defaults, override, run)
 }
 
 // forgeEnvironment resolves -e2e.environment as a Forge declaration. Loaded on

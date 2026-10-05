@@ -8,7 +8,7 @@ Reads every *.yaml and *.yaml.tmpl in the directory -- only files that exist,
 so an item holding only templates is still read -- and every `---` document in
 each. A document counts when its top-level `kind` is Namespace; the name is
 the direct child `name` of its top-level `metadata`, in whichever order the two
-keys appear, quoted or not.
+keys appear, with the key and the value each quoted or not.
 
 kubectl is what applies these, so the test is "would kubectl create this
 namespace", not "is this formatted the way the last author formatted it".
@@ -24,7 +24,7 @@ import sys
 
 DOC_SEP = re.compile(r"(?m)^---[ \t]*(?:#.*)?$")
 TOP_KEY = re.compile(r"^([A-Za-z_][\w.-]*):(.*)$")
-NAME = re.compile(r"^\s+name:(.*)$")
+NAME = re.compile(r"""^\s+(["']?)name\1:(.*)$""")
 
 
 def scalar(value):
@@ -59,7 +59,7 @@ def flow_name(mapping):
         current.append(char)
     for entry in entries:
         key, sep, value = entry.partition(":")
-        if sep and key.strip() == "name":
+        if sep and scalar(key) == "name":
             return scalar(value)
     return None
 
@@ -90,7 +90,7 @@ def namespaces(text):
             if indent == child_indent:
                 match = NAME.match(line)
                 if match:
-                    name = scalar(match.group(1))
+                    name = scalar(match.group(2))
         if kind == "Namespace" and name:
             yield name
 

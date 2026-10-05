@@ -327,7 +327,7 @@ pool, like the Site Controller, is CPU unless the run passes
 `-e2e.tenant-control-plane-capabilities`; each tenant worker pool asks for its
 own through `clusterShape.workerPoolCapabilities`, so the Forge entry's one
 worker pool asks for
-`{machineType: gpu, arch: amd64}` and the environment answers with an id (see
+`{machineType: gpu}`, plus the run's `arch` if it names one, and the environment answers with an id (see
 [how a machine gets chosen](environments.md#how-a-machine-gets-chosen)). Asking by property rather than by id is what
 keeps the entry portable: a site whose GPU is something else still answers, and
 a site with none fails saying so instead of quietly booting a CPU machine. At
@@ -343,7 +343,11 @@ machine, and the cluster is not gone until both of its machines are.
 That budget still measures a healthy release, but it no longer decides the
 verdict by itself. A backend marked `releaseIsBestEffort` tolerates the wait
 running out, and only that: `WaitForClusterDeleted` wraps
-`ErrClusterDeleteTimeout`, so a deletion CWE reports as failed still fails. What
+`ErrClusterDeleteTimeout`, so a deletion CWE reports as failed still fails. It
+wraps it only when its last poll read the cluster back, so a budget spent on
+transport errors or unexpected statuses fails too, carrying the last of them.
+The AfterAll cleanup caps its wait at 12 minutes, inside its own 15-minute
+timeout, so the tolerance applies there as well. What
 the spec asserts is what NKE does — CWE accepts the delete, drives it, and does
 not report it failed — all of which is observable in minutes, unlike a machine
 stuck in the initramfs.
@@ -384,9 +388,10 @@ dominated by hardware rather than by anything in the suite:
 | deletes the cluster | 1471.3s |
 | garbage-collects the tenant-access admin kubeconfig secret | 7.1s |
 
-The GPU node came back as `NVIDIA-L40S` on driver `580.126.20`, and readiness
-cost 265 seconds of operator install against a budget of 40 minutes, so the
-generous GPU timeout is covering a risk that has not yet materialised.
+The GPU node came back as `NVIDIA-L40S` on driver `580.126.20`. The operator
+install took 265 seconds against its 25-minute budget, and the GPU was then
+advertised in 1.9 seconds against a budget of 40 minutes, so the generous GPU
+timeouts are covering a risk that has not yet materialised.
 
 The delete finished in 1471 seconds, inside the 45-minute budget, so the
 best-effort path described above was not used. The way to tell from a log is

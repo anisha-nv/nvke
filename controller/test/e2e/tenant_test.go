@@ -49,6 +49,7 @@ type clusterLifecycle interface {
 	WaitForClusterReady(ctx context.Context, id openapi_types.UUID) (*api.Cluster, error)
 	DeleteCluster(ctx context.Context, id openapi_types.UUID) error
 	WaitForClusterDeleted(ctx context.Context, id openapi_types.UUID) error
+	WaitForClusterDeletedWithin(ctx context.Context, id openapi_types.UUID, budget time.Duration) error
 }
 
 // tenantTest carries everything a backend's specs share: the wiring built once
@@ -73,6 +74,9 @@ type tenantTest struct {
 	// cascadePoolID is set by the node-pool cascade post-create spec and read by
 	// its post-delete counterpart to prove cluster deletion removed the pool.
 	cascadePoolID uuid.UUID
+	// gpuRuntimeInstalled is set by the GPU runtime install spec and gates the
+	// GPU specs after it.
+	gpuRuntimeInstalled bool
 }
 
 var _ = DescribeTableSubtree("NKE with backend", withNicoVMSOSProfileEntries(
@@ -425,12 +429,12 @@ func nicoForgeTenant() testSpec {
 			// on. Asking for {machineType: gpu} rather than for the L40S by
 			// name keeps the entry portable: a site whose GPU is something
 			// else still answers, and a site with no GPU at all fails saying
-			// so.
+			// so. No arch either, so the run's -e2e.capabilities decides it.
 			//
 			// One worker, not the fleet's two. Two proves nothing here that
 			// one does not -- the assertion is that a GPU node works, not
 			// that several do -- and each is eight L40S.
-			workerPoolCapabilities: []map[string]string{{"machineType": "gpu", "arch": "amd64"}},
+			workerPoolCapabilities: []map[string]string{{"machineType": "gpu"}},
 		},
 		// Generous next to the simulator lanes: these timeouts cover a bare
 		// machine booting an OS image over the network and installing
@@ -610,7 +614,7 @@ func tenantSubtree(resolve managementResolver) func(spec testSpec) {
 			}
 
 			deleteWaited = true
-			deleted = test.deleteClusterAndWait(ctx, spec.releaseIsBestEffort)
+			deleted = test.deleteClusterAndWait(ctx, spec.releaseIsBestEffort, nke.WithDefaults(test.timeouts).Delete)
 		}, Label("lifecycle"), NodeTimeout(1*time.Hour))
 
 		Describe("after cluster deletion", func() {
@@ -676,12 +680,15 @@ func tenantSubtree(resolve managementResolver) func(spec testSpec) {
 				GinkgoLogr.Info("tenant delete already timed out; leaving it to the site sweep rather than waiting again",
 					"cluster", test.cluster.ID)
 			default:
-				test.deleteClusterAndWait(ctx, spec.releaseIsBestEffort)
+				test.deleteClusterAndWait(ctx, spec.releaseIsBestEffort,
+					min(nke.WithDefaults(test.timeouts).Delete, cleanupDeleteBudget))
 			}
 			// Sized to what this node can actually contain rather than to the
-			// suite: WaitForClusterDeleted is bounded by the entry's
-			// nke.Options.Delete, which is 5 or 10 minutes everywhere above,
-			// so fifteen leaves half again over the largest of them.
+			// suite. The wait above is the entry's nke.Options.Delete capped at
+			// cleanupDeleteBudget: the simulator entries' 5 or 10 minutes fit
+			// whole, and nico-forge's 45 is cut to 12, so its wait still ends
+			// on a budget releaseIsBestEffort can tolerate rather than on this
+			// node's context, which it cannot.
 			//
 			// It was an hour, and that is the number that matters on the
 			// interrupt path. A cleanup node entered after the suite is
@@ -691,7 +698,7 @@ func tenantSubtree(resolve managementResolver) func(spec testSpec) {
 			// and that backstop panics without unwinding, which leaks the
 			// site's instance. See the three nested timeouts in
 			// forge-site-controller-e2e.yml.
-		}, NodeTimeout(15*time.Minute))
+		}, NodeTimeout(cleanupNodeTimeout))
 	}
 }
 
@@ -1010,9 +1017,9 @@ func validateTenantAccessSecretGCPostDelete(test *tenantTest) {
 	}, Label("lifecycle", "tenant-access", "cleanup"), NodeTimeout(6*time.Minute))
 }
 
-// deleteClusterAndWait deletes the tenant cluster and blocks until CWE reports
-// it gone (404), returning whether it confirmed that. Shared by the delete spec
-// and the AfterAll cleanup.
+// deleteClusterAndWait deletes the tenant cluster and blocks up to budget until
+// CWE reports it gone (404), returning whether it confirmed that. Shared by the
+// delete spec and the AfterAll cleanup.
 //
 // releaseIsBestEffort tolerates the wait running out of time, and only that. What
 // this lane qualifies is NKE: that CWE accepts the delete, drives it, and does
@@ -1025,13 +1032,13 @@ func validateTenantAccessSecretGCPostDelete(test *tenantTest) {
 // netbooting. It sat there while the instance reported Terminating for hours.
 // That is not slowness to size a budget against, and no verdict here would fix
 // it. A deletion CWE reports as failed is a real defect and still fails.
-func (t *tenantTest) deleteClusterAndWait(ctx context.Context, releaseIsBestEffort bool) bool {
+func (t *tenantTest) deleteClusterAndWait(ctx context.Context, releaseIsBestEffort bool, budget time.Duration) bool {
 	GinkgoHelper()
 	By("Deleting the tenant cluster")
 	Expect(t.lifecycle.DeleteCluster(ctx, t.cluster.ID)).To(Succeed())
 
 	By("Waiting for the tenant cluster to be deleted")
-	err := t.lifecycle.WaitForClusterDeleted(ctx, t.cluster.ID)
+	err := t.lifecycle.WaitForClusterDeletedWithin(ctx, t.cluster.ID, budget)
 	if releaseIsBestEffort && errors.Is(err, nke.ErrClusterDeleteTimeout) {
 		// A report entry rather than only a log line: a green run that left
 		// a machine unreleased has to say so where the verdict is read.
@@ -1050,6 +1057,14 @@ func (t *tenantTest) deleteClusterAndWait(ctx context.Context, releaseIsBestEffo
 // code rather than the e2e config file. Per-backend waiter timeouts live on the
 // testSpec entries above.
 const (
+	// cleanupNodeTimeout bounds the tenant AfterAll; the comment there says
+	// why it is no larger.
+	cleanupNodeTimeout = 15 * time.Minute
+	// cleanupDeleteBudget caps the AfterAll's delete wait below
+	// cleanupNodeTimeout, leaving the rest for the delete request and the
+	// nkectl sweep.
+	cleanupDeleteBudget = 12 * time.Minute
+
 	clusterNamePrefix        = "e2e" // CreateCluster appends the backend and a timestamp
 	defaultKubernetesVersion = "1.34.2"
 	CNIPluginCalico          = "calico"

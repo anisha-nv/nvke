@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -18,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/dsx-ai-factory/nke/controller/test/e2e/internal/kube"
 )
@@ -66,6 +69,11 @@ const (
 	gpuReadyBudget = 40 * time.Minute
 	// cudaWorkloadBudget is a pull and a few seconds of arithmetic.
 	cudaWorkloadBudget = 10 * time.Minute
+
+	// installerWaitDelay is how long the installer's helm and kubectl get to
+	// exit after its process group is killed, before Wait stops waiting on
+	// their output.
+	installerWaitDelay = 30 * time.Second
 )
 
 // validateGPURuntimePostCreate installs the GPU runtime into the tenant and
@@ -77,12 +85,23 @@ const (
 func validateGPURuntimePostCreate(test *tenantTest) {
 	It("installs the tenant GPU runtime", func(ctx context.Context) {
 		installTenantRuntime(ctx, test)
+		test.gpuRuntimeInstalled = true
 	}, Label("readiness", "gpu"), NodeTimeout(runtimeInstallBudget))
 
+	// The entry is ContinueOnFailure, so without this the two specs below
+	// would spend their whole budgets, most of an hour of GPU machine time,
+	// waiting on a runtime already known not to have installed.
+	skipUnlessGPURuntimeInstalled := func() {
+		if !test.gpuRuntimeInstalled {
+			Skip("tenant GPU runtime did not install")
+		}
+	}
+
 	It("advertises an allocatable GPU on a worker node", func(ctx context.Context) {
+		skipUnlessGPURuntimeInstalled()
 		adminClient := expectSucceed(test.tenantClients.GetAdminClient(ctx, test.cluster.Name))
 
-		By("Waiting for the device plugin to advertise an allocatable GPU")
+		By("Waiting for the device plugin to advertise an allocatable GPU and feature discovery to label it")
 		var gpuNode corev1.Node
 		Eventually(func(ctx context.Context) error {
 			node, err := firstGPUNode(ctx, adminClient)
@@ -96,19 +115,15 @@ func validateGPURuntimePostCreate(test *tenantTest) {
 			WithPolling(30*time.Second).
 			Should(Succeed(), "a GPU node should become schedulable for GPU work")
 
-		By("Checking GPU feature discovery labeled the node")
-		product := gpuNode.Labels[gpuProductLabel]
-		Expect(product).NotTo(BeEmpty(),
-			"node %s advertises a GPU but carries no %s label, so feature discovery did not run",
-			gpuNode.Name, gpuProductLabel)
 		GinkgoLogr.Info("GPU node ready",
 			"node", gpuNode.Name,
-			"product", product,
+			"product", gpuNode.Labels[gpuProductLabel],
 			"allocatable", gpuNode.Status.Allocatable[gpuResourceName],
 			"driver", gpuNode.Labels["nvidia.com/cuda.driver-version.full"])
 	}, Label("readiness", "gpu"), NodeTimeout(gpuReadyBudget+5*time.Minute))
 
 	It("runs a CUDA workload on a GPU node", func(ctx context.Context) {
+		skipUnlessGPURuntimeInstalled()
 		adminClient := expectSucceed(test.tenantClients.GetAdminClient(ctx, test.cluster.Name))
 
 		// An ordinary namespaced pod that asks for the resource by name, not
@@ -176,6 +191,12 @@ func installTenantRuntime(ctx context.Context, test *tenantTest) {
 	)
 	command.Stdout = GinkgoWriter
 	command.Stderr = GinkgoWriter
+	// GinkgoWriter is not a file, so the children write through pipes, and
+	// killing bash alone would leave helm and kubectl changing the tenant
+	// after the spec has timed out, with Run waiting on them. Kill the group.
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Cancel = func() error { return syscall.Kill(-command.Process.Pid, syscall.SIGKILL) }
+	command.WaitDelay = installerWaitDelay
 	Expect(command.Run()).To(Succeed(), "should install the %s deploy path", tenantRuntimeTarget)
 }
 
@@ -190,7 +211,7 @@ func installTenantRuntime(ctx context.Context, test *tenantTest) {
 func writeTenantKubeconfig(ctx context.Context, test *tenantTest) string {
 	GinkgoHelper()
 
-	kubeconfig := expectSucceed(test.tenantClients.RelayedAdminKubeconfig(ctx, test.cluster.Name))
+	kubeconfig := expectSucceed(test.tenantClients.RelayedAdminKubeconfig(ctx, test.cluster.Name, runtimeInstallBudget))
 	dir, err := os.MkdirTemp("", "nke-e2e-tenant-kubeconfig-")
 	Expect(err).NotTo(HaveOccurred(), "should create a directory for the tenant kubeconfig")
 	DeferCleanup(func() { _ = os.RemoveAll(dir) })
@@ -200,16 +221,30 @@ func writeTenantKubeconfig(ctx context.Context, test *tenantTest) string {
 	return path
 }
 
-// firstGPUNode returns a node advertising at least one allocatable GPU.
+// firstGPUNode returns a node advertising at least one allocatable GPU and
+// carrying the product label feature discovery applies.
+//
+// Both in one check because the device plugin can advertise the GPU before
+// discovery labels the node, and a caller polling on this has to keep polling
+// through that window rather than read the label once.
 func firstGPUNode(ctx context.Context, c client.Client) (corev1.Node, error) {
 	var nodes corev1.NodeList
 	if err := c.List(ctx, &nodes); err != nil {
 		return corev1.Node{}, fmt.Errorf("listing tenant nodes: %w", err)
 	}
+	unlabeled := ""
 	for _, node := range nodes.Items {
-		if quantity, ok := node.Status.Allocatable[gpuResourceName]; ok && !quantity.IsZero() {
+		if quantity, ok := node.Status.Allocatable[gpuResourceName]; !ok || quantity.IsZero() {
+			continue
+		}
+		if node.Labels[gpuProductLabel] != "" {
 			return node, nil
 		}
+		unlabeled = node.Name
+	}
+	if unlabeled != "" {
+		return corev1.Node{}, fmt.Errorf("node %s advertises allocatable %s but carries no %s label, so feature discovery has not run on it",
+			unlabeled, gpuResourceName, gpuProductLabel)
 	}
 	return corev1.Node{}, fmt.Errorf("no node advertises allocatable %s among %d nodes", gpuResourceName, len(nodes.Items))
 }
@@ -221,4 +256,42 @@ func repoRoot(ctx context.Context) string {
 	top, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
 	Expect(err).NotTo(HaveOccurred(), "should find the clone holding the deploy path")
 	return strings.TrimSpace(string(top))
+}
+
+func TestUnit_FirstGPUNodeWaitsForTheProductLabel(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "gpu-worker"},
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{gpuResourceName: resource.MustParse("8")},
+		},
+	}
+	tenant := fake.NewClientBuilder().WithObjects(node).Build()
+
+	_, err := firstGPUNode(t.Context(), tenant)
+	if err == nil || !strings.Contains(err.Error(), gpuProductLabel) {
+		t.Fatalf("firstGPUNode() before discovery labels the node: error = %v, want one naming %s", err, gpuProductLabel)
+	}
+
+	node.Labels = map[string]string{gpuProductLabel: "NVIDIA-L40S"}
+	if updateErr := tenant.Update(t.Context(), node); updateErr != nil {
+		t.Fatal(updateErr)
+	}
+	got, err := firstGPUNode(t.Context(), tenant)
+	if err != nil {
+		t.Fatalf("firstGPUNode() after discovery labels the node: %v", err)
+	}
+	if got.Name != node.Name {
+		t.Errorf("firstGPUNode() = %s, want %s", got.Name, node.Name)
+	}
+}
+
+func TestUnit_FirstGPUNodeIgnoresNodesWithoutAllocatableGPUs(t *testing.T) {
+	labeledOnly := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "cpu-worker", Labels: map[string]string{gpuProductLabel: "NVIDIA-L40S"}},
+	}
+	tenant := fake.NewClientBuilder().WithObjects(labeledOnly).Build()
+
+	if _, err := firstGPUNode(t.Context(), tenant); err == nil {
+		t.Fatal("firstGPUNode() error = nil for a node with no allocatable GPU")
+	}
 }

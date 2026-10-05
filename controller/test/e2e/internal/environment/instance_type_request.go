@@ -4,6 +4,7 @@
 package environment
 
 import (
+	"fmt"
 	"maps"
 )
 
@@ -31,7 +32,15 @@ func DefaultCPURequest() map[string]string {
 // asking for its tenant control plane to be a GPU instance type as well --
 // adding gpu to a CPU request would leave nothing at the Forge site able to
 // answer it.
-func InstanceTypeRequest(defaults, override, run map[string]string) map[string]string {
+//
+// A machineType in run is an error rather than ignored. It cannot mean the same
+// thing for everything placed, and dropping it would put the run on the
+// defaults without a word.
+func InstanceTypeRequest(defaults, override, run map[string]string) (map[string]string, error) {
+	if machineType, ok := run[capabilityMachineType]; ok {
+		return nil, fmt.Errorf("-e2e.capabilities %s=%s selects no instance type: set it with -e2e.site-controller-capabilities or -e2e.tenant-control-plane-capabilities, and a tenant worker pool takes its own from the table entry",
+			capabilityMachineType, machineType)
+	}
 	out := make(map[string]string, len(defaults)+len(override)+2)
 	maps.Copy(out, defaults)
 	maps.Copy(out, override)
@@ -45,5 +54,5 @@ func InstanceTypeRequest(defaults, override, run map[string]string) map[string]s
 			out[capabilityGPU] = model
 		}
 	}
-	return out
+	return out, nil
 }

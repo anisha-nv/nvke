@@ -5,6 +5,7 @@ package environment
 
 import (
 	"maps"
+	"strings"
 	"testing"
 )
 
@@ -54,7 +55,10 @@ func TestInstanceTypeRequest(t *testing.T) {
 	}}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := InstanceTypeRequest(tc.defaults, tc.override, tc.run)
+			got, err := InstanceTypeRequest(tc.defaults, tc.override, tc.run)
+			if err != nil {
+				t.Fatalf("InstanceTypeRequest() error = %v", err)
+			}
 			if !maps.Equal(got, tc.want) {
 				t.Errorf("InstanceTypeRequest() = %v, want %v", got, tc.want)
 			}
@@ -62,9 +66,23 @@ func TestInstanceTypeRequest(t *testing.T) {
 	}
 }
 
+func TestInstanceTypeRequestRejectsARunMachineType(t *testing.T) {
+	_, err := InstanceTypeRequest(DefaultCPURequest(), nil, map[string]string{"machineType": "gpu"})
+	if err == nil {
+		t.Fatal("InstanceTypeRequest() error = nil, want one for -e2e.capabilities machineType=gpu")
+	}
+	for _, want := range []string{"machineType=gpu", "-e2e.site-controller-capabilities", "-e2e.tenant-control-plane-capabilities"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("InstanceTypeRequest() error = %q, want it to name %q", err, want)
+		}
+	}
+}
+
 func TestInstanceTypeRequestDoesNotWriteItsInputs(t *testing.T) {
 	defaults := DefaultCPURequest()
-	InstanceTypeRequest(defaults, map[string]string{"machineType": "gpu"}, map[string]string{"arch": "arm64"})
+	if _, err := InstanceTypeRequest(defaults, map[string]string{"machineType": "gpu"}, map[string]string{"arch": "arm64"}); err != nil {
+		t.Fatal(err)
+	}
 	if !maps.Equal(defaults, DefaultCPURequest()) {
 		t.Errorf("defaults = %v after the call, want it unchanged", defaults)
 	}

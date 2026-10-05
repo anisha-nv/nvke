@@ -412,13 +412,13 @@ builds a site carries. Measured against this tree with `-ginkgo.dry-run` and
 
 | label filter | specs | which |
 |---|---|---|
-| `nico-forge && !site-controller` | 4 | the tenant, against the site controller in the kube context |
-| `site-controller` | 7 | the lane that builds a site, tenant included |
-| `nico-forge` | 8 | both |
+| `nico-forge && !site-controller` | 7 | the tenant, against the site controller in the kube context |
+| `site-controller` | 10 | the lane that builds a site, tenant included |
+| `nico-forge` | 14 | both tenants |
 
 `-e2e.site-controller-stage`, not the label, is what decides whether a machine is
 provisioned: the site lane's tenant entries are built only when it is set, so
-a bare `nico-forge` without it selects 4 specs and reaches no hardware.
+a bare `nico-forge` without it selects 7 specs and reaches no hardware.
 
 The node is torn down afterwards (tenants are deleted first). `-e2e.keep-site-controller`, or
 `lifecycle.preserveOnFailure` with a failed spec, keeps it.
@@ -430,7 +430,9 @@ identifiers that file also reads (`FORGE_ORG_ID`, `FORGE_SITE_ID`,
 `FORGE_INSTANCE_TYPE_CPU_ID`, `FORGE_INSTANCE_TYPE_GPU_ID`; see
 [Where the identifiers come from](../../../docs/qualification/environments.md#where-the-identifiers-come-from)),
 `FORGE_API_KEY`, and for `full` `GHCR_USERNAME` and `GHCR_TOKEN`, which the node
-pulls CAPNICo with.
+pulls CAPNICo with. `full` also installs the tenant GPU runtime from this
+machine with `build/use-nke-sbom.sh`, so it needs `helm`, `kubectl` and
+`python3` on the `PATH`, at the versions `make show-versions` prints.
 Neither the proxy nor the jump host is checked in; secrets are read only from
 the environment. Build the inputs, then run; with the `site-inputs` defaults
 no `site:` block is needed at all:
@@ -438,10 +440,14 @@ no `site:` block is needed at all:
 ```bash
 gmake site-inputs SITE_CONTROLLER_VERSION=$(git rev-parse --short=12 HEAD)
 go test -timeout 5h . -args \
-  -ginkgo.label-filter=site-controller -ginkgo.v \
+  -ginkgo.label-filter=site-controller -ginkgo.v -ginkgo.timeout=195m \
   -e2e.config=e2e-config.yaml -e2e.environment=forge -e2e.site-controller-stage=full \
   -e2e.versions=controller=<the same value>,os-image-bootloader=<url>,os-image=<url>
 ```
+
+`-ginkgo.timeout` is the bound that matters: Ginkgo's own default is an hour,
+and `full` takes longer than that, so without it the suite is interrupted
+partway. 195 minutes is the lane's value; `-timeout` only has to sit above it.
 
 `SITE_CONTROLLER_VERSION` and `-e2e.versions=controller=` have to be the same
 string, because they name one image: the archive `site-inputs` writes, and the
