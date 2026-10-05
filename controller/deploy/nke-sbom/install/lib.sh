@@ -54,6 +54,43 @@ node_exec() {
   printf '%s' "${NODE_EXEC//\{node\}/${target}}"
 }
 
+# node_sh runs a command on a node through the NODE_EXEC prefix. Arguments
+# are passed as given; with ssh, an argument with spaces is split again on
+# the node, so keep each argument a single word.
+node_sh() {
+  local node="$1" prefix
+  shift
+  prefix="$(node_exec "${node}")"
+  # shellcheck disable=SC2086
+  ${prefix} "$@"
+}
+
+# The node's image filesystem. The kubelet evicts pods and garbage-collects
+# unused images against this filesystem: imagefs.available<15% by default.
+# Images stage 2 pulls are unused until a pod runs them, so they go first.
+# CONTAINERD_ROOT is the fallback path when crictl is not on the node.
+# IMAGEFS_MIN_FREE_PCT is the free share below which stages 0 and 2 warn.
+CONTAINERD_ROOT="${CONTAINERD_ROOT:-/var/lib/containerd}"
+IMAGEFS_MIN_FREE_PCT="${IMAGEFS_MIN_FREE_PCT:-20}"
+# node_imagefs_free NODE prints "<free-percent> <free-gb> <mountpoint>" for
+# the node's image filesystem: the mountpoint crictl imagefsinfo reports,
+# else CONTAINERD_ROOT, measured with df. Prints nothing when df fails.
+node_imagefs_free() {
+  local node="$1" mount total avail
+  mount="$(node_sh "${node}" crictl imagefsinfo 2>/dev/null |
+    sed -n 's/.*"mountpoint": *"\([^"]*\)".*/\1/p' | head -n 1 || true)"
+  mount="${mount:-${CONTAINERD_ROOT}}"
+  read -r total avail < <(node_sh "${node}" df -Pk "${mount}" 2>/dev/null | awk 'NR == 2 { print $2, $4 }' || true) || true
+  [[ -n "${total:-}" && "${total}" -gt 0 ]] || return 0
+  printf '%s %s %s\n' $((avail * 100 / total)) $((avail / 1024 / 1024)) "${mount}"
+}
+# imagefs_low_msg NODE PCT GB MOUNT prints the warning text for a node whose
+# image filesystem is under IMAGEFS_MIN_FREE_PCT free.
+imagefs_low_msg() {
+  printf '%s: image filesystem %s is %s%% free (%s GB), under %s%%. The kubelet evicts pods and garbage-collects unused images when imagefs.available falls below its threshold, the staged controller image among them. Nodes that share one disk draw on the same space. Free space on the node or pre-pull fewer images (PREPULL_EXTERNAL=0)' \
+    "$1" "$4" "$2" "$3" "${IMAGEFS_MIN_FREE_PCT}"
+}
+
 
 log() { printf '\n=== [%s] %s\n' "${STAGE_NAME}" "$*" >&2; }
 warn() { printf '[%s] WARN: %s\n' "${STAGE_NAME}" "$*" >&2; }

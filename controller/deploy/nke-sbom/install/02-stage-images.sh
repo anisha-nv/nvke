@@ -2,9 +2,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Pull the controller image by digest and pre-pull every external image on
-# every site node, through the node's containerd, so nothing waits on a
-# registry when a pod schedules.
+# Pull the controller image by digest on every site node, through the node's
+# containerd, and pre-pull the external images as a best effort, so the
+# controller pod never waits on a registry and the rest rarely does.
 #
 # Usage: ./02-stage-images.sh [run|check]
 #
@@ -36,24 +36,39 @@
 # A mirror or a plain-http registry configured there applies to these pulls
 # as it applies to the kubelet's.
 #
+# Required and best effort. The controller pull is required: a failure ends
+# the stage. The external pre-pull is best effort: a failed pull is a WARN
+# naming the node, the image and the registry, and the stage goes on, because
+# the kubelet pulls that image itself when the pod schedules. PREPULL_EXTERNAL=0
+# skips the external pre-pull entirely.
+#
+# Disk. Every pulled image lands on the node's image filesystem. Below the
+# kubelet's eviction threshold the kubelet garbage-collects unused images,
+# the staged controller image among them, and marks the node DiskPressure.
+# Nodes that share one disk draw on the same space. The stage reads each
+# node's headroom first and warns under IMAGEFS_MIN_FREE_PCT (20) free.
+#
 # Reruns. A node that already holds an image is skipped. Stage order: this
 # stage runs before stage 3 writes images.txt, so a first run pulls only the
 # controller image. install-all.sh runs this stage again after stage 3 to
-# pre-pull the external images. Run by hand, rerun it after stage 3 yourself;
-# otherwise the kubelet pulls them when the pods schedule. The check fails on
-# a missing controller digest and warns on a missing external image.
+# pre-pull the external images, and once more with PREPULL_EXTERNAL=0 right
+# before stage 5 to restore a garbage-collected controller image. Run by hand,
+# rerun it after stage 3 yourself; otherwise the kubelet pulls the external
+# images when the pods schedule. The check fails on a missing controller
+# digest and warns on a missing external image.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 HOSTS_DIR="${HOSTS_DIR:-/etc/containerd/certs.d}"
 EXTRA_IMAGES="${EXTRA_IMAGES:-}"
+PREPULL_EXTERNAL="${PREPULL_EXTERNAL:-1}"
 NODE_EXEC="${NODE_EXEC:-}"
 IMAGES_TXT="${OUT_DIR}/images.txt"
 CONTROLLER_REF=""
 CONTROLLER_DIGEST=""
 EXTERNAL_IMAGES=""
 NODES=""
-export HOSTS_DIR NODE_EXEC
+export HOSTS_DIR NODE_EXEC PREPULL_EXTERNAL
 
 # resolve_images reads the controller ref from the spec and the external
 # images from images.txt, comment and blank lines dropped, EXTRA_IMAGES added.
@@ -63,7 +78,7 @@ resolve_images() {
   CONTROLLER_DIGEST="${CONTROLLER_REF##*@}"
   if [[ -f "${IMAGES_TXT}" ]]; then
     EXTERNAL_IMAGES="$(grep -v '^[[:space:]]*#' "${IMAGES_TXT}" | grep -v '^[[:space:]]*$' || true)"
-  else
+  elif [[ "${PREPULL_EXTERNAL}" != "0" ]]; then
     warn "${IMAGES_TXT} not found: 03-describe-site.sh writes it. Only the controller image is pulled now; install-all.sh reruns this stage after stage 3, or rerun it yourself to pre-pull the external images."
   fi
   EXTERNAL_IMAGES="$(printf '%s %s' "${EXTERNAL_IMAGES}" "${EXTRA_IMAGES}" | xargs)"
@@ -80,14 +95,21 @@ resolve_nodes() {
   [[ -n "${NODES// /}" ]] || die "no nodes found with ${SITE_KUBECONFIG}"
 }
 
-
-# node_sh runs a command on a node through the NODE_EXEC prefix.
-node_sh() {
-  local node="$1" prefix
-  shift
-  prefix="$(node_exec "${node}")"
-  # shellcheck disable=SC2086
-  ${prefix} "$@"
+# warn_imagefs reads each node's image filesystem headroom and warns under
+# IMAGEFS_MIN_FREE_PCT free. Advice only: the pulls go ahead.
+warn_imagefs() {
+  local node pct gb mount
+  [[ -z "${DRY_RUN}" ]] || return 0
+  for node in ${NODES}; do
+    read -r pct gb mount < <(node_imagefs_free "${node}") || true
+    if [[ -z "${pct:-}" ]]; then
+      warn "${node}: cannot read the image filesystem; crictl imagefsinfo and df ${CONTAINERD_ROOT} failed"
+    elif [[ "${pct}" -lt "${IMAGEFS_MIN_FREE_PCT}" ]]; then
+      warn "$(imagefs_low_msg "${node}" "${pct}" "${gb}" "${mount}")"
+    else
+      log "${node}: image filesystem ${mount} ${pct}% free (${gb} GB)"
+    fi
+  done
 }
 
 # full_ref prints the reference as containerd stores it: docker.io and
@@ -120,8 +142,13 @@ stage_run() {
   resolve_images
   resolve_nodes
   log "controller: ${CONTROLLER_REF}"
-  log "external: ${EXTERNAL_IMAGES:-none}"
+  if [[ "${PREPULL_EXTERNAL}" == "0" ]]; then
+    log "external: not pre-pulled (PREPULL_EXTERNAL=0); the kubelet pulls each image when its pod schedules"
+  else
+    log "external: ${EXTERNAL_IMAGES:-none}"
+  fi
   log "nodes: ${NODES} via ${NODE_EXEC:-local ctr}, hosts dir ${HOSTS_DIR}"
+  warn_imagefs
 
   # doc-begin
   # The controller image, by digest from the release spec, pulled through the
@@ -138,18 +165,25 @@ stage_run() {
       die "${node}: pull of ${CONTROLLER_REF} failed; registry $(registry_host "${CONTROLLER_REF}") is not serving it to the node"
   done
 
-  # Every external image in images.txt, pre-pulled on every node so a registry
-  # the node cannot reach fails here and not when a pod schedules.
-  for image in ${EXTERNAL_IMAGES}; do
-    for node in ${NODES}; do
-      if [[ -z "${DRY_RUN}" && -n "$(node_digest "${node}" "${image}")" ]]; then
-        continue
-      fi
-      exec_prefix="$(node_exec "${node}")"
-      run ${exec_prefix} ctr -n k8s.io images pull --hosts-dir "${HOSTS_DIR}" "${image}" ||
-        die "${node}: pull of ${image} failed; registry $(registry_host "${image}") is not serving it to the node"
+  # Every external image in images.txt, pre-pulled on every node so the pods
+  # start without waiting on a registry. Best effort: a failed pull is a
+  # warning and the stage goes on, because the kubelet pulls the image itself
+  # when the pod schedules. PREPULL_EXTERNAL=0 skips this loop; the kubelet
+  # then pulls every external image on demand, which costs no node disk now.
+  if [[ "${PREPULL_EXTERNAL}" == "0" ]]; then
+    log "external images skipped (PREPULL_EXTERNAL=0): the kubelet pulls them on demand"
+  else
+    for image in ${EXTERNAL_IMAGES}; do
+      for node in ${NODES}; do
+        if [[ -z "${DRY_RUN}" && -n "$(node_digest "${node}" "${image}")" ]]; then
+          continue
+        fi
+        exec_prefix="$(node_exec "${node}")"
+        run ${exec_prefix} ctr -n k8s.io images pull --hosts-dir "${HOSTS_DIR}" "${image}" ||
+          warn "${node}: pull of ${image} failed; registry $(registry_host "${image}") is not serving it to the node. The kubelet pulls it when the pod schedules"
+      done
     done
-  done
+  fi
   # doc-end
 }
 
@@ -171,6 +205,10 @@ stage_check() {
       check_fail "${node}: controller image is ${digest}, the spec says ${CONTROLLER_DIGEST}; rerun this stage"
     fi
   done
+  if [[ "${PREPULL_EXTERNAL}" == "0" ]]; then
+    check_skip "external images: not pre-pulled (PREPULL_EXTERNAL=0); the kubelet pulls them on demand"
+    return 0
+  fi
   if [[ ! -f "${IMAGES_TXT}" ]]; then
     check_skip "external images: ${IMAGES_TXT} not written yet; run 03-describe-site.sh, then rerun this stage"
     return 0

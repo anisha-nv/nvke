@@ -116,7 +116,7 @@ EGRESS_URLS=(
 
 ### Check
 
-The release spec parses; its lane and scope are printed, and a lane other than `pipeline-attested` is a warning. The checkout is at the tag the spec names, and every chart version in the spec equals the pin in `release.yaml` there. Each registry host in the spec answers from a node when `NODE_EXEC` says how to reach one. `kubectl`, `helm`, `clusterctl`, `oras`, `python3` and `curl` are on `PATH`. Only `helm` is compared with its pin, and a mismatch is a warning. The checkout holds the controller and NKTP charts. An egress host the runner cannot reach is a warning, because the nodes do the pulling. The node count is odd. Mixed node architectures are a warning. A warning names API authentication as off.
+The release spec parses; its lane and scope are printed, and a lane other than `pipeline-attested` is a warning. The checkout is at the tag the spec names, and every chart version in the spec equals the pin in `release.yaml` there. Each registry host in the spec answers from a node when `NODE_EXEC` says how to reach one. `kubectl`, `helm`, `clusterctl`, `oras`, `python3` and `curl` are on `PATH`. Only `helm` is compared with its pin, and a mismatch is a warning. The checkout holds the controller and NKTP charts. An egress host the runner cannot reach is a warning, because the nodes do the pulling. The node count is odd. Mixed node architectures are a warning. A warning names API authentication as off. With `NODE_EXEC` set, each node's image filesystem is measured, and less than 20% free is a warning: stage 3 pulls onto that filesystem, and the kubelet garbage-collects images under disk pressure.
 
 ### If It Fails
 
@@ -161,9 +161,11 @@ Two default StorageClasses fail the check. Remove the `storageclass.kubernetes.i
 
 ## 3. Stage Images
 
-Pull every image onto every node before anything schedules. The controller image is pulled by digest from its ref in the spec, through each node's containerd, into the `k8s.io` namespace. The external images are pre-pulled the same way: the images the charts run, the profiles image among them, the CAPNICo image and the Cluster API provider images, as listed in `images.txt`. Only the node's containerd knows the site's mirrors, so the pull happens there and not on the machine running the install. The script reaches a node through `NODE_EXEC`, a command prefix with `{node}` in it: unset when the script runs on the node, `ssh root@{node}` for hosts, `nerdctl exec -i {node}` for container nodes.
+Pull the controller image onto every node before anything schedules, and pre-pull the external images as a best effort. The controller image is pulled by digest from its ref in the spec, through each node's containerd, into the `k8s.io` namespace. This pull is required; a failure ends the stage. The external images are pre-pulled the same way: the images the charts run, the profiles image among them, the CAPNICo image and the Cluster API provider images, as listed in `images.txt`. A failed external pull is a warning, because the kubelet pulls that image itself when the pod schedules. `PREPULL_EXTERNAL=0` skips the external pre-pull entirely. Only the node's containerd knows the site's mirrors, so the pull happens there and not on the machine running the install. The script reaches a node through `NODE_EXEC`, a command prefix with `{node}` in it: unset when the script runs on the node, `ssh root@{node}` for hosts, `nerdctl exec -i {node}` for container nodes.
 
-`images.txt` is written by stage 4, so a first run of this stage pulls only the controller image and the check reports the external images as not written yet. `install-all.sh` runs this stage again after stage 4 to pre-pull them. Running the stages by hand, run `02-stage-images.sh run` again after stage 4, or let the kubelet pull them when the pods schedule.
+Every pulled image lands on the node's image filesystem. Under the kubelet's eviction threshold the node goes `DiskPressure` and the kubelet garbage-collects unused images, the staged controller image among them. Container nodes that share one disk draw on the same space, so the pre-pull can fill it several times over. The stage reads each node's headroom first and warns under 20% free. Set `PREPULL_EXTERNAL=0` on such nodes.
+
+`images.txt` is written by stage 4, so a first run of this stage pulls only the controller image and the check reports the external images as not written yet. `install-all.sh` runs this stage again after stage 4 to pre-pull them, and once more, controller image only, right before stage 6. Running the stages by hand, run `02-stage-images.sh run` again after stage 4, or let the kubelet pull them when the pods schedule.
 
 <!-- stage:02-stage-images begin -->
 ```bash
@@ -181,18 +183,25 @@ for node in ${NODES}; do
     die "${node}: pull of ${CONTROLLER_REF} failed; registry $(registry_host "${CONTROLLER_REF}") is not serving it to the node"
 done
 
-# Every external image in images.txt, pre-pulled on every node so a registry
-# the node cannot reach fails here and not when a pod schedules.
-for image in ${EXTERNAL_IMAGES}; do
-  for node in ${NODES}; do
-    if [[ -z "${DRY_RUN}" && -n "$(node_digest "${node}" "${image}")" ]]; then
-      continue
-    fi
-    exec_prefix="$(node_exec "${node}")"
-    run ${exec_prefix} ctr -n k8s.io images pull --hosts-dir "${HOSTS_DIR}" "${image}" ||
-      die "${node}: pull of ${image} failed; registry $(registry_host "${image}") is not serving it to the node"
+# Every external image in images.txt, pre-pulled on every node so the pods
+# start without waiting on a registry. Best effort: a failed pull is a
+# warning and the stage goes on, because the kubelet pulls the image itself
+# when the pod schedules. PREPULL_EXTERNAL=0 skips this loop; the kubelet
+# then pulls every external image on demand, which costs no node disk now.
+if [[ "${PREPULL_EXTERNAL}" == "0" ]]; then
+  log "external images skipped (PREPULL_EXTERNAL=0): the kubelet pulls them on demand"
+else
+  for image in ${EXTERNAL_IMAGES}; do
+    for node in ${NODES}; do
+      if [[ -z "${DRY_RUN}" && -n "$(node_digest "${node}" "${image}")" ]]; then
+        continue
+      fi
+      exec_prefix="$(node_exec "${node}")"
+      run ${exec_prefix} ctr -n k8s.io images pull --hosts-dir "${HOSTS_DIR}" "${image}" ||
+        warn "${node}: pull of ${image} failed; registry $(registry_host "${image}") is not serving it to the node. The kubelet pulls it when the pod schedules"
+    done
   done
-done
+fi
 ```
 <!-- stage:02-stage-images end -->
 
@@ -202,7 +211,7 @@ done
 
 ### If It Fails
 
-A failed pull names the registry that refused and the node. Make that registry reachable from the node, or point the ref at one that is. The namespace is `k8s.io`, not `default`. An image in the wrong namespace is invisible to the kubelet and the controller pod fails with a pull error. The kubelet garbage-collects unused images under disk pressure, so stage 6 repeats this check first.
+A failed controller pull ends the stage and names the registry that refused and the node. Make that registry reachable from the node, or point the ref at one that is. A failed external pull is a warning with the same names; fix the registry, or let the kubelet pull it when the pod schedules. The namespace is `k8s.io`, not `default`. An image in the wrong namespace is invisible to the kubelet and the controller pod fails with a pull error. A disk warning names the node and its free share. Free space on the node or set `PREPULL_EXTERNAL=0`; the kubelet garbage-collects unused images under disk pressure, so a full pre-pull can remove the controller image it was meant to protect. `install-all.sh` pulls the controller image again right before stage 6, and stage 6 repeats this check first.
 
 ## 4. Describe Your Site
 
@@ -273,7 +282,7 @@ A hang on cert-manager means the control-plane taint is still present. Run stage
 
 ## 6. Install the Site Controller
 
-Apply the deploy items in list order: base configuration, SPIRE node ports, CAPNICo, then the NKTP, Postgres, SPIRE, Temporal and controller releases.
+Apply the deploy items in list order: base configuration, SPIRE node ports, CAPNICo, then the NKTP, Postgres, SPIRE, Temporal and controller releases. `install-all.sh` runs stage 3 once more right before this stage, controller image only (`PREPULL_EXTERNAL=0`), so a controller image the kubelet garbage-collected since stage 3 is back on every node before the controller release needs it. Running the stages by hand, run `PREPULL_EXTERNAL=0 02-stage-images.sh run` first.
 
 The four external charts, Postgres, SPIRE CRDs, Temporal and SPIRE, are pulled from their refs in the spec with `oras` into `OUT_DIR/charts/<item>/<chart>-<version>.tgz`. The ref names a manifest; the sha256 of the pulled file must equal the digest of the chart layer in that manifest before the release is installed from the file. The controller and NKTP charts are installed from the tree.
 
@@ -457,7 +466,7 @@ A `--wait` timeout leaves the release `failed`. A killed helm process leaves it 
 
 A digest mismatch names the item, the digest in the spec and the digest of the pulled chart. The registry does not hold what the spec names. Nothing was installed for that item; fix the spec or the registry and run the stage again.
 
-A pull error on the controller pod means the image is missing from a node. Run stage 3 again.
+A pull error on the controller pod means the image is missing from a node. Run `PREPULL_EXTERNAL=0 02-stage-images.sh run` to pull the controller image only, then run this stage again. If the node reports `DiskPressure`, free space on the node first; the kubelet removes the image again otherwise.
 
 `NicoMachine CRD not installed` in the controller log means the controller started before CAPNICo registered its CRDs. The controller reads them once at start. Run `kubectl -n cloud-workflow-engine rollout restart deployment/cloud-workflow-engine`, then run the check again.
 

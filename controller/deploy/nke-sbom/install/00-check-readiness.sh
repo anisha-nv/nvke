@@ -273,6 +273,36 @@ check_disk() {
   fi
 }
 
+# check_node_imagefs reads each node's image filesystem the way stage 2 does
+# and warns under IMAGEFS_MIN_FREE_PCT free, before anything is pulled. Needs
+# NODE_EXEC to reach the nodes and a cluster to list them.
+check_node_imagefs() {
+  local nodes node pct gb mount
+  if [[ -n "${DRY_RUN}" ]]; then
+    check_skip "node disk: image filesystem headroom needs the nodes (DRY_RUN)"
+    return 0
+  fi
+  if [[ -z "${NODE_EXEC}" ]]; then
+    check_skip "node disk: NODE_EXEC is not set; stage 2 reads the image filesystem when it pulls"
+    return 0
+  fi
+  nodes="$(kc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{" "}{end}' 2>/dev/null || true)"
+  if [[ -z "${nodes// /}" ]]; then
+    check_skip "node disk: no nodes listed with ${SITE_KUBECONFIG}"
+    return 0
+  fi
+  for node in ${nodes}; do
+    read -r pct gb mount < <(node_imagefs_free "${node}") || true
+    if [[ -z "${pct:-}" ]]; then
+      check_warn "node disk: ${node}: cannot read the image filesystem; crictl imagefsinfo and df ${CONTAINERD_ROOT} failed"
+    elif [[ "${pct}" -lt "${IMAGEFS_MIN_FREE_PCT}" ]]; then
+      check_warn "node disk: $(imagefs_low_msg "${node}" "${pct}" "${gb}" "${mount}")"
+    else
+      check_pass "node disk: ${node}: image filesystem ${mount} ${pct}% free (${gb} GB)"
+    fi
+  done
+}
+
 stage_check() {
   if check_release; then
     check_release_source
@@ -287,6 +317,7 @@ stage_check() {
   check_site_config
   check_api_auth
   check_disk
+  check_node_imagefs
 }
 
 # The readiness report is the whole stage. A failing report stops install-all.

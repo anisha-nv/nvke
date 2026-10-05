@@ -10,6 +10,12 @@
 # time after stage 3, so the external images are on the nodes before stage 5
 # schedules anything.
 #
+# Stage 2 runs once more, controller image only (PREPULL_EXTERNAL=0), right
+# before stage 5 whenever stage 5 is in the selected range. The kubelet
+# garbage-collects unused images under disk pressure, and the pre-pull of the
+# external images is what fills the disk, so the controller image can be gone
+# by the time the helm items need it. The re-pull is fast and idempotent.
+#
 # Usage: ./install-all.sh [--from NAME] [--until NAME] [--dry-run] [--kubeconfig PATH]
 #
 # NAME is a stage script name without its numeric prefix, for example
@@ -138,9 +144,17 @@ index_or_empty() {
 
 images_idx="$(index_or_empty stage-images)"
 describe_idx="$(index_or_empty describe-site)"
+install_idx="$(index_or_empty install-site-controller)"
 
 i="${start}"
 while [[ "${i}" -le "${end}" ]]; do
+  # The controller image was pulled in stage 2. Kubelet image garbage
+  # collection may have removed it since. Pull it again, controller image
+  # only, so the helm items that follow find it on every node.
+  if [[ -n "${images_idx}" && -n "${install_idx}" && "${i}" -eq "${install_idx}" ]]; then
+    log "re-pulling the controller image before the install: kubelet image garbage collection may have removed it since stage-images ran (PREPULL_EXTERNAL=0, controller image only)"
+    PREPULL_EXTERNAL=0 run_stage "${images_idx}"
+  fi
   run_stage "${i}"
   # Stage 2 ran before images.txt existed. Now that stage 3 has written it,
   # run stage 2 once more so the external images are pre-pulled.

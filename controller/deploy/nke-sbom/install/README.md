@@ -37,12 +37,12 @@ Neither set is an error that names both variables.
 
 | Stage | Reads | Writes | Check |
 |---|---|---|---|
-| 00 check readiness | spec, checkout, tools | nothing | tools present; lane and scope printed; checkout at `source.tag`; chart versions match `release.yaml`; ref hosts reachable from a node |
+| 00 check readiness | spec, checkout, tools | nothing | tools present; lane and scope printed; checkout at `source.tag`; chart versions match `release.yaml`; ref hosts reachable from a node; node image filesystem headroom (warning under 20%) |
 | 01 prepare cluster | kubeconfig | taint removed, default StorageClass | no control-plane taint; one default StorageClass |
-| 02 stage images | spec, `images.txt` | images in each node's containerd | controller digest present; external images present (warning if not) |
+| 02 stage images | spec, `images.txt` | images in each node's containerd | controller digest present (required); external images present (warning if not) |
 | 03 describe site | `site-config.yaml`, spec | values files, Secrets input, `site.env`, `images.txt`, `version-bom.cdx.json` | files present; no empty value; password matches the live Secret |
 | 04 install Cluster API | pinned versions | cert-manager, CAPI | Deployments Available; CRDs Established |
-| 05 install site controller | `$OUT_DIR`, spec | the 11 deploy items | releases deployed at the spec versions; `/readyz` ok; no CRD warning in the controller log |
+| 05 install site controller | `$OUT_DIR`, spec | the 11 deploy items | releases deployed at the spec versions; `/readyz` ok; no CRD warning in the controller log. `install-all.sh` re-pulls the controller image right before this stage |
 | 06 secure and register | kubeconfig, `site.env` | exec-auth patch, `nkectl` site | rollouts complete; `nkectl get providers` shows `nico` CONFIGURED |
 
 ## Release spec parser
@@ -64,10 +64,13 @@ A line the parser does not recognise is an error naming the file and line.
 - The controller image comes from the `controller` item's `ref`. Each node pulls it by digest:
   `ctr -n k8s.io images pull --hosts-dir /etc/containerd/certs.d <ref>`.
 - `--hosts-dir` is where the node's containerd reads `hosts.toml`. Mirrors and plain-HTTP registries configured there apply. `HOSTS_DIR` overrides the path.
-- External images come from `$OUT_DIR/images.txt`, plus `EXTRA_IMAGES`. Each node pre-pulls them the same way.
+- External images come from `$OUT_DIR/images.txt`, plus `EXTRA_IMAGES`. Each node pre-pulls them the same way, as a best effort.
 - `NODE_EXEC` says how to reach a node: unset on the node itself, `ssh root@{node}` for hosts, `nerdctl exec -i {node}` for container nodes. `NODE_MAP` renames nodes as `name=target` pairs.
 - A node that holds an image is skipped. A failed pull names the node, the image and the registry.
-- Stage 3 writes `images.txt`, and it runs after this stage. `install-all.sh` runs this stage a second time after stage 3, when both are in the selected range, so the external images are pre-pulled before stage 5. Run by hand, rerun this stage after stage 3 yourself, or let the kubelet pull the rest. The check fails on the controller digest and warns on external images.
+- The controller pull is required. A failure ends the stage.
+- The external pre-pull is best effort. A failed pull is a `WARN` and the stage goes on, because the kubelet pulls that image itself when the pod schedules. `PREPULL_EXTERNAL=0` skips the external pre-pull entirely.
+- Disk. Every pulled image lands on the node's image filesystem. Under the kubelet's eviction threshold the node goes `DiskPressure` and the kubelet garbage-collects unused images, the staged controller image among them. Container nodes that share one disk draw on the same space, so the pre-pull can fill it several times over. The stage reads each node's headroom first and warns under `IMAGEFS_MIN_FREE_PCT` (20) percent free. Set `PREPULL_EXTERNAL=0` on such nodes.
+- Stage 3 writes `images.txt`, and it runs after this stage. `install-all.sh` runs this stage a second time after stage 3, when both are in the selected range, so the external images are pre-pulled before stage 5. It runs it once more with `PREPULL_EXTERNAL=0` right before stage 5, so a garbage-collected controller image is back before the helm items need it. Run by hand, rerun this stage after stage 3 yourself, or let the kubelet pull the rest. The check fails on the controller digest and warns on external images.
 
 ```bash
 NODE_EXEC='ssh root@{node}' ./02-stage-images.sh run
@@ -163,6 +166,9 @@ The controller and NKTP charts stay in the tree. `oras` must be on `PATH` at the
 | `NODE` | first node | Stage 0: the node that probes the ref hosts |
 | `HOSTS_DIR` | `/etc/containerd/certs.d` | Stage 2: the node's `hosts.toml` directory |
 | `EXTRA_IMAGES` | unset | Stage 2: more images to pre-pull, space separated |
+| `PREPULL_EXTERNAL` | `1` | Stage 2: `0` skips the external pre-pull; the kubelet pulls on demand. `install-all.sh` sets it for the re-pull before stage 5 |
+| `IMAGEFS_MIN_FREE_PCT` | `20` | Stages 0 and 2: warn when a node's image filesystem has less than this percent free |
+| `CONTAINERD_ROOT` | `/var/lib/containerd` | Stages 0 and 2: the path measured when `crictl imagefsinfo` is not available on the node |
 | `IMAGES_TXT_SKIP` | unset | Stage 3: `1` skips `helm template` |
 | `CAPNICO_IMAGE` | unset | Stage 5: `repository:tag` the CAPNICo manifest is repointed at |
 | `SITE_NAME`, `SITE_VIP` | from `site.env` | Stage 6 overrides |
