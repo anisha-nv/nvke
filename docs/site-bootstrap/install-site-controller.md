@@ -124,18 +124,18 @@ The report names the missing item. Fix it and run the stage again. Nothing on th
 
 ## 2. Prepare the Site Cluster
 
-Make the nodes schedulable and give the cluster a default StorageClass.
+Confirm the nodes are schedulable and give the cluster a default StorageClass.
 
 ### Choices
 
-Every node is a control-plane node and carries the `NoSchedule` taint. Nothing in later stages tolerates it, so the stage removes it.
+Every node is a control-plane node. `nkectl bootstrap site` removes the control-plane `NoSchedule` taint once every node has joined (`cluster.schedulableControlPlane`, default `true`). Nothing in later stages tolerates that taint, so the stage removes it from any node that still carries it: a site bootstrapped before that default, or one where the bootstrap reported that the removal failed. A cluster with worker nodes keeps its control-plane taint.
 
 A bare site ships no StorageClass. Postgres and SPIRE need one. The stage installs rancher local-path-provisioner `v0.0.31`, fetched from its GitHub release; `LOCAL_PATH_VERSION` changes the pin. It stores data on one node's disk, so it is single-node durability. A site with real storage should use its own CSI driver instead: set `SKIP_STORAGECLASS=1` and create a default StorageClass yourself before the check.
 
 <!-- stage:01-prepare-cluster begin -->
 ```bash
-# Let workloads schedule on control-plane nodes. Only nodes that carry the
-# taint are touched.
+# nkectl bootstrap site already made the control-plane nodes schedulable.
+# Remove the taint from any node that still carries it.
 printf '%s\n' "${tainted}" | while read -r node; do
   [[ -n "${node}" ]] || continue
   kc taint nodes "${node}" node-role.kubernetes.io/control-plane:NoSchedule-
@@ -153,11 +153,11 @@ fi
 
 ### Check
 
-No node carries `node-role.kubernetes.io/control-plane:NoSchedule`. Exactly one StorageClass is marked default.
+No node carries `node-role.kubernetes.io/control-plane:NoSchedule`, or the cluster has worker nodes. Exactly one StorageClass is marked default.
 
 ### If It Fails
 
-Two default StorageClasses fail the check. Remove the `storageclass.kubernetes.io/is-default-class` annotation from one. The taint removal skips nodes that are already untainted, so a rerun is safe.
+Two default StorageClasses fail the check. Remove the `storageclass.kubernetes.io/is-default-class` annotation from one. The taint removal touches only nodes that still carry the taint, so a rerun is safe.
 
 ## 3. Stage Images
 
@@ -278,7 +278,7 @@ The Deployments in `capi-system`, `capi-kubeadm-bootstrap-system`, `capi-kubeadm
 
 ### If It Fails
 
-A hang on cert-manager means the control-plane taint is still present. Run stage 2 again. `clusterctl init` skips providers that are already installed, so a rerun is safe. Only a conflicting provider version is an error.
+A hang on cert-manager means the control-plane taint is still present on a cluster without worker nodes. Run stage 2 again. `clusterctl init` skips providers that are already installed, so a rerun is safe. Only a conflicting provider version is an error.
 
 ## 6. Install the Site Controller
 

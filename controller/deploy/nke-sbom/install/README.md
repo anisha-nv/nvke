@@ -38,7 +38,7 @@ Neither set is an error that names both variables.
 | Stage | Reads | Writes | Check |
 |---|---|---|---|
 | 00 check readiness | spec, checkout, tools | nothing | tools present; lane and scope printed; checkout at `source.tag`; chart versions match `release.yaml`; ref hosts reachable from a node; node image filesystem headroom (warning under 20%) |
-| 01 prepare cluster | kubeconfig | taint removed, default StorageClass | no control-plane taint; one default StorageClass |
+| 01 prepare cluster | kubeconfig | nodes schedulable (bootstrap untaints by default), default StorageClass | no control-plane taint, or worker nodes present; one default StorageClass |
 | 02 stage images | spec, `images.txt` | images in each node's containerd | controller digest present (required); external images present (warning if not) |
 | 03 describe site | `site-config.yaml`, spec | values files, Secrets input, `site.env`, `images.txt`, `version-bom.cdx.json` | files present; no empty value; password matches the live Secret |
 | 04 install Cluster API | pinned versions | cert-manager, CAPI | Deployments Available; CRDs Established |

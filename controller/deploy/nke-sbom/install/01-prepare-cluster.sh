@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Make the site cluster schedulable and give it a default StorageClass.
+# Confirm the site cluster is schedulable and give it a default StorageClass.
 #
 # Usage: ./01-prepare-cluster.sh [run|check]
 #
@@ -10,11 +10,14 @@
 # Commands between `# doc-begin` and `# doc-end` are extracted verbatim into
 # the guide. Keep them copy-pasteable: use the lib variables, no functions.
 #
-# The control-plane NoSchedule taint is removed only from nodes that carry it,
-# so a rerun changes nothing. The StorageClass step installs rancher
-# local-path-provisioner only when no StorageClass is the default. A site with
-# its own CSI driver sets SKIP_STORAGECLASS=1 and marks its own class default;
-# the check still requires exactly one default StorageClass.
+# nkectl bootstrap site removes the control-plane NoSchedule taint once every
+# node has joined (cluster.schedulableControlPlane, default true). This stage
+# removes it only from nodes that still carry it, so a rerun changes nothing,
+# and leaves it alone when the cluster has worker nodes. The StorageClass
+# step installs rancher local-path-provisioner only when no StorageClass is
+# the default. A site with its own CSI driver sets SKIP_STORAGECLASS=1 and
+# marks its own class default; the check still requires exactly one default
+# StorageClass.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -33,6 +36,11 @@ tainted_nodes() {
     awk '$2 ~ /NoSchedule/ { print $1 }'
 }
 
+# worker_nodes prints the nodes without the control-plane role label.
+worker_nodes() {
+  kc get nodes -l '!node-role.kubernetes.io/control-plane' -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
+}
+
 # default_storageclasses prints the StorageClasses annotated as default.
 default_storageclasses() {
   kc get storageclass -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{"\n"}{end}' |
@@ -48,11 +56,13 @@ stage_run() {
   if [[ -z "${DRY_RUN}" ]]; then
     tainted="$(tainted_nodes)"
     default_sc="$(default_storageclasses)"
+    # A cluster with worker nodes keeps its control-plane taint.
+    [[ -z "$(worker_nodes)" ]] || tainted=''
   fi
 
   # doc-begin
-  # Let workloads schedule on control-plane nodes. Only nodes that carry the
-  # taint are touched.
+  # nkectl bootstrap site already made the control-plane nodes schedulable.
+  # Remove the taint from any node that still carries it.
   printf '%s\n' "${tainted}" | while read -r node; do
     [[ -n "${node}" ]] || continue
     kc taint nodes "${node}" node-role.kubernetes.io/control-plane:NoSchedule-
@@ -76,10 +86,12 @@ stage_check() {
   fi
 
   tainted="$(tainted_nodes | tr '\n' ' ')"
-  if [[ -z "${tainted// /}" ]]; then
+  if [[ -n "$(worker_nodes)" ]]; then
+    check_pass "worker nodes present; the control-plane taint stays"
+  elif [[ -z "${tainted// /}" ]]; then
     check_pass "no node carries the control-plane NoSchedule taint"
   else
-    check_fail "control-plane NoSchedule taint still on: ${tainted% }"
+    check_fail "control-plane NoSchedule taint still on: ${tainted% }. Run this stage, or: kubectl taint nodes --all node-role.kubernetes.io/control-plane:NoSchedule-"
   fi
 
   defaults="$(default_storageclasses | tr '\n' ' ')"
