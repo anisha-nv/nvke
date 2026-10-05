@@ -69,7 +69,7 @@ for item in postgresql spire-crds temporal spire; do
   grep -qF "chart_dir=\"\${OUT_DIR}/charts/${item}\"" "${work}/out/05-install-site-controller.sh" ||
     error "generated stage does not pull ${item} into \${OUT_DIR}/charts/${item}"
 done
-if [[ "$(grep -cF 'run oras pull "${chart_ref}" -o "${chart_dir}"' "${work}/out/05-install-site-controller.sh")" -ne 4 ]]; then
+if [[ "$(grep -cF 'run oras pull $(oras_flags "${chart_ref}") "${chart_ref}" -o "${chart_dir}"' "${work}/out/05-install-site-controller.sh")" -ne 4 ]]; then
   error "generated stage does not hold four oras pull lines"
 fi
 grep -E 'hl upgrade --install .* (--repo |oci://)' "${work}/out/05-install-site-controller.sh" >/dev/null &&
