@@ -114,8 +114,11 @@ stage_run() {
   chart_digest="${layer%% *}"
   chart_file="${chart_dir}/${layer#* }"
   if [[ "$(sha256_file "${chart_file}")" != "${chart_digest}" ]]; then
+    # oras pull skips a layer without a title annotation, which a helm-pushed
+    # chart has none of; fetch the layer blob by its digest into our own name.
+    mkdir -p "${chart_dir}"
     # shellcheck disable=SC2046
-    run oras pull $(oras_flags "${chart_ref}") "${chart_ref}" -o "${chart_dir}"
+    run oras blob fetch $(oras_flags "${chart_ref}") --output "${chart_file}" "${chart_ref%%@*}@${chart_digest}"
   fi
   chart_have="$(sha256_file "${chart_file}")"
   if [[ -n "${DRY_RUN}" ]]; then
@@ -137,8 +140,11 @@ stage_run() {
   chart_digest="${layer%% *}"
   chart_file="${chart_dir}/${layer#* }"
   if [[ "$(sha256_file "${chart_file}")" != "${chart_digest}" ]]; then
+    # oras pull skips a layer without a title annotation, which a helm-pushed
+    # chart has none of; fetch the layer blob by its digest into our own name.
+    mkdir -p "${chart_dir}"
     # shellcheck disable=SC2046
-    run oras pull $(oras_flags "${chart_ref}") "${chart_ref}" -o "${chart_dir}"
+    run oras blob fetch $(oras_flags "${chart_ref}") --output "${chart_file}" "${chart_ref%%@*}@${chart_digest}"
   fi
   chart_have="$(sha256_file "${chart_file}")"
   if [[ -n "${DRY_RUN}" ]]; then
@@ -160,8 +166,11 @@ stage_run() {
   chart_digest="${layer%% *}"
   chart_file="${chart_dir}/${layer#* }"
   if [[ "$(sha256_file "${chart_file}")" != "${chart_digest}" ]]; then
+    # oras pull skips a layer without a title annotation, which a helm-pushed
+    # chart has none of; fetch the layer blob by its digest into our own name.
+    mkdir -p "${chart_dir}"
     # shellcheck disable=SC2046
-    run oras pull $(oras_flags "${chart_ref}") "${chart_ref}" -o "${chart_dir}"
+    run oras blob fetch $(oras_flags "${chart_ref}") --output "${chart_file}" "${chart_ref%%@*}@${chart_digest}"
   fi
   chart_have="$(sha256_file "${chart_file}")"
   if [[ -n "${DRY_RUN}" ]]; then
@@ -190,8 +199,11 @@ that is the nke-base-config item, from ${SBOM_DIR}/k8s/oidc-upstream-ca.yaml."
   chart_digest="${layer%% *}"
   chart_file="${chart_dir}/${layer#* }"
   if [[ "$(sha256_file "${chart_file}")" != "${chart_digest}" ]]; then
+    # oras pull skips a layer without a title annotation, which a helm-pushed
+    # chart has none of; fetch the layer blob by its digest into our own name.
+    mkdir -p "${chart_dir}"
     # shellcheck disable=SC2046
-    run oras pull $(oras_flags "${chart_ref}") "${chart_ref}" -o "${chart_dir}"
+    run oras blob fetch $(oras_flags "${chart_ref}") --output "${chart_file}" "${chart_ref%%@*}@${chart_digest}"
   fi
   chart_have="$(sha256_file "${chart_file}")"
   if [[ -n "${DRY_RUN}" ]]; then

@@ -69,8 +69,8 @@ for item in postgresql spire-crds temporal spire; do
   grep -qF "chart_dir=\"\${OUT_DIR}/charts/${item}\"" "${work}/out/05-install-site-controller.sh" ||
     error "generated stage does not pull ${item} into \${OUT_DIR}/charts/${item}"
 done
-if [[ "$(grep -cF 'run oras pull $(oras_flags "${chart_ref}") "${chart_ref}" -o "${chart_dir}"' "${work}/out/05-install-site-controller.sh")" -ne 4 ]]; then
-  error "generated stage does not hold four oras pull lines"
+if [[ "$(grep -cF 'run oras blob fetch $(oras_flags "${chart_ref}") --output "${chart_file}" "${chart_ref%%@*}@${chart_digest}"' "${work}/out/05-install-site-controller.sh")" -ne 4 ]]; then
+  error "generated stage does not hold four oras blob fetch lines"
 fi
 grep -E 'hl upgrade --install .* (--repo |oci://)' "${work}/out/05-install-site-controller.sh" >/dev/null &&
   error "generated stage still installs a chart from a repository reference"
@@ -97,7 +97,7 @@ grep -q '^helm --kubeconfig .* upgrade --install controller ' "${work}/dry.out" 
   error "dry-run did not print the controller release"
 grep -q '/dev/null' "${work}/dry.out" &&
   error "dry-run argv still names /dev/null"
-if [[ "$(grep -c '^oras pull ghcr.io/example/nke-recipes/[a-z-]*@sha256:[0-9a-f]* -o ' "${work}/dry.out")" -ne 4 ]]; then
+if [[ "$(grep -c '^oras blob fetch --output .*ghcr.io/example/nke-recipes/[a-z-]*@sha256:' "${work}/dry.out")" -ne 4 ]]; then
   error "dry-run did not print four oras pull lines from the release spec"
 fi
 grep -E '^helm .* upgrade --install temporal [^ ]*/site-out/charts/temporal/temporal-0.74.0.tgz --namespace temporal ' "${work}/dry.out" >/dev/null ||

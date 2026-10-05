@@ -131,7 +131,7 @@ The four published charts come from the spec, not from their upstream repositori
 
 1. `release_ref <item>` gives the ref. The ref pins the manifest digest.
 2. `oras manifest fetch` reads the chart layer: its digest and its file name.
-3. `oras pull "$ref" -o "$OUT_DIR/charts/<item>"` writes the `.tgz`. A file already there with the right digest is not pulled again.
+3. `oras blob fetch` writes the chart layer by its digest to `$OUT_DIR/charts/<item>/<name>-<version>.tgz`. A file already there with the right digest is not fetched again.
 4. The file's sha256 must equal the layer digest. A mismatch stops the run and names the item and both digests.
 5. `helm upgrade --install` takes the file with the same namespace, wait, timeout and values as before.
 
