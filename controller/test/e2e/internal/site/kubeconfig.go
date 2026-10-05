@@ -25,7 +25,7 @@ import (
 // forwardKubeconfig fetches the admin kubeconfig from the node, forwards its
 // API server port, and writes a copy that reaches the cluster through the
 // forward.
-func (b bootstrap) forwardKubeconfig(ctx context.Context, outputDir string) (string, error) {
+func (b bootstrap) forwardKubeconfig(ctx context.Context) (string, error) {
 	raw, err := b.session.Fetch(ctx, kubeconfigPath)
 	if err != nil {
 		return "", err
@@ -43,12 +43,11 @@ func (b bootstrap) forwardKubeconfig(ctx context.Context, outputDir string) (str
 	if err != nil {
 		return "", err
 	}
-	if outputDir == "" {
-		if outputDir, err = os.MkdirTemp("", "nke-e2e-site-"); err != nil {
-			return "", err
-		}
+	outputDir, err := os.MkdirTemp("", "nke-e2e-site-")
+	if err != nil {
+		return "", err
 	}
-	out := filepath.Join(outputDir, b.candidate.SiteName+".kubeconfig")
+	out := filepath.Join(outputDir, b.spec.Name+".kubeconfig")
 	if err := os.WriteFile(out, rewritten, 0o600); err != nil {
 		return "", err
 	}
@@ -114,20 +113,48 @@ func currentCluster(cfg *clientcmdapi.Config) (*clientcmdapi.Cluster, error) {
 	return cluster, nil
 }
 
-// waitForCWE polls until CWE answers /healthz, then returns its version.
-func waitForCWE(ctx context.Context, opts Options, kubeconfig string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, opts.ReadyTimeout)
+const (
+	// defaultReadyTimeout and defaultPollInterval bound ProbeCWE when a caller
+	// states neither. Here rather than with Bootstrap, which no longer waits
+	// for anything once Kubernetes answers.
+	defaultReadyTimeout = 10 * time.Minute
+	defaultPollInterval = 10 * time.Second
+)
+
+// ProbeCWE polls until CWE answers /healthz through kubeconfig, then returns
+// the version it reports.
+//
+// Separate from Bootstrap because only a run that deployed CWE has one to ask.
+// A run that stopped at Kubernetes asserts against the API server instead, and
+// expresses that by not calling this.
+func ProbeCWE(ctx context.Context, kubeconfig string, within, poll time.Duration) (string, error) {
+	return waitHealthy(ctx, within, poll, func(ctx context.Context) (string, error) {
+		return probeCWE(ctx, kubeconfig)
+	})
+}
+
+// waitHealthy is ProbeCWE's retry, with the probe as a parameter so the timing
+// can be tested without an API server. Unexported: the injection is this
+// package's to use, not something a caller should have to supply.
+func waitHealthy(ctx context.Context, within, poll time.Duration, probe func(context.Context) (string, error)) (string, error) {
+	if within <= 0 {
+		within = defaultReadyTimeout
+	}
+	if poll <= 0 {
+		poll = defaultPollInterval
+	}
+	ctx, cancel := context.WithTimeout(ctx, within)
 	defer cancel()
-	ticker := time.NewTicker(opts.PollInterval)
+	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	for {
-		version, err := opts.Probe(ctx, kubeconfig)
+		version, err := probe(ctx)
 		if err == nil {
 			return version, nil
 		}
 		select {
 		case <-ctx.Done():
-			return "", fmt.Errorf("CWE did not become healthy within %s: %w", opts.ReadyTimeout, err)
+			return "", fmt.Errorf("CWE did not become healthy within %s: %w", within, err)
 		case <-ticker.C:
 		}
 	}
