@@ -2,7 +2,7 @@
 
 `nkectl bootstrap site` leaves a plain Kubernetes cluster. This page installs the management plane onto it: Postgres, Temporal, SPIRE, [CAPNICo](https://github.com/dsx-ai-factory/cluster-api-provider-nico), NKTP and the NKE controller.
 
-The installer takes two inputs. `nke-release.yaml`, the release spec, says which artifacts to install and where to pull each one from, by digest. `site-config.yaml` says what is specific to the site. `RELEASE_FILE` points at the spec on disk. `RELEASE_REF` names an NKD Release instead, and stage 1 produces the spec from `nkdctl release verify`. Everything else is derived.
+The installer takes two inputs. `nke-release.yaml`, the release spec, says which artifacts to install and where to pull each one from, by digest. `site-config.yaml` says what is specific to the site. `RELEASE_FILE` points at the spec on disk. `RELEASE_REF` names an NKD Release instead, and the Check Readiness stage produces the spec from `nkdctl release verify`. Everything else is derived.
 
 The install has seven stages. Each stage has a run step and a check step. Each run step is safe to repeat. You can stop after any stage and resume later.
 
@@ -45,7 +45,7 @@ items:
 | Field | Meaning |
 |---|---|
 | `release` | The OCI reference of the Release the spec came from. Informational |
-| `lane`, `scope` | How the artifacts were verified. Stage 1 prints both. A hand-written spec says `lane: local-assembly` and `scope: none` |
+| `lane`, `scope` | How the artifacts were verified. Check Readiness prints both. A hand-written spec says `lane: local-assembly` and `scope: none` |
 | `source` | The repository, tag and commit the deploy path comes from. The checkout must be at `source.tag` |
 | `items[].name` | The deploy item in `nke-deploy.yaml` the artifact serves. The names are equal |
 | `items[].type` | `image`, `chart` or `binary` |
@@ -54,7 +54,7 @@ items:
 
 There are two ways to get the file.
 
-- **From an NKD Release.** `nkdctl release verify` checks the signature and provenance of a Release and prints its artifacts with references. The converter `nkd-release-to-nke.py` in `controller/deploy/nke-sbom/install/` turns that output into this file. NKD's description carries no source pin, so you add `source` yourself. With `RELEASE_REF` set, stage 1 does both.
+- **From an NKD Release.** `nkdctl release verify` checks the signature and provenance of a Release and prints its artifacts with references. The converter `nkd-release-to-nke.py` in `controller/deploy/nke-sbom/install/` turns that output into this file. NKD's description carries no source pin, so you add `source` yourself. With `RELEASE_REF` set, Check Readiness does both.
 - **By hand.** Build the artifacts, push them to a registry the nodes reach, and write the file with those refs. See [Artifacts](#artifacts). An air-gapped site points every ref at its own registry.
 
 ## Before You Begin
@@ -67,12 +67,12 @@ There are two ways to get the file.
 | The bootstrap site spec | You need its `spire.trustDomain`, `spire.caCertFile` and `spire.caKeyFile` values. See [Configuration](configuration.md) |
 | A full checkout of this repository | At `source.tag` from the spec. The controller chart and the NKTP chart are installed from the tree, not from a registry |
 | `helm` `v4.2.4` | The version `make/tool-versions.mk` pins. Helm 3 cannot install these charts |
-| `oras` `1.3.3` | The version `make/tool-versions.mk` pins. Stage 6 pulls the external charts with it |
+| `oras` `1.3.3` | The version `make/tool-versions.mk` pins. Install the Site Controller pulls the external charts with it |
 | `kubectl`, `clusterctl` `v1.12.3`, `python3` | `clusterctl` matches `CAPI_VERSION` in `make/tool-versions.mk` |
-| Root shell access to every node | Stage 3 pulls images through each node's containerd |
+| Root shell access to every node | Stage Images pulls through each node's containerd |
 | `nkectl` | For the final stage. See [Download and Install nkectl](installation.md) |
 | The release spec | `nke-release.yaml`, or the Release reference it is converted from. See the install README |
-| Egress | The registries your refs point at, reachable from the nodes. The nodes also pull the images the charts, the CAPNICo manifest and the Cluster API providers run, and `clusterctl init` fetches from `github.com`. Stage 6 builds the NKTP chart dependencies on the machine running the install, from `kubernetes-sigs.github.io`, `open-telemetry.github.io` and `prometheus-community.github.io`. An air-gapped site mirrors those images and vendors `nktp/deploy/charts/nktp/charts/` first |
+| Egress | The registries your refs point at, reachable from the nodes. The nodes also pull the images the charts, the CAPNICo manifest and the Cluster API providers run, and `clusterctl init` fetches from `github.com`. Install the Site Controller builds the NKTP chart dependencies on the machine running the install, from `kubernetes-sigs.github.io`, `open-telemetry.github.io` and `prometheus-community.github.io`. An air-gapped site mirrors those images and vendors `nktp/deploy/charts/nktp/charts/` first |
 
 ## Artifacts
 
@@ -88,7 +88,7 @@ Pull the four external charts at the versions each item's `release.yaml` pins, w
 
 The cluster pulls the rest itself: the CAPNICo image the pinned manifest at `controller/deploy/nke-sbom/capnico/capnico.yaml` names, cert-manager and Cluster API through `clusterctl init`, and the images the charts run.
 
-## 1. Check Readiness
+## 0. Check Readiness
 
 Confirm the tools, the checkout, the release spec, egress, the node count and the architecture before anything changes. With `RELEASE_REF` set, the stage runs `nkdctl release verify` first and writes `nke-release.yaml` into `OUT_DIR`.
 
@@ -116,13 +116,13 @@ EGRESS_URLS=(
 
 ### Check
 
-The release spec parses; its lane and scope are printed, and a lane other than `pipeline-attested` is a warning. The checkout is at the tag the spec names, and every chart version in the spec equals the pin in `release.yaml` there. Each registry host in the spec answers from a node when `NODE_EXEC` says how to reach one. `kubectl`, `helm`, `clusterctl`, `oras`, `python3` and `curl` are on `PATH`. Only `helm` is compared with its pin, and a mismatch is a warning. The checkout holds the controller and NKTP charts. An egress host the runner cannot reach is a warning, because the nodes do the pulling. The node count is odd. Mixed node architectures are a warning. A warning names API authentication as off. With `NODE_EXEC` set, each node's image filesystem is measured, and less than 20% free is a warning: stage 3 pulls onto that filesystem, and the kubelet garbage-collects images under disk pressure.
+The release spec parses; its lane and scope are printed, and a lane other than `pipeline-attested` is a warning. The checkout is at the tag the spec names, and every chart version in the spec equals the pin in `release.yaml` there. Each registry host in the spec answers from a node when `NODE_EXEC` says how to reach one. `kubectl`, `helm`, `clusterctl`, `oras`, `python3` and `curl` are on `PATH`. Only `helm` is compared with its pin, and a mismatch is a warning. The checkout holds the controller and NKTP charts. An egress host the runner cannot reach is a warning, because the nodes do the pulling. The node count is odd. Mixed node architectures are a warning. A warning names API authentication as off. With `NODE_EXEC` set, each node's image filesystem is measured, and less than 20% free is a warning: Stage Images pulls onto that filesystem, and the kubelet garbage-collects images under disk pressure.
 
 ### If It Fails
 
 The report names the missing item. Fix it and run the stage again. Nothing on the cluster has changed. A version mismatch names the item, the version in the spec and the pin in `release.yaml`. Move the checkout to `source.tag`, or fix the spec.
 
-## 2. Prepare the Site Cluster
+## 1. Prepare the Site Cluster
 
 Confirm the nodes are schedulable and give the cluster a default StorageClass.
 
@@ -159,13 +159,13 @@ No node carries `node-role.kubernetes.io/control-plane:NoSchedule`, or the clust
 
 Two default StorageClasses fail the check. Remove the `storageclass.kubernetes.io/is-default-class` annotation from one. The taint removal touches only nodes that still carry the taint, so a rerun is safe.
 
-## 3. Stage Images
+## 2. Stage Images
 
 Pull the controller image onto every node before anything schedules, and pre-pull the external images as a best effort. The controller image is pulled by digest from its ref in the spec, through each node's containerd, into the `k8s.io` namespace. This pull is required; a failure ends the stage. The external images are pre-pulled the same way: the images the charts run, the profiles image among them, the CAPNICo image and the Cluster API provider images, as listed in `images.txt`. A failed external pull is a warning, because the kubelet pulls that image itself when the pod schedules. `PREPULL_EXTERNAL=0` skips the external pre-pull entirely. Only the node's containerd knows the site's mirrors, so the pull happens there and not on the machine running the install. The script reaches a node through `NODE_EXEC`, a command prefix with `{node}` in it: unset when the script runs on the node, `ssh root@{node}` for hosts, `nerdctl exec -i {node}` for container nodes.
 
 Every pulled image lands on the node's image filesystem. Under the kubelet's eviction threshold the node goes `DiskPressure` and the kubelet garbage-collects unused images, the staged controller image among them. Container nodes that share one disk draw on the same space, so the pre-pull can fill it several times over. The stage reads each node's headroom first and warns under 20% free. Set `PREPULL_EXTERNAL=0` on such nodes.
 
-`images.txt` is written by stage 4, so a first run of this stage pulls only the controller image and the check reports the external images as not written yet. `install-all.sh` runs this stage again after stage 4 to pre-pull them, and once more, controller image only, right before stage 6. Running the stages by hand, run `02-stage-images.sh run` again after stage 4, or let the kubelet pull them when the pods schedule.
+`images.txt` is written by Describe Your Site, so a first run of this stage pulls only the controller image and the check reports the external images as not written yet. `install-all.sh` runs this stage again after Describe Your Site to pre-pull them, and once more, controller image only, right before Install the Site Controller. Running the stages by hand, run `02-stage-images.sh run` again after Describe Your Site, or let the kubelet pull them when the pods schedule.
 
 <!-- stage:02-stage-images begin -->
 ```bash
@@ -211,9 +211,9 @@ fi
 
 ### If It Fails
 
-A failed controller pull ends the stage and names the registry that refused and the node. Make that registry reachable from the node, or point the ref at one that is. A failed external pull is a warning with the same names; fix the registry, or let the kubelet pull it when the pod schedules. The namespace is `k8s.io`, not `default`. An image in the wrong namespace is invisible to the kubelet and the controller pod fails with a pull error. A disk warning names the node and its free share. Free space on the node or set `PREPULL_EXTERNAL=0`; the kubelet garbage-collects unused images under disk pressure, so a full pre-pull can remove the controller image it was meant to protect. `install-all.sh` pulls the controller image again right before stage 6, and stage 6 repeats this check first.
+A failed controller pull ends the stage and names the registry that refused and the node. Make that registry reachable from the node, or point the ref at one that is. A failed external pull is a warning with the same names; fix the registry, or let the kubelet pull it when the pod schedules. The namespace is `k8s.io`, not `default`. An image in the wrong namespace is invisible to the kubelet and the controller pod fails with a pull error. A disk warning names the node and its free share. Free space on the node or set `PREPULL_EXTERNAL=0`; the kubelet garbage-collects unused images under disk pressure, so a full pre-pull can remove the controller image it was meant to protect. `install-all.sh` pulls the controller image again right before Install the Site Controller, which repeats this check first.
 
-## 4. Describe Your Site
+## 3. Describe Your Site
 
 Write one `site-config.yaml` and render it into the values and configuration the install needs.
 
@@ -254,7 +254,7 @@ The renderer exits 0. No referenced key is empty. When a Postgres Secret already
 
 The renderer names the empty or missing key. A password mismatch means `OUT_DIR` was deleted after an install. The live value is key `postgres-password` of Secret `postgres-postgresql` in namespace `postgres`; the rendered one is `OUT_DIR/db-password`. Restore `OUT_DIR`, or set `db.password` to the live value.
 
-## 5. Install Cluster API
+## 4. Install Cluster API
 
 Install cert-manager, Cluster API core and the kubeadm providers at the version this repository pins.
 
@@ -278,11 +278,11 @@ The Deployments in `capi-system`, `capi-kubeadm-bootstrap-system`, `capi-kubeadm
 
 ### If It Fails
 
-A hang on cert-manager means the control-plane taint is still present on a cluster without worker nodes. Run stage 2 again. `clusterctl init` skips providers that are already installed, so a rerun is safe. Only a conflicting provider version is an error.
+A hang on cert-manager means the control-plane taint is still present on a cluster without worker nodes. Run Prepare the Site Cluster again. `clusterctl init` skips providers that are already installed, so a rerun is safe. Only a conflicting provider version is an error.
 
-## 6. Install the Site Controller
+## 5. Install the Site Controller
 
-Apply the deploy items in list order: base configuration, SPIRE node ports, CAPNICo, then the NKTP, Postgres, SPIRE, Temporal and controller releases. `install-all.sh` runs stage 3 once more right before this stage, controller image only (`PREPULL_EXTERNAL=0`), so a controller image the kubelet garbage-collected since stage 3 is back on every node before the controller release needs it. Running the stages by hand, run `PREPULL_EXTERNAL=0 02-stage-images.sh run` first.
+Apply the deploy items in list order: base configuration, SPIRE node ports, CAPNICo, then the NKTP, Postgres, SPIRE, Temporal and controller releases. `install-all.sh` runs Stage Images once more right before this stage, controller image only (`PREPULL_EXTERNAL=0`), so a controller image the kubelet garbage-collected since that stage first ran is back on every node before the controller release needs it. Running the stages by hand, run `PREPULL_EXTERNAL=0 02-stage-images.sh run` first.
 
 The four external charts, Postgres, SPIRE CRDs, Temporal and SPIRE, are pulled from their refs in the spec with `oras` into `OUT_DIR/charts/<item>/<chart>-<version>.tgz`. The ref names a manifest; the sha256 of the pulled file must equal the digest of the chart layer in that manifest before the release is installed from the file. The controller and NKTP charts are installed from the tree.
 
@@ -486,11 +486,11 @@ A pull error on the controller pod means the image is missing from a node. Run `
 
 `NicoMachine CRD not installed` in the controller log means the controller started before CAPNICo registered its CRDs. The controller reads them once at start. Run `kubectl -n cloud-workflow-engine rollout restart deployment/cloud-workflow-engine`, then run the check again.
 
-## 7. Secure and Register the Site
+## 6. Secure and Register the Site
 
 Patch the Cluster API controllers to authenticate to tenant clusters with SPIFFE JWTs, then register the site with `nkectl`.
 
-`SITE_NAME` and `SITE_VIP` come from `OUT_DIR/site.env`, written by stage 4, else from `site.name` and `site.vip` in `site-config.yaml`. Setting either variable in the environment overrides both.
+`SITE_NAME` and `SITE_VIP` come from `OUT_DIR/site.env`, written by Describe Your Site, else from `site.name` and `site.vip` in `site-config.yaml`. Setting either variable in the environment overrides both.
 
 ### Choices
 
@@ -519,7 +519,7 @@ The patched Cluster API Deployments finish their rollout. `nkectl get providers`
 
 ### If It Fails
 
-The rollout waits for the `csi.spiffe.io` CSIDriver, which the SPIRE release installs. If it is missing, stage 6 did not finish. `clusterctl upgrade` replaces the patched Deployments, so run this stage again after every Cluster API upgrade.
+The rollout waits for the `csi.spiffe.io` CSIDriver, which the SPIRE release installs. If it is missing, Install the Site Controller did not finish. `clusterctl upgrade` replaces the patched Deployments, so run this stage again after every Cluster API upgrade.
 
 `/api/version` does not answer from the runner when the runner's network is not in `API_CLIENT_CIDRS`. Export it and run the stage again. `kubectl -n cloud-workflow-engine get networkpolicy` lists the chart's policy and, when applied, `cloud-workflow-engine-api-clients`.
 
@@ -543,10 +543,10 @@ Helm leaves PersistentVolumeClaims behind. Delete the `postgres` and `spire-serv
 ## Upgrade
 
 1. Build and push the new controller image. Put its ref in the release spec.
-2. Run stage 3 to pull it on every node, then stage 4 to render.
+2. Run Stage Images to pull it on every node, then Describe Your Site to render.
 3. Run `install-all.sh --from install-site-controller`.
 
-Stage 7 runs again as part of that range. [Tenant Cluster Kubernetes Upgrades](../operations/upgrade.md) covers upgrades of tenant clusters.
+Secure and Register runs again as part of that range. [Tenant Cluster Kubernetes Upgrades](../operations/upgrade.md) covers upgrades of tenant clusters.
 
 ## Extend to GitOps
 
@@ -556,9 +556,9 @@ The manual install above is the baseline. Every item in `nke-deploy.yaml` is a H
 - **Order.** The item list order maps to sync waves, one wave per item.
 - **The Certificate.** The `spire` item declares a `requires:` on the `oidc-provider-upstream-ca` Certificate. In GitOps that is a wave boundary or a health check on the Certificate, not a `kubectl wait`.
 - **Secrets.** The `nke-base-config` item renders three Secrets: `nico-credentials`, `ghcr-imagepull` and `dgxc-tenant-credentials`. Under GitOps those come from the operator's secret store. The namespaces and the Certificate chain in the same item are plain YAML and stay in git.
-- **Imperative steps.** `clusterctl init` and `controller/hack/apply-capi-spiffe-exec-auth.sh` stay imperative, outside GitOps. Stages 1 to 5 and stage 7 do not change.
+- **Imperative steps.** `clusterctl init` and `controller/hack/apply-capi-spiffe-exec-auth.sh` stay imperative, outside GitOps. The other stages do not change.
 
-The per-site values stage 4 renders belong in your own repository or your secret store. [Deploy Repository](deploy-repository.md) describes the `argocd` item type for a deploy path that carries Argo CD Applications.
+The per-site values Describe Your Site renders belong in your own repository or your secret store. [Deploy Repository](deploy-repository.md) describes the `argocd` item type for a deploy path that carries Argo CD Applications.
 
 The Application below delivers the `temporal` item. It is illustrative and untested. The chart source is the repository and version from `temporal/release.yaml`; with a release spec, `repoURL` points at the registry in the `temporal` ref instead. The values come from the two in-tree values files through the clone as a second source. The sync wave is the item's position in the list.
 
