@@ -232,14 +232,31 @@ sha256_file() {
 # the unchanged .tgz; its org.opencontainers.image.title is the file name
 # `oras pull` writes, FALLBACK when the layer has none. Under DRY_RUN nothing
 # is fetched: the argv is printed and a placeholder digest with FALLBACK.
+# PLAIN_HTTP_REGISTRIES lists registries that serve plain HTTP, space
+# separated, host:port. oras_flags prints --plain-http for a ref on one of
+# them. A registry with a port that is not listed is probed once: /v2/ over
+# https first, then http. Registries without a port are never plain HTTP.
+PLAIN_HTTP_REGISTRIES="${PLAIN_HTTP_REGISTRIES:-}"
+oras_flags() {
+  local host="${1%%/*}"
+  case " ${PLAIN_HTTP_REGISTRIES} " in *" ${host} "*) printf -- '--plain-http'; return 0 ;; esac
+  [[ "${host}" == *:* && -z "${DRY_RUN}" ]] || return 0
+  if ! curl -sS -o /dev/null --max-time 5 "https://${host}/v2/" 2>/dev/null &&
+     curl -sS -o /dev/null --max-time 5 "http://${host}/v2/" 2>/dev/null; then
+    printf -- '--plain-http'
+  fi
+  return 0
+}
+
 chart_layer() {
   local ref="$1" fallback="$2"
   if [[ -n "${DRY_RUN}" ]]; then
-    run oras manifest fetch "${ref}" >&2
+    run oras manifest fetch $(oras_flags "${ref}") "${ref}" >&2
     printf 'sha256:dry-run %s\n' "${fallback}"
     return 0
   fi
-  oras manifest fetch "${ref}" | python3 -c '
+  # shellcheck disable=SC2046
+  oras manifest fetch $(oras_flags "${ref}") "${ref}" | python3 -c '
 import json, sys
 layers = json.load(sys.stdin).get("layers", [])
 chart = [l for l in layers if l.get("mediaType") == "application/vnd.cncf.helm.chart.content.v1.tar+gzip"] or layers[:1]

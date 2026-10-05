@@ -172,6 +172,7 @@ The controller and NKTP charts stay in the tree. `oras` must be on `PATH` at the
 | `IMAGES_TXT_SKIP` | unset | Stage 3: `1` skips `helm template` |
 | `CAPNICO_IMAGE` | unset | Stage 5: `repository:tag` the CAPNICo manifest is repointed at |
 | `SITE_NAME`, `SITE_VIP` | from `site.env` | Stage 6 overrides |
+| `PLAIN_HTTP_REGISTRIES` | unset | Registries that serve plain HTTP, `host:port`, space separated. `oras` gets `--plain-http` for them. A registry with a port that is not listed is probed once |
 
 ## Failure
 
