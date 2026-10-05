@@ -43,7 +43,7 @@ Neither set is an error that names both variables.
 | 03 describe site | `site-config.yaml`, spec | values files, Secrets input, `site.env`, `images.txt`, `version-bom.cdx.json` | files present; no empty value; password matches the live Secret |
 | 04 install Cluster API | pinned versions | cert-manager, CAPI | Deployments Available; CRDs Established |
 | 05 install site controller | `$OUT_DIR`, spec | the 11 deploy items | releases deployed at the spec versions; `/readyz` ok; no CRD warning in the controller log. `install-all.sh` re-pulls the controller image right before this stage |
-| 06 secure and register | kubeconfig, `site.env` | exec-auth patch, `nkectl` site | rollouts complete; `nkectl get providers` shows `nico` CONFIGURED |
+| 06 secure and register | kubeconfig, `site.env` | exec-auth patch, `nkectl` site, API client NetworkPolicy when `API_CLIENT_CIDRS` is set | rollouts complete; `nkectl get providers` shows `nico` CONFIGURED; `/api/version` answers 200 from the runner |
 
 ## Release spec parser
 
@@ -144,6 +144,7 @@ The controller and NKTP charts stay in the tree. `oras` must be on `PATH` at the
 - `clusterctl upgrade` drops the patch. Rerun this stage after it.
 - CONFIGURED means the provider CRDs exist, its manager is available and its credentials Secret exists. It does not mean the credentials work.
 - API authentication is off by default. The API is plain HTTP on NodePort 30080 on every node IP. To require a token, follow [configuring-api-authentication.md](../../../docs/configuring-api-authentication.md).
+- The chart's NetworkPolicy admits the API only from pods in the cluster, so the NodePort is unreachable from off the nodes. `API_CLIENT_CIDRS="10.0.0.0/8 192.168.0.0/16"` applies a second NetworkPolicy, `cloud-workflow-engine-api-clients`, that admits those networks on the pod port 8080. The check requests `/api/version` from the runner and fails when it does not answer 200.
 
 ## Environment
 
@@ -172,6 +173,7 @@ The controller and NKTP charts stay in the tree. `oras` must be on `PATH` at the
 | `IMAGES_TXT_SKIP` | unset | Stage 3: `1` skips `helm template` |
 | `CAPNICO_IMAGE` | unset | Stage 5: `repository:tag` the CAPNICo manifest is repointed at |
 | `SITE_NAME`, `SITE_VIP` | from `site.env` | Stage 6 overrides |
+| `API_CLIENT_CIDRS` | unset | Stage 6: client networks the API admits, space separated CIDRs. Environment only; `site-config.yaml` has no key for it |
 | `PLAIN_HTTP_REGISTRIES` | unset | Registries that serve plain HTTP, `host:port`, space separated. `oras` gets `--plain-http` for them. A registry with a port that is not listed is probed once |
 
 ## Failure
