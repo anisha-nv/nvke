@@ -104,7 +104,15 @@ start_unmanaged() {
   # is no window where the directory exists world-writable. See
   # UNMANAGED_LOG_DIR for why the logs are not in /tmp.
   sudo install -d -m 700 -o root -g root "${UNMANAGED_LOG_DIR}"
-  sudo sh -c "nohup $* >'${UNMANAGED_LOG_DIR}/${name}.log' 2>&1 &"
+  # argv as positional parameters, not joined into the -c string: "$*" would
+  # flatten it and let the root shell re-split on whitespace and act on
+  # metacharacters. The values come from the environment -- CONTAINERD_ADDRESS
+  # and BUILDKIT_HOST among them -- so what survives the join is the caller's
+  # quoting, and that is not something to hand a root shell. CI sets fixed
+  # values, so this is about the general case rather than a live hole. The
+  # trailing `sh` is $0 for the inner shell; the log path is $1, shifted off.
+  sudo sh -c 'logfile="$1"; shift; nohup "$@" >"${logfile}" 2>&1 &' \
+    sh "${UNMANAGED_LOG_DIR}/${name}.log" "$@"
 }
 
 # install_runtime installs nerdctl-full and starts the standalone containerd
