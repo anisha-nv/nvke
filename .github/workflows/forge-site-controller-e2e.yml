@@ -156,11 +156,7 @@ concurrency:
   # concurrently and could exhaust it. Today nothing does -- gb200 is ytl and
   # everything else is az61 -- but declaring a second GPU shape at an existing
   # site would break that, and the fix then is an explicit site input.
-  # TEMPORARY: hardcoded to match the ARCH/GPU override below, so this
-  # validation run gets its own concurrency group instead of queuing behind
-  # the arm64/gb200 run already in flight. Revert together with that override.
-  # group: Forge site controller e2e ${{ inputs.arch || vars.SITE_E2E_ARCH || 'amd64' }} ${{ inputs.gpu || vars.SITE_E2E_GPU }}
-  group: Forge site controller e2e amd64
+  group: Forge site controller e2e ${{ inputs.arch || vars.SITE_E2E_ARCH || 'amd64' }} ${{ inputs.gpu || vars.SITE_E2E_GPU }}
   cancel-in-progress: false
 
 jobs:
@@ -250,13 +246,8 @@ jobs:
       # variable per key is easier to set correctly than a string whose
       # grammar has to be remembered, and ARCH is needed on its own anyway,
       # for SITE_ARCH.
-      # TEMPORARY: hardcoded to amd64/no-GPU so this validation run doesn't
-      # compete for arm64/gb200 capacity with the run already in progress.
-      # Revert to the vars-driven form below before merging.
-      # ARCH: ${{ inputs.arch || vars.SITE_E2E_ARCH }}
-      # GPU: ${{ inputs.gpu || vars.SITE_E2E_GPU }}
-      ARCH: amd64
-      GPU: ""
+      ARCH: ${{ inputs.arch || vars.SITE_E2E_ARCH }}
+      GPU: ${{ inputs.gpu || vars.SITE_E2E_GPU }}
       # A label cannot carry a boolean, so a labelled run takes this from the
       # repository variable, as it does every other setting. Holding a Forge
       # machine is expensive and the variable is easy to leave set, so the run
