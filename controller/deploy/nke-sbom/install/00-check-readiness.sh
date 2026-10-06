@@ -34,7 +34,7 @@ NODE="${NODE:-}"
 # dependencies from the three github.io Helm repositories; an air-gapped site
 # vendors nktp/deploy/charts/nktp/charts/ instead. The rest are the image
 # registries the charts' images and CAPNICo come from: ghcr.io, quay.io and
-# registry.k8s.io. Charts are pulled from the refs in nke-release.yaml, and
+# registry.k8s.io. Charts are pulled from the refs in release-manifest.yaml, and
 # stage 2 pre-pulls every image from the nodes, so a miss here is a warning:
 # the nodes may reach a mirror the runner does not.
 EGRESS_URLS=(

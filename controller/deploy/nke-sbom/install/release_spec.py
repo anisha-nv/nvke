@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Parse nke-release.yaml, the one file that names every artifact the install pulls.
+"""Parse release-manifest.yaml, the one file that names every artifact the install pulls.
 
   release_spec.py meta   FILE                         shell-sourceable lines
   release_spec.py items  FILE [--type image|chart|binary]

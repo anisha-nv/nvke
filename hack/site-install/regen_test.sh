@@ -84,7 +84,7 @@ mkdir -p "${work}/install"
 cp "${repo_root}/controller/deploy/nke-sbom/install/lib.sh" "${work}/install/"
 cp "${repo_root}/controller/deploy/nke-sbom/install/release_spec.py" "${work}/install/"
 # lib.sh needs a release spec; the example has the right shape.
-release_file="${repo_root}/controller/deploy/nke-sbom/install/nke-release.example.yaml"
+release_file="${repo_root}/controller/deploy/nke-sbom/install/release-manifest.example.yaml"
 cp "${work}/out/05-install-site-controller.sh" "${work}/install/"
 : >"${work}/kubeconfig"
 if ! (cd "${work}" && DRY_RUN=1 SITE_KUBECONFIG="${work}/kubeconfig" OUT_DIR="${work}/site-out" \

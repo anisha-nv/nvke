@@ -2,7 +2,7 @@
 
 `nkectl bootstrap site` leaves a plain Kubernetes cluster. This page installs the management plane onto it: Postgres, Temporal, SPIRE, [CAPNICo](https://github.com/dsx-ai-factory/cluster-api-provider-nico), NKTP and the NKE controller.
 
-The installer takes two inputs. `nke-release.yaml`, the release spec, says which artifacts to install and where to pull each one from, by digest. `site-config.yaml` says what is specific to the site. `RELEASE_FILE` points at the spec on disk. `RELEASE_REF` names an NKD Release instead, and the Check Readiness stage produces the spec from `nkdctl release verify`. Everything else is derived.
+The installer takes two inputs. `release-manifest.yaml`, the release spec, says which artifacts to install and where to pull each one from, by digest. `site-config.yaml` says what is specific to the site. `RELEASE_FILE` points at the spec on disk. `RELEASE_REF` names an NKD Release instead, and the Check Readiness stage produces the spec from `nkdctl release verify`. Everything else is derived.
 
 The install has seven stages. Each stage has a run step and a check step. Each run step is safe to repeat. You can stop after any stage and resume later.
 
@@ -12,17 +12,17 @@ To run every stage in order:
 
 ```bash
 export SITE_KUBECONFIG=./my-site.kubeconfig
-export RELEASE_FILE=./nke-release.yaml
+export RELEASE_FILE=./release-manifest.yaml
 controller/deploy/nke-sbom/install/install-all.sh
 ```
 
-`nke-release.yaml` names every artifact the install pulls, each as an OCI reference with its digest. It is converted from `nkdctl release verify` output or assembled locally; `controller/deploy/nke-sbom/install/nke-release.example.yaml` shows the shape. Setting `RELEASE_REF` to the Release reference instead runs the verification and the conversion for you. The install README has the details.
+`release-manifest.yaml` names every artifact the install pulls, each as an OCI reference with its digest. It is converted from `nkdctl release verify` output or assembled locally; `controller/deploy/nke-sbom/install/release-manifest.example.yaml` shows the shape. Setting `RELEASE_REF` to the Release reference instead runs the verification and the conversion for you. The install README has the details.
 
 `--from NAME` resumes at a stage. `--until NAME` stops after one. `NAME` is the script name without its number, for example `--from install-cluster-api`. The [install README](../../controller/deploy/nke-sbom/install/README.md) lists every environment variable the scripts read.
 
 ## Release Spec
 
-`nke-release.yaml` names every artifact the install pulls. It has the shape of `nke-deploy.yaml`: a flat `items` list, one entry per artifact, named after the deploy item it serves. `ref` carries the digest, so there is no separate checksum file.
+`release-manifest.yaml` names every artifact the install pulls. It has the shape of `nke-deploy.yaml`: a flat `items` list, one entry per artifact, named after the deploy item it serves. `ref` carries the digest, so there is no separate checksum file.
 
 ```yaml
 apiVersion: nke.nvidia.com/release/v1
@@ -62,7 +62,7 @@ There are two ways to get the file.
 | Requirement | Notes |
 |---|---|
 | The site cluster kubeconfig | Written by `nkectl bootstrap site`. Every command below takes it through `SITE_KUBECONFIG` |
-| A release spec | `nke-release.yaml` through `RELEASE_FILE`, or an NKD Release through `RELEASE_REF`. See [Release Spec](#release-spec) |
+| A release spec | `release-manifest.yaml` through `RELEASE_FILE`, or an NKD Release through `RELEASE_REF`. See [Release Spec](#release-spec) |
 | An odd node count | One, three or five nodes, all control-plane |
 | The bootstrap site spec | You need its `spire.trustDomain`, `spire.caCertFile` and `spire.caKeyFile` values. See [Configuration](configuration.md) |
 | A full checkout of this repository | At `source.tag` from the spec. The controller chart and the NKTP chart are installed from the tree, not from a registry |
@@ -71,7 +71,7 @@ There are two ways to get the file.
 | `kubectl`, `clusterctl` `v1.12.3`, `python3` | `clusterctl` matches `CAPI_VERSION` in `make/tool-versions.mk` |
 | Root shell access to every node | Stage Images pulls through each node's containerd |
 | `nkectl` | For the final stage. See [Download and Install nkectl](installation.md) |
-| The release spec | `nke-release.yaml`, or the Release reference it is converted from. See the install README |
+| The release spec | `release-manifest.yaml`, or the Release reference it is converted from. See the install README |
 | Egress | The registries your refs point at, reachable from the nodes. The nodes also pull the images the charts, the CAPNICo manifest and the Cluster API providers run, and `clusterctl init` fetches from `github.com`. Install the Site Controller builds the NKTP chart dependencies on the machine running the install, from `kubernetes-sigs.github.io`, `open-telemetry.github.io` and `prometheus-community.github.io`. An air-gapped site mirrors those images and vendors `nktp/deploy/charts/nktp/charts/` first |
 
 ## Artifacts
@@ -90,7 +90,7 @@ The cluster pulls the rest itself: the CAPNICo image the pinned manifest at `con
 
 ## 0. Check Readiness
 
-Confirm the tools, the checkout, the release spec, egress, the node count and the architecture before anything changes. With `RELEASE_REF` set, the stage runs `nkdctl release verify` first and writes `nke-release.yaml` into `OUT_DIR`.
+Confirm the tools, the checkout, the release spec, egress, the node count and the architecture before anything changes. With `RELEASE_REF` set, the stage runs `nkdctl release verify` first and writes `release-manifest.yaml` into `OUT_DIR`.
 
 <!-- stage:00-check-readiness begin -->
 ```bash
@@ -99,7 +99,7 @@ Confirm the tools, the checkout, the release spec, egress, the node count and th
 # dependencies from the three github.io Helm repositories; an air-gapped site
 # vendors nktp/deploy/charts/nktp/charts/ instead. The rest are the image
 # registries the charts' images and CAPNICo come from: ghcr.io, quay.io and
-# registry.k8s.io. Charts are pulled from the refs in nke-release.yaml, and
+# registry.k8s.io. Charts are pulled from the refs in release-manifest.yaml, and
 # stage 2 pre-pulls every image from the nodes, so a miss here is a warning:
 # the nodes may reach a mirror the runner does not.
 EGRESS_URLS=(

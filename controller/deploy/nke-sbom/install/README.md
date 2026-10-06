@@ -6,7 +6,7 @@ One script per stage. Run them in order. The guide is the authority.
 ## Run
 
 ```bash
-export SITE_KUBECONFIG=~/.kube/site.kubeconfig RELEASE_FILE=./nke-release.yaml
+export SITE_KUBECONFIG=~/.kube/site.kubeconfig RELEASE_FILE=./release-manifest.yaml
 ./install-all.sh                                    # every stage: run, then check; stop on the first failure
 ./install-all.sh --from install-cluster-api         # resume at a stage
 ./install-all.sh --until stage-images               # stop after a stage
@@ -21,15 +21,15 @@ Stage names drop the numeric prefix. `--from install-cluster-api` selects `04-in
 
 | File | Says | Set by |
 |---|---|---|
-| `nke-release.yaml` | Which artifacts to install and where to pull each from, by digest | `RELEASE_FILE`, or `RELEASE_REF` plus the variables below |
+| `release-manifest.yaml` | Which artifacts to install and where to pull each from, by digest | `RELEASE_FILE`, or `RELEASE_REF` plus the variables below |
 | `site-config.yaml` | What is specific to this site | `SITE_CONFIG` |
 
 Everything else is derived.
 
-Two ways to get `nke-release.yaml`:
+Two ways to get `release-manifest.yaml`:
 
-- Point `RELEASE_FILE` at one. [nke-release.example.yaml](nke-release.example.yaml) shows the shape. The grammar is in the docstring of `release_spec.py`.
-- Set `RELEASE_REF` to an NKD Release reference. `lib.sh` runs `nkdctl release verify`, saves the description to `$OUT_DIR/nkd-release.json`, and converts it with `nkd-release-to-nke.py` into `$OUT_DIR/nke-release.yaml`. The description has no source pin and no chart versions, so also set `RELEASE_SOURCE_REPO`, `RELEASE_SOURCE_TAG` and `RELEASE_CHART_VERSIONS`. The converted file is reused while its `release:` equals `RELEASE_REF`.
+- Point `RELEASE_FILE` at one. [release-manifest.example.yaml](release-manifest.example.yaml) shows the shape. The grammar is in the docstring of `release_spec.py`.
+- Set `RELEASE_REF` to an NKD Release reference. `lib.sh` runs `nkdctl release verify`, saves the description to `$OUT_DIR/nkd-release.json`, and converts it with `nkd-release-to-nke.py` into `$OUT_DIR/release-manifest.yaml`. The description has no source pin and no chart versions, so also set `RELEASE_SOURCE_REPO`, `RELEASE_SOURCE_TAG` and `RELEASE_CHART_VERSIONS`. The converted file is reused while its `release:` equals `RELEASE_REF`.
 
 Neither set is an error that names both variables.
 
@@ -151,8 +151,8 @@ The controller and NKTP charts stay in the tree. `oras` must be on `PATH` at the
 | Variable | Default | Purpose |
 |---|---|---|
 | `SITE_KUBECONFIG` | required | Site cluster kubeconfig. Every kubectl and helm call uses it |
-| `RELEASE_FILE` | required unless `RELEASE_REF` | Path of `nke-release.yaml`. Optional for stage 3, which then needs `images.controller` and writes no BOM |
-| `RELEASE_REF` | unset | NKD Release reference. Converted into `$OUT_DIR/nke-release.yaml` |
+| `RELEASE_FILE` | required unless `RELEASE_REF` | Path of `release-manifest.yaml`. Optional for stage 3, which then needs `images.controller` and writes no BOM |
+| `RELEASE_REF` | unset | NKD Release reference. Converted into `$OUT_DIR/release-manifest.yaml` |
 | `RELEASE_VERIFY_ARGS` | unset | Extra `nkdctl release verify` arguments: `--lane`, `--scope`, `--identity`, `--issuer`, `--cosign`, `--cosign-digest` |
 | `RELEASE_SOURCE_REPO`, `RELEASE_SOURCE_TAG`, `RELEASE_SOURCE_COMMIT` | required with `RELEASE_REF`; commit optional | The NKE repository, tag and commit the Release was pinned from |
 | `RELEASE_CHART_VERSIONS` | required with `RELEASE_REF` | `name=version,...` for every chart item |

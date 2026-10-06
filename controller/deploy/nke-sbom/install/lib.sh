@@ -189,10 +189,10 @@ require_cmd() {
   done
 }
 
-# The release spec names every artifact the install pulls: nke-release.yaml,
+# The release spec names every artifact the install pulls: release-manifest.yaml,
 # parsed by release_spec.py. Either RELEASE_FILE points at one, or RELEASE_REF
 # names an NKD Release and `nkdctl release verify` output is converted into
-# ${OUT_DIR}/nke-release.yaml. A stage that does not read the spec sets
+# ${OUT_DIR}/release-manifest.yaml. A stage that does not read the spec sets
 # STAGE_NEEDS_RELEASE=0 before sourcing this file.
 STAGE_NEEDS_RELEASE="${STAGE_NEEDS_RELEASE:-1}"
 RELEASE_FILE="${RELEASE_FILE:-}"
@@ -267,11 +267,11 @@ print(chart[0]["digest"], chart[0].get("annotations", {}).get("org.opencontainer
 }
 
 # resolve_release_ref verifies RELEASE_REF and converts the description into
-# ${OUT_DIR}/nke-release.yaml. The converted file is reused while its
+# ${OUT_DIR}/release-manifest.yaml. The converted file is reused while its
 # `release:` still equals RELEASE_REF, so every stage does not re-verify.
 # Runs for real under DRY_RUN: the stages need the file to print their argv.
 resolve_release_ref() {
-  local out="${OUT_DIR}/nke-release.yaml" json="${OUT_DIR}/nkd-release.json" current=""
+  local out="${OUT_DIR}/release-manifest.yaml" json="${OUT_DIR}/nkd-release.json" current=""
   if [[ -f "${out}" ]]; then
     current="$(python3 "${INSTALL_DIR}/release_spec.py" meta "${out}" 2>/dev/null |
       sed -n "s/^RELEASE='\(.*\)'$/\1/p")"
@@ -297,7 +297,7 @@ resolve_release_ref() {
 
 if [[ "${STAGE_NEEDS_RELEASE}" != "0" ]]; then
   if [[ -z "${RELEASE_FILE}" && -z "${RELEASE_REF}" ]]; then
-    die "neither RELEASE_FILE nor RELEASE_REF is set. Export RELEASE_FILE=<path to nke-release.yaml> or RELEASE_REF=<OCI reference of an NKD Release>."
+    die "neither RELEASE_FILE nor RELEASE_REF is set. Export RELEASE_FILE=<path to release-manifest.yaml> or RELEASE_REF=<OCI reference of an NKD Release>."
   fi
   if [[ -z "${RELEASE_FILE}" ]]; then
     resolve_release_ref

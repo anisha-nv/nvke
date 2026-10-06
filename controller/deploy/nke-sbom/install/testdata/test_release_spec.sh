@@ -158,13 +158,13 @@ err="$(cd "${WORK}" && OUT_DIR="${WORK}/out" SITE_KUBECONFIG="${WORK}/kubeconfig
   pass "lib.sh: RELEASE_REF without a source pin names the variables" || fail "lib.sh: rc=${rc}: ${err}"
 # A converted file in OUT_DIR for the same RELEASE_REF is reused without nkdctl.
 mkdir -p "${WORK}/out"
-cp "${valid}" "${WORK}/out/nke-release.yaml"
+cp "${valid}" "${WORK}/out/release-manifest.yaml"
 rc=0
 log="$(cd "${WORK}" && OUT_DIR="${WORK}/out" SITE_KUBECONFIG="${WORK}/kubeconfig" DRY_RUN=1 PATH="/usr/bin:/bin" \
   RELEASE_REF="registry.example.test:5000/nke/releases@sha256:${zeros}" SBOM_DIR="${SBOM_DIR}" \
   "${INSTALL_DIR}/00-check-readiness.sh" check 2>&1)" || rc=$?
 # lib.sh prints the realpath; on macOS $TMPDIR resolves through /private, so match the suffix.
-[[ "${log}" == *"PASS  release spec: "*"/out/nke-release.yaml"* ]] &&
+[[ "${log}" == *"PASS  release spec: "*"/out/release-manifest.yaml"* ]] &&
   pass "lib.sh: reuses the converted spec for the same RELEASE_REF" || fail "lib.sh: reuse: ${log}"
 
 # 00-check-readiness.sh: the release checks against this checkout.

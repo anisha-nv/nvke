@@ -4,7 +4,7 @@
 """Render site-config.yaml into the files stage 5 installs from.
 
   describe_site.py render --config site-config.yaml --out DIR --sbom-dir controller/deploy
-                          [--release-file nke-release.yaml]
+                          [--release-file release-manifest.yaml]
   describe_site.py check  --out DIR
   describe_site.py keys   --config site-config.yaml --sbom-dir controller/deploy
 
@@ -1161,7 +1161,7 @@ def main(argv):
     p.add_argument("--out", required=True)
     p.add_argument("--sbom-dir", required=True)
     p.add_argument("--release-file", default="",
-                   help="nke-release.yaml; the BOM is written from its items. Empty: no BOM.")
+                   help="release-manifest.yaml; the BOM is written from its items. Empty: no BOM.")
     p = sub.add_parser("check")
     p.add_argument("--out", required=True)
     p = sub.add_parser("keys")

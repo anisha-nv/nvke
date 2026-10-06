@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Convert the description `nkdctl release verify` prints into nke-release.yaml.
+"""Convert the description `nkdctl release verify` prints into release-manifest.yaml.
 
   nkd-release-to-nke.py [RELEASE.json] --source-repo URL --source-tag TAG
-      [--source-commit SHA] [--versions NAME=V,NAME=V,...] > nke-release.yaml
+      [--source-commit SHA] [--versions NAME=V,NAME=V,...] > release-manifest.yaml
 
 Reads a `nkd.dev/release/v3` document from the path or stdin and writes the
 installer's spec to stdout. NKD stays the source of digests; this owns the
