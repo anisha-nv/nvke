@@ -34,9 +34,9 @@ indexes both.
 | [site-bootstrap/configuration.md](site-bootstrap/configuration.md) | The site spec file that describes a site |
 | [site-bootstrap/pre-provisioned-nodes.md](site-bootstrap/pre-provisioned-nodes.md) | Using hosts that are already provisioned |
 | [site-bootstrap/custom-base-os.md](site-bootstrap/custom-base-os.md) | Running on a base OS other than the reference image |
-| [site-bootstrap/deploy-repository.md](site-bootstrap/deploy-repository.md) | The deploy repository and what it holds |
+| [site-bootstrap/deploy-path.md](site-bootstrap/deploy-path.md) | The deploy path format: `nke-deploy.yaml`, the item types, and how `deploy/nke-deploy.sh` applies them |
 | [site-bootstrap/infrastructure-providers.md](site-bootstrap/infrastructure-providers.md) | Installing Cluster API and an infrastructure provider on a site cluster |
-| [site-bootstrap/install-site-controller.md](site-bootstrap/install-site-controller.md) | Installing Postgres, Temporal, SPIRE, CAPNICo and the NKE controller onto a bootstrapped site cluster, in seven stages |
+| [site-bootstrap/install-site-controller.md](site-bootstrap/install-site-controller.md) | Installing Postgres, Temporal, SPIRE, CAPNICo, NKTP and the NKE controller onto a bootstrapped site cluster with `deploy/install.sh`, from a deploy path, a release manifest and a site config, in seven stages |
 | [../cli/docs/sitespec.md](../cli/docs/sitespec.md) | Every field of the site spec file, with its type |
 
 ## Running tenant clusters

@@ -363,7 +363,8 @@ separate job, and the largest step here — `nkectl` has no command for it.
 
 Follow [Install the Site Controller](site-bootstrap/install-site-controller.md).
 It installs the whole management plane, Postgres, Temporal, SPIRE, CAPNICo,
-NKTP and CWE, from a release spec, in seven stages.
+NKTP and CWE, with `deploy/install.sh`, from the `deploy/nico` deploy path, a
+release manifest and a site config, in seven stages.
 
 ```bash
 nkectl config set-site --name my-site --url https://<cwe-url> \

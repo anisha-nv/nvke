@@ -34,7 +34,7 @@ The cluster at this point is a plain kubeadm cluster. No NKE services are instal
 
 This phase installs everything that makes the cluster an NKE site:
 
-1. **Deploy the NKE component stack** — the NKE SBOM (Software Bill of Materials) is the versioned bundle of NKE components: the controller, Temporal, PostgreSQL, SPIRE, and supporting services. Deploy it via ArgoCD or your GitOps tooling. See [Deploy Repository](site-bootstrap/deploy-repository.md).
+1. **Deploy the NKE component stack** — the controller, Temporal, PostgreSQL, SPIRE, NKTP and CAPNICo, as the `deploy/nico` deploy path lists them. `deploy/install.sh` installs it from a release manifest and a site config; your GitOps tooling can deliver the same items. See [Install the Site Controller](site-bootstrap/install-site-controller.md) and [Deploy Path](site-bootstrap/deploy-path.md).
 2. **Configure CAPNICo** — install the `cluster-api-provider-nico` chart and connect it to your NICo site with a `nico-credentials` Secret. Run `nkectl get providers` to confirm `nico: CONFIGURED`.
 3. **Ingest the site into NKE** — the NKE team registers the site and applies the etcd encryption key from Day 0. This step requires coordination with the NKE team; contact your NKE onboarding contact with your site's kubeconfig and the etcd encryption key file from Day 0.
 4. **Create your first tenant cluster** — `nkectl create cluster -f cluster.yaml`. See [Your First Cluster — Path C, Step 7](first-cluster.md#7-create-a-tenant-cluster).

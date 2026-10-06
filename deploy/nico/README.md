@@ -3,6 +3,11 @@
 The deploy path for a NICo site controller on real hardware, with SPIRE. It is
 the customer deploy path; the e2e lanes under `controller/deploy/` are not.
 
+`deploy/install.sh` runs the install, in seven stages. This directory is what
+stage 5 installs. To apply the directory alone, with no stages around it:
+`deploy/nke-deploy.sh install --deploy-path deploy/nico`. The format is in
+[deploy-path.md](../../docs/site-bootstrap/deploy-path.md).
+
 Not a reference implementation: the item list and its order are derived from a
 provisioning run that stood a site controller up on bare metal and had it
 provision a tenant. Where that run and `capnico-e2e` disagree, this path follows
@@ -16,7 +21,7 @@ Four steps, three owners:
 |---|---|---|
 | 1. create and image the instance | **not NKE** -- the NICo API, iPXE and cloud-init | a booted host running `nke-agent` |
 | 2. `nkectl bootstrap site` | nkectl, on the instance | a **vanilla** Kubernetes cluster |
-| 3. this deploy path | `deploy/nke-deploy.sh`, on the node | the management plane |
+| 3. this deploy path | `deploy/install.sh`, on the node | the management plane |
 | 4. `nkectl create cluster` | the site controller itself | tenant clusters |
 
 Step 2 leaves bare Kubernetes on purpose. `bootstrap site` stands up a
@@ -48,79 +53,52 @@ What the node needs, all present on the reference instance type:
 
 ## Before this runs
 
-`deploy/nke-deploy.sh` installs the items below and nothing else. Five things must
-already be true, all of them outside the deploy path:
+`deploy/nke-deploy.sh` installs the items below and nothing else. The stages in
+`deploy/stages/` do the rest, in this order:
 
-1. **The control plane is untainted.** A bootstrap cluster is all
-   control-plane, and nothing schedules while the `NoSchedule` taint is on
-   the nodes; `clusterctl init` times out on cert-manager with no hint why.
-   `nkectl bootstrap site` removes the taint. Check with
-   `kubectl get nodes -o jsonpath='{.items[*].spec.taints}'` and remove it by
-   hand if the bootstrap reported that it could not.
-2. **`clusterctl init` has run**, bringing cert-manager, CAPI core and the
-   kubeadm providers. cert-manager first because CAPI's manifests embed an
-   Issuer and a Certificate.
-3. **The CWE and profiles images are in the node's containerd.** The
-   controller overlay sets `imagePullPolicy: IfNotPresent` and this path
-   supplies no pull secret for them -- deliberately, because the node's
-   containerd IS the cluster's containerd, so an imported image resolves
-   without one. Import them before installing:
-
-   ```
-   docker save --platform linux/amd64 <image> | sudo ctr -n k8s.io images import -
-   ```
-
-   Namespace `k8s.io`, not `default`: an image imported into the wrong
-   containerd namespace is invisible to the kubelet, which that run
-   hit as "401 Unauthorized pulling the controller image". Build
-   single-manifest too (`--provenance=false --output type=docker`) -- an OCI
-   index with an attestation manifest made nkectl try to pull by digest.
-
-4. **A default StorageClass exists.** A bare site ships none and every PVC sits
-   Pending. The reference site used rancher local-path because its instance type has a single
-   NVMe with root on it; a site with real storage should use that instead.
-5. **The cluster has no install from an earlier revision of this path.** This
-   path installs the controller as release `nke-controller`, with database
-   `nke-controller` and Temporal namespace `nke-controller`. Earlier revisions
-   used release `controller`, database `cloud-workflow` and the chart's
-   Temporal names. Helm cannot take over the old release's objects, and
-   Postgres runs its `initdb` scripts only on an empty volume. Nothing
-   migrates the old database: install on a fresh cluster.
+| Need | Stage |
+|---|---|
+| Control-plane nodes schedulable; a default StorageClass. A bare site ships none, and every PVC sits Pending without one. The stage installs rancher local-path when nothing else is default; a site with real storage sets `SKIP_STORAGECLASS=1` and marks its own class | `01-prepare-cluster.sh` |
+| The controller image in each node's containerd, namespace `k8s.io`, pulled by digest from the release manifest. The node's containerd is the cluster's, so the image resolves with `imagePullPolicy: IfNotPresent` and needs no pull secret. CAPNICo is the one exception; its Secret is the `30-ghcr-imagepull` template | `02-stage-images.sh` |
+| The per-site values files and the BootstrapConfig JSON the `nke-base-config` templates render against | `03-describe-site.sh` |
+| cert-manager, Cluster API core and the kubeadm providers, with `clusterctl init`. cert-manager first because CAPI's manifests embed an Issuer and a Certificate | `04-install-cluster-api.sh` |
 
 ## After this runs
 
-**Inject the SPIRE exec-auth plugin into the CAPI controllers**, with
-`controller/hack/apply-capi-spiffe-exec-auth.sh`.
+`06-secure-and-register.sh` patches the Cluster API controller Deployments with
+`controller/hack/apply-capi-spiffe-exec-auth.sh`: a `csi.spiffe.io` volume and
+the SPIFFE JWT exec-auth plugin, so Cluster API reaches tenant clusters with a
+SPIFFE JWT rather than a stored admin kubeconfig. It is not an item: it patches
+Deployments `clusterctl init` owns, and it waits on the `csi.spiffe.io`
+CSIDriver that the `spire` item installs. The same stage registers the site
+with `nkectl config set-site`.
 
-`controller/deploy/k8s/capi-spiffe-exec-auth/` patches the CAPI controller
-Deployments with a `csi.spiffe.io` volume and the SPIFFE JWT exec-auth plugin,
-so Cluster API reaches tenant clusters with a SPIFFE JWT rather than a stored
-admin kubeconfig. Both e2e lanes run it -- `backend-e2e.sh` does so right after
-the deploy path, on the NICo lane as well as CAPD -- and a site with
-`spiffe.enabled=true` needs it for the same reason.
+## Release manifest
 
-It is not an item, and cannot be: it patches Deployments `clusterctl init`
-owns, which this deploy path does not install. It belongs with untaint and
-`clusterctl init`, except that it runs AFTER rather than before -- the script
-skips its rollout wait until `csi.spiffe.io` is registered, and that CSIDriver
-arrives with the spire item. Run before the install it patches and moves on,
-leaving the rollout unverified; run after, it is checked.
+`release-manifest.yaml` pairs with this directory by item name. It pins the
+published artifacts: the `controller` image, and the four external charts
+`postgresql`, `spire-crds`, `temporal` and `spire`, each by OCI reference and
+digest. `nke-deploy.sh --release-manifest` pulls a chart named there by digest,
+verifies its chart layer, and installs that file instead of fetching from
+`chart.repository`. The `nktp` and `controller` charts are not in the manifest;
+they come from this checkout through `chart.path`. The manifest's `source.tag`
+names the checkout they must come from.
 
-The overlay includes `capd-controller-manager.yaml`, which a NICo site has no
-namespace for. The script skips Deployments that are absent, so this is fine.
-
-That run's install script does none of this, because it had
-`spiffe.enabled=false` and nothing needed a workload API.
+Each chart item in the manifest carries a `version`. Check Readiness compares
+it with `chart.version` in that item's `release.yaml` here and fails on a
+mismatch. The two files describe one release; the deploy path says what and in
+which order, the manifest says from where.
 
 ## Per-site values
 
 Every item's committed values are site-independent. What varies comes in
-through `--values-for`, exactly as `controller/hack/ci/deploy-stack.sh` does it
-for the e2e lanes -- that script is the reference for these derivations.
+through `--values-for`. `deploy/lib/describe_site.py` renders those files from
+`site-config.yaml`; `controller/hack/ci/deploy-stack.sh` derives the same values
+for the e2e lanes from environment variables.
 
 | value | e2e derivation | on a NICo site |
 |---|---|---|
-| trust domain | `${KIND_CLUSTER_NAME}.nke.local` | the trust domain the site's nodes were bootstrapped with (`spire.trustDomain` in the site spec); never derived from a name |
+| trust domain | `${KIND_CLUSTER_NAME}.nke.local` | `<site-name>.nke.local` |
 | management VIP | kind control-plane IP | the site controller's node IP |
 | SPIRE admin path | `/nke-service/nke-controller` | the same; it is a constant |
 | TPM attestor **server** checksum | pinned per arch in `resolve_tpm_checksum()` | the same pin for the same arch |
@@ -129,8 +107,8 @@ for the e2e lanes -- that script is the reference for these derivations.
 | Postgres / Temporal password | generated per run | site secret, on BOTH Temporal datastores |
 | controller image | built per run | a released tag |
 | profiles image | built per run | the site's fleet profile content |
-| telemetry backend | not installed | the bundled development backend, until the site passes its own with `--values-for nktp=` |
-| telemetry `k8s.cluster.name` | not installed | `ClusterName` in the BootstrapConfig passed with `--config`; required |
+| telemetry backend | not installed | the bundled development backend, until the site sets an `nktp:` block in `site-config.yaml` |
+| telemetry `k8s.cluster.name` | not installed | `site.name`, rendered into the BootstrapConfig as `ClusterName` |
 
 The TPM checksum is easy to confuse: the value in `spire/values.yaml`
 (`spire-server.nodeAttestor.tpmDirect.checksum`) is the **server** plugin, and
@@ -189,8 +167,9 @@ without `ClusterName` stops the install at that template.
 
 Everything exports to the chart's bundled development backend by default. It
 keeps data in memory and has no authentication, so it is for evaluation. A site
-with a real backend passes it with `--values-for nktp=<file>`; the chart
-README's "The backend" section lists the keys that file sets.
+with a real backend sets an `nktp:` block in `site-config.yaml`; stage 3 writes
+it to `nktp.yaml` and stage 5 passes it as `--values-for nktp=`. The chart
+README's "The backend" section lists the keys that block sets.
 
 Not scraped yet: the Postgres item runs no metrics exporter; CAPI core and the
 kubeadm providers serve metrics only to a caller with a bearer token, which the

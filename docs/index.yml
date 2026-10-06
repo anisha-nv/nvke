@@ -37,8 +37,8 @@ navigation:
             path: site-bootstrap/installation.md
           - page: Configuration
             path: site-bootstrap/configuration.md
-          - page: Deploy Repository
-            path: site-bootstrap/deploy-repository.md
+          - page: Deploy Path
+            path: site-bootstrap/deploy-path.md
           - page: Infrastructure Providers
             path: site-bootstrap/infrastructure-providers.md
           - page: Install the Site Controller
