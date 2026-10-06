@@ -12,11 +12,15 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/dsx-ai-factory/nke/controller/test/e2e/internal/cwe"
 	"github.com/dsx-ai-factory/nke/controller/test/e2e/internal/kube"
@@ -116,21 +120,86 @@ func currentCluster(cfg *clientcmdapi.Config) (*clientcmdapi.Cluster, error) {
 
 // waitForCWE polls until CWE answers /healthz, then returns its version.
 func waitForCWE(ctx context.Context, opts Options, kubeconfig string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, opts.ReadyTimeout)
+	deadline, cancel := context.WithTimeout(ctx, opts.ReadyTimeout)
 	defer cancel()
 	ticker := time.NewTicker(opts.PollInterval)
 	defer ticker.Stop()
 	for {
-		version, err := opts.Probe(ctx, kubeconfig)
+		version, err := opts.Probe(deadline, kubeconfig)
 		if err == nil {
 			return version, nil
 		}
 		select {
-		case <-ctx.Done():
-			return "", fmt.Errorf("CWE did not become healthy within %s: %w", opts.ReadyTimeout, err)
+		case <-deadline.Done():
+			return "", fmt.Errorf("CWE did not become healthy within %s: %w\n%s",
+				opts.ReadyTimeout, err, diagnoseCWE(ctx, kubeconfig))
 		case <-ticker.C:
 		}
 	}
+}
+
+// diagnoseCWE reports pod and event state from the CWE namespace once the
+// probe loop gives up, so a timeout says whether CWE was crash-looping,
+// still starting, or never scheduled, rather than only that it did not
+// answer in time.
+//
+// Best-effort and never returns an error itself: the probe's own failure is
+// the finding, and losing this context must not replace it with a second,
+// less useful one. kubeconfig already reaches the cluster through the
+// session's forward at this point, same as the probe that just failed.
+func diagnoseCWE(ctx context.Context, kubeconfig string) string {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+
+	restConfig, err := kube.RESTConfig(kubeconfig, "")
+	if err != nil {
+		return fmt.Sprintf("(could not collect CWE pod diagnostics: %v)", err)
+	}
+	c, err := kube.RuntimeClient(restConfig)
+	if err != nil {
+		return fmt.Sprintf("(could not collect CWE pod diagnostics: %v)", err)
+	}
+
+	var pods corev1.PodList
+	if err := c.List(ctx, &pods, client.InNamespace(cwe.Namespace())); err != nil {
+		return fmt.Sprintf("(could not list pods in %s: %v)", cwe.Namespace(), err)
+	}
+	var events corev1.EventList
+	if err := c.List(ctx, &events, client.InNamespace(cwe.Namespace())); err != nil {
+		return fmt.Sprintf("(could not list events in %s: %v)", cwe.Namespace(), err)
+	}
+	sort.Slice(events.Items, func(i, j int) bool {
+		return events.Items[i].LastTimestamp.Before(&events.Items[j].LastTimestamp)
+	})
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "pods in %s:\n", cwe.Namespace())
+	if len(pods.Items) == 0 {
+		fmt.Fprintf(&sb, "  (none)\n")
+	}
+	for _, pod := range pods.Items {
+		fmt.Fprintf(&sb, "  %s phase=%s\n", pod.Name, pod.Status.Phase)
+		for _, cs := range pod.Status.ContainerStatuses {
+			state, detail := "running", ""
+			switch {
+			case cs.State.Waiting != nil:
+				state, detail = "waiting", cs.State.Waiting.Reason+": "+cs.State.Waiting.Message
+			case cs.State.Terminated != nil:
+				state, detail = "terminated", cs.State.Terminated.Reason+": "+cs.State.Terminated.Message
+			}
+			fmt.Fprintf(&sb, "    %s ready=%t restarts=%d state=%s %s\n",
+				cs.Name, cs.Ready, cs.RestartCount, state, detail)
+		}
+	}
+	fmt.Fprintf(&sb, "events in %s (most recent last):\n", cwe.Namespace())
+	if len(events.Items) == 0 {
+		fmt.Fprintf(&sb, "  (none)\n")
+	}
+	for _, e := range events.Items {
+		fmt.Fprintf(&sb, "  %s %s/%s %s: %s\n",
+			e.LastTimestamp.Format(time.RFC3339), e.InvolvedObject.Kind, e.InvolvedObject.Name, e.Reason, e.Message)
+	}
+	return sb.String()
 }
 
 var errUnhealthy = errors.New("CWE unhealthy")
