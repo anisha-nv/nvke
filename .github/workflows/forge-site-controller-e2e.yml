@@ -338,6 +338,15 @@ jobs:
         with:
           persist-credentials: false
 
+      # TEMPORARY: a run on this branch had its CWE probe target namespace
+      # "nke-controller", which does not exist -- CWE actually deploys into
+      # "cloud-workflow-engine" -- while nothing in this repo sets CWE_NAMESPACE
+      # or CWE_SERVICE. Checking whether the runner itself carries them,
+      # stale from before the chart's rename. Remove once answered.
+      - name: Check for a stale CWE_NAMESPACE/CWE_SERVICE on the runner
+        shell: bash
+        run: env | grep -i '^CWE_' || echo "no CWE_* env vars set on this runner"
+
       # Three `docker save` archives of multi-hundred-megabyte images, written
       # to the workspace and read back by dind. Reported rather than freed:
       # the ubuntu-latest trick of deleting /usr/share/dotnet and friends has
