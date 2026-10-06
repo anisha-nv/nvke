@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: nke.nvidia.com/v1alpha1
+kind: QualificationPolicy
+spec:
+  components:
+    - controller
+    - os-image
+    - cli
+  scopes:
+    active:
+      selector: {kube: "1.36"}
+    full: {}
+  streams:
+    - name: forge-gb200-arm64-kube-1.36-ubuntu-24.04
+      capabilities: {provider: nico-forge, gpu: gb200, arch: arm64, kube: "1.36"}
