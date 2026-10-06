@@ -90,6 +90,11 @@ stage_run() {
     ${values[@]+"${values[@]}"} \
     ${overrides[@]+"${overrides[@]}"} \
     ${DRY_RUN:+--dry-run}
+
+  # helm --wait covers the chart items. The CAPNICo manifest is applied, not
+  # waited for, so wait for its controller here: the check needs it Available,
+  # and the controller needs its CRDs served.
+  kc -n capnico-system rollout status deployment/controller-manager --timeout="${REQUIRE_TIMEOUT}"
   # doc-end
 }
 
