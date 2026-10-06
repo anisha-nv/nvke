@@ -33,7 +33,7 @@ When a check finds a certificate inside the threshold, the NKE Controller starts
 
 A node that fails any step is retried up to three times. If it still fails, the workflow stops without touching the remaining nodes. Nodes that were already renewed keep their new certificates.
 
-Renewal does not restart tenant workloads or worker nodes.
+Renewal does not restart workloads running on the cluster or worker nodes.
 
 ### Renewal and downloaded kubeconfigs
 
