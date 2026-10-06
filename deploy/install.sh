@@ -16,7 +16,7 @@
 # external images is what fills the disk, so the controller image can be gone
 # by the time the helm items need it. The re-pull is fast and idempotent.
 #
-# Usage: ./install-all.sh [--from NAME] [--until NAME] [--dry-run] [--kubeconfig PATH]
+# Usage: ./install.sh [--from NAME] [--until NAME] [--dry-run] [--kubeconfig PATH]
 #
 # NAME is a stage script name without its numeric prefix, for example
 # stage-images or install-cluster-api.
@@ -25,16 +25,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STAGES_DIR="${SCRIPT_DIR}/stages"
 
-log() { printf '\n=== [install-all] %s\n' "$*" >&2; }
+log() { printf '\n=== [install] %s\n' "$*" >&2; }
 die() {
-  printf '[install-all] ERROR: %s\n' "$*" >&2
+  printf '[install] ERROR: %s\n' "$*" >&2
   exit 1
 }
 
 usage() {
   cat >&2 <<'USAGE'
-usage: install-all.sh [--from NAME] [--until NAME] [--dry-run] [--kubeconfig PATH]
+usage: install.sh [--from NAME] [--until NAME] [--dry-run] [--kubeconfig PATH]
 
   --from NAME        start at this stage. Resumes a stopped run.
   --until NAME       stop after this stage.
@@ -80,13 +81,13 @@ done
 files=()
 names=()
 file=""
-for file in "${SCRIPT_DIR}"/[0-9][0-9]-*.sh; do
+for file in "${STAGES_DIR}"/[0-9][0-9]-*.sh; do
   [[ -e "${file}" ]] || continue
   files+=("${file}")
   name="$(basename "${file}" .sh)"
   names+=("${name#[0-9][0-9]-}")
 done
-[[ ${#files[@]} -gt 0 ]] || die "no stage scripts found in ${SCRIPT_DIR}"
+[[ ${#files[@]} -gt 0 ]] || die "no stage scripts found in ${STAGES_DIR}"
 
 index_of() {
   local wanted="$1" i
@@ -96,7 +97,7 @@ index_of() {
       return 0
     fi
   done
-  printf '[install-all] ERROR: unknown stage %q. Valid stages:\n' "${wanted}" >&2
+  printf '[install] ERROR: unknown stage %q. Valid stages:\n' "${wanted}" >&2
   printf '  %s\n' "${names[@]}" >&2
   exit 1
 }
@@ -111,9 +112,9 @@ out_dir="${OUT_DIR:-./.site-install}"
 
 stop() {
   local rc="$1" step="$2" i="$3"
-  printf '\n[install-all] %s %s failed with exit code %s\n' "${names[i]}" "${step}" "${rc}" >&2
-  printf '[install-all] diagnostics: %s/diagnostics/%s/\n' "${out_dir}" "$(basename "${files[i]}" .sh)" >&2
-  printf '[install-all] resume with: %s --from %s\n' "$0" "${names[i]}" >&2
+  printf '\n[install] %s %s failed with exit code %s\n' "${names[i]}" "${step}" "${rc}" >&2
+  printf '[install] diagnostics: %s/diagnostics/%s/\n' "${out_dir}" "$(basename "${files[i]}" .sh)" >&2
+  printf '[install] resume with: %s --from %s\n' "$0" "${names[i]}" >&2
   exit "${rc}"
 }
 

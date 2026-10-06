@@ -3,14 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Render site-config.yaml into the files stage 5 installs from.
 
-  describe_site.py render --config site-config.yaml --out DIR --sbom-dir controller/deploy
+  describe_site.py render --config site-config.yaml --out DIR --deploy-path deploy/nico
                           [--release-file release-manifest.yaml]
   describe_site.py check  --out DIR
-  describe_site.py keys   --config site-config.yaml --sbom-dir controller/deploy
+  describe_site.py keys   --config site-config.yaml --deploy-path deploy/nico
 
 render writes seven files to DIR, mode 0600:
 
-  bootstrap-config.json   the context build/render-template.py renders the
+  bootstrap-config.json   the context deploy/lib/render-template.py renders the
                           nke-base-config template item against
   controller.yaml         --values-for controller=...
   spire.yaml              --values-for spire=...
@@ -89,6 +89,9 @@ import secrets
 import shutil
 import subprocess
 import sys
+
+LIB_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.abspath(os.path.join(LIB_DIR, "..", ".."))
 import tempfile
 
 SCHEMA_NOTE = "The site-config.yaml schema is unstable until it is folded into BootstrapConfig."
@@ -120,9 +123,10 @@ TPM_CHECKSUM = {
     "arm64": "b69d0153c8241383f24da138bc85429a620d9f962a2f10abb314aa0e39046d16",
 }
 
-# The SPIFFE path cloud-workflow-engine presents. Matches spire-server.adminIDs
-# in controller/deploy/nke-sbom/spire/values.yaml.
-CWE_ADMIN_PATH = "/nke-service/cloud-workflow-engine"
+# The SPIFFE path the controller presents: /nke-service/<ServiceAccount>, and
+# the deploy path names the ServiceAccount nke-controller. Matches spire-server.adminIDs
+# in the deploy path's spire/values.yaml.
+CWE_ADMIN_PATH = "/nke-service/nke-controller"
 
 OIDC_NODEPORT = 30443
 
@@ -130,7 +134,7 @@ OIDC_NODEPORT = 30443
 # values.yaml: server.image.repository, admintools.image.repository,
 # web.image.repository. The chart has no registry key, so the mirror is
 # written into the repository. Refresh with the chart pin in
-# nke-sbom/temporal/release.yaml.
+# the deploy path's temporal/release.yaml.
 TEMPORAL_IMAGES = {
     "server": "temporalio/server",
     "admintools": "temporalio/admin-tools",
@@ -473,14 +477,14 @@ def mirror_ref(ref, mirror):
 
 # --- derivation --------------------------------------------------------------
 
-def oidc_domains(sbom_dir, vip):
+def oidc_domains(deploy_path, vip):
     """The static additionalDomains from the SBOM spire overlay plus the VIP.
 
     A values file replaces a list rather than appending to it, so the static
     hostnames are read out of the overlay rather than retyped here. Same
     approach as deploy-sbom.sh.
     """
-    overlay = os.path.join(sbom_dir, "nke-sbom", "spire", "overlay.yaml")
+    overlay = os.path.join(deploy_path, "spire", "overlay.yaml")
     try:
         with open(overlay) as fh:
             raw = fh.read()
@@ -496,9 +500,9 @@ def oidc_domains(sbom_dir, vip):
     return domains
 
 
-def capnico_image(sbom_dir):
+def capnico_image(deploy_path):
     """The image: line of the CAPNICo manifest, as (repository, tag)."""
-    manifest = os.path.join(sbom_dir, "nke-sbom", "capnico", "capnico.yaml")
+    manifest = os.path.join(deploy_path, "capnico", "capnico.yaml")
     try:
         with open(manifest) as fh:
             for line in fh:
@@ -514,9 +518,9 @@ def capnico_image(sbom_dir):
     raise ConfigError("no image: line in %s" % manifest)
 
 
-def tool_version(sbom_dir, name):
+def tool_version(deploy_path, name):
     """One `NAME ?= value` pin from make/tool-versions.mk."""
-    path = os.path.join(sbom_dir, "..", "..", "make", "tool-versions.mk")
+    path = os.path.join(REPO_ROOT, "make", "tool-versions.mk")
     try:
         with open(path) as fh:
             for line in fh:
@@ -545,7 +549,7 @@ def resolve_password(flat, out_dir):
     return secrets.token_urlsafe(24), "generated"
 
 
-def build(flat, files, sbom_dir, password):
+def build(flat, files, deploy_path, password):
     site_name = flat["site.name"]
     td = flat["site.trustDomain"]
     vip = flat["site.vip"]
@@ -602,7 +606,7 @@ def build(flat, files, sbom_dir, password):
         "spiffe-oidc-discovery-provider": {
             "config": {
                 "jwksUri": "https://%s:%d/keys" % (vip, OIDC_NODEPORT),
-                "additionalDomains": oidc_domains(sbom_dir, vip),
+                "additionalDomains": oidc_domains(deploy_path, vip),
             },
             "tls": {"certManager": {"certificate": {"ipAddresses": [vip]}}},
         },
@@ -639,7 +643,7 @@ def build(flat, files, sbom_dir, password):
         ENV_FILE: site_env,
     }
     if mirror:
-        repo, tag = capnico_image(sbom_dir)
+        repo, tag = capnico_image(deploy_path)
         outputs[CAPNICO_KUSTOMIZATION] = {
             "resources": ["capnico.yaml"],
             "images": [{"name": repo, "newName": mirror_ref(repo, mirror), "newTag": tag}],
@@ -691,18 +695,18 @@ def same_image(ref, other):
     return ref == other
 
 
-def helm_items(sbom_dir):
+def helm_items(deploy_path):
     """The helm items of nke-deploy.yaml in list order, each with its chart
-    source and values files, read through build/nke-sbom-items.py."""
-    items_py = os.path.join(sbom_dir, "..", "..", "build", "nke-sbom-items.py")
-    deploy = os.path.join(sbom_dir, "nke-sbom", "nke-deploy.yaml")
+    source and values files, read through lib/nke-deploy-items.py."""
+    items_py = os.path.join(LIB_DIR, "nke-deploy-items.py")
+    deploy = os.path.join(deploy_path, "nke-deploy.yaml")
     out = run_tool([sys.executable, items_py, "items", deploy], "listing the deploy items")
     items = []
     for line in out.splitlines():
         name, kind = line.split("\t")
         if kind != "helm":
             continue
-        item_dir = os.path.join(sbom_dir, "nke-sbom", name)
+        item_dir = os.path.join(deploy_path, name)
         rel = run_tool([sys.executable, items_py, "release", os.path.join(item_dir, "release.yaml")],
                        "reading %s/release.yaml" % name)
         fields = rel.rstrip("\n").split("\x1f")
@@ -728,7 +732,7 @@ def run_tool(argv, what, env=None):
 
 def build_chart_dependencies(chart, helm_home):
     """Download the archives a path chart's Chart.lock pins into charts/,
-    which a checkout does not carry. Same steps as build/use-nke-sbom.sh: the
+    which a checkout does not carry. Same steps as deploy/nke-deploy.sh: the
     repositories are added to a throwaway Helm config so the caller's list is
     left alone."""
     if not os.path.isfile(os.path.join(chart, "Chart.lock")):
@@ -775,7 +779,7 @@ def template_item(item, out_dir, helm_home):
     return run_tool(argv, "helm template of item %s" % item["name"], env)
 
 
-def inventory_images(flat, sbom_dir, out_dir):
+def inventory_images(flat, deploy_path, out_dir):
     """The lines of images.txt: notes first, then the sorted references."""
     mirror = flat.get("registry.mirror")
     controller_ref = flat["images.controller"]
@@ -791,7 +795,7 @@ def inventory_images(flat, sbom_dir, out_dir):
     else:
         helm_home = tempfile.mkdtemp(prefix="describe-site-helm.")
         try:
-            for item in helm_items(sbom_dir):
+            for item in helm_items(deploy_path):
                 for ref in extract_images(template_item(item, out_dir, helm_home)):
                     if same_image(ref, controller_ref):
                         continue
@@ -799,12 +803,12 @@ def inventory_images(flat, sbom_dir, out_dir):
         finally:
             shutil.rmtree(helm_home, ignore_errors=True)
 
-    repo, tag = capnico_image(sbom_dir)
+    repo, tag = capnico_image(deploy_path)
     capnico = "%s:%s" % (repo, tag)
     images.add(mirror_ref(capnico, mirror) if mirror else capnico)
 
-    capi = tool_version(sbom_dir, "CAPI_VERSION")
-    cm = tool_version(sbom_dir, "CERT_MANAGER_VERSION")
+    capi = tool_version(deploy_path, "CAPI_VERSION")
+    cm = tool_version(deploy_path, "CERT_MANAGER_VERSION")
     for tmpl in CAPI_IMAGES:
         images.add(tmpl.format(capi=capi))
     for tmpl in CERT_MANAGER_IMAGES:
@@ -820,23 +824,23 @@ def inventory_images(flat, sbom_dir, out_dir):
     return lines
 
 
-def release_spec(install_dir, release_file, command, *args):
+def release_spec(LIB_DIR, release_file, command, *args):
     """One release_spec.py subcommand, by the CLI contract."""
-    return run_tool([sys.executable, os.path.join(install_dir, "release_spec.py"), command, release_file] + list(args),
+    return run_tool([sys.executable, os.path.join(LIB_DIR, "release_spec.py"), command, release_file] + list(args),
                     "release_spec.py %s %s" % (command, release_file))
 
 
-def build_bom(install_dir, release_file, controller_ref):
+def build_bom(deploy_path_for_bom, release_file, controller_ref):
     """CycloneDX 1.5: the deploy path as the root component, one component per
     spec item. Chart items are applications with the chart version; the
     controller image is a container. Every hash is the ref's digest. The
     nke:deploy-item property keys a component to its deploy item."""
     meta = {}
-    for line in release_spec(install_dir, release_file, "meta").splitlines():
+    for line in release_spec(LIB_DIR, release_file, "meta").splitlines():
         key, _, value = line.partition("=")
         meta[key] = value[1:-1].replace("'\\''", "'")
     components = []
-    for line in release_spec(install_dir, release_file, "items").splitlines():
+    for line in release_spec(LIB_DIR, release_file, "items").splitlines():
         name, kind, ref, version = line.split("\t")
         digest = DIGEST_RE.search(ref)
         component = {
@@ -861,7 +865,7 @@ def build_bom(install_dir, release_file, controller_ref):
             "component": {
                 "type": "application",
                 "bom-ref": "nke:deploy-path",
-                "name": "controller/deploy/nke-sbom",
+                "name": os.path.basename(os.path.normpath(deploy_path_for_bom)),
                 "version": meta.get("SOURCE_TAG", ""),
                 "properties": [
                     {"name": "nke:release", "value": meta.get("RELEASE", "")},
@@ -964,11 +968,10 @@ def remove_stale(path, why):
 
 def cmd_render(args):
     flat, files, passthrough = load_config(args.config)
-    install_dir = os.path.dirname(os.path.abspath(__file__))
     os.makedirs(args.out, mode=0o700, exist_ok=True)
     os.chmod(args.out, 0o700)
     password, origin = resolve_password(flat, args.out)
-    outputs = build(flat, files, args.sbom_dir, password)
+    outputs = build(flat, files, args.deploy_path, password)
     write_private(os.path.join(args.out, PASSWORD_FILE), password)
     for name, tree in outputs.items():
         if name.endswith(".json"):
@@ -992,10 +995,10 @@ def cmd_render(args):
     note("images.controller %s: %s" % (flat["images.controller.origin"], flat["images.controller"]))
 
     # The inventory, after the values files: helm template reads them.
-    lines = inventory_images(flat, args.sbom_dir, args.out)
+    lines = inventory_images(flat, args.deploy_path, args.out)
     write_private(os.path.join(args.out, IMAGES_FILE), "\n".join(lines))
     if args.release_file:
-        bom = build_bom(install_dir, args.release_file, flat["images.controller"])
+        bom = build_bom(args.deploy_path, args.release_file, flat["images.controller"])
         write_private(os.path.join(args.out, BOM_FILE), json.dumps(bom, indent=2))
     else:
         remove_stale(os.path.join(args.out, BOM_FILE), "no release spec was given")
@@ -1021,7 +1024,7 @@ def cmd_render(args):
 
 def cmd_keys(args):
     flat, files, passthrough = load_config(args.config)
-    outputs = build(flat, files, args.sbom_dir, "x")
+    outputs = build(flat, files, args.deploy_path, "x")
     for name, tree in outputs.items():
         for path in key_paths(tree):
             print("%s %s" % (name, path))
@@ -1159,14 +1162,14 @@ def main(argv):
     p = sub.add_parser("render")
     p.add_argument("--config", required=True)
     p.add_argument("--out", required=True)
-    p.add_argument("--sbom-dir", required=True)
+    p.add_argument("--deploy-path", required=True)
     p.add_argument("--release-file", default="",
                    help="release-manifest.yaml; the BOM is written from its items. Empty: no BOM.")
     p = sub.add_parser("check")
     p.add_argument("--out", required=True)
     p = sub.add_parser("keys")
     p.add_argument("--config", required=True)
-    p.add_argument("--sbom-dir", required=True)
+    p.add_argument("--deploy-path", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "render":

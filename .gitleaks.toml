@@ -86,7 +86,7 @@ origin/main..HEAD. The repository squash-merges and deletes the branch, so the
 literal never reaches main's history. Scoped to that one test file and to that
 exact three-line body; a real key in that file is still caught."""
 paths = [
-  '''^controller/deploy/nke-sbom/install/testdata/test\.sh$''',
+  '''^deploy/testdata/test\.sh$''',
 ]
 regexes = [
   '''-----BEGIN PRIVATE KEY-----\\nTEST\\n-----END PRIVATE KEY-----''',

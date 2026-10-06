@@ -11,11 +11,13 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="$(cd "${HERE}/.." && pwd)"
-SBOM_DIR="$(cd "${INSTALL_DIR}/../.." && pwd)"
-RENDERER="${INSTALL_DIR}/describe_site.py"
+DEPLOY_DIR="$(cd "${HERE}/.." && pwd)"
+LIB_DIR="${DEPLOY_DIR}/lib"
+DEPLOY_PATH="${DEPLOY_DIR}/nico"
+REPO_ROOT="$(cd "${DEPLOY_DIR}/.." && pwd)"
+RENDERER="${LIB_DIR}/describe_site.py"
 SPEC="${HERE}/release-spec/valid.yaml"
-TOOL_VERSIONS="${SBOM_DIR}/../../make/tool-versions.mk"
+TOOL_VERSIONS="${REPO_ROOT}/make/tool-versions.mk"
 CAPI_VERSION="$(sed -n 's/^CAPI_VERSION[[:space:]]*?=[[:space:]]*//p' "${TOOL_VERSIONS}")"
 CERT_MANAGER_VERSION="$(sed -n 's/^CERT_MANAGER_VERSION[[:space:]]*?=[[:space:]]*//p' "${TOOL_VERSIONS}")"
 
@@ -58,7 +60,7 @@ expect_error() {
   out="${dir}/out"
   stage "${dir}" "${fixture}"
   err="$(python3 "${RENDERER}" render --config "${dir}/site-config.yaml" \
-    --out "${out}" --sbom-dir "${SBOM_DIR}" 2>&1 >/dev/null)" || rc=$?
+    --out "${out}" --deploy-path "${DEPLOY_PATH}" 2>&1 >/dev/null)" || rc=$?
   if [[ "${rc}" -ne 1 ]]; then
     fail "${fixture}: expected exit 1, got ${rc}: ${err}"
     return 0
@@ -87,7 +89,7 @@ stage "${dir}" valid.yaml
 rm "${dir}/ca.key"
 rc=0
 err="$(python3 "${RENDERER}" render --config "${dir}/site-config.yaml" \
-  --out "${dir}/out" --sbom-dir "${SBOM_DIR}" 2>&1 >/dev/null)" || rc=$?
+  --out "${dir}/out" --deploy-path "${DEPLOY_PATH}" 2>&1 >/dev/null)" || rc=$?
 if [[ "${rc}" -eq 1 && "${err}" == *spire.caKeyFile* ]]; then
   pass "missing CA key file: exit 1, names spire.caKeyFile"
 else
@@ -99,8 +101,8 @@ dir="${WORK}/valid"
 stage "${dir}" valid.yaml
 out="${dir}/out"
 rc=0
-log="$(cd "${dir}" && SITE_CONFIG="${dir}/site-config.yaml" OUT_DIR="${out}" SBOM_DIR="${SBOM_DIR}" \
-  SITE_KUBECONFIG='' RELEASE_FILE="${SPEC}" "${INSTALL_DIR}/03-describe-site.sh" run 2>&1)" || rc=$?
+log="$(cd "${dir}" && SITE_CONFIG="${dir}/site-config.yaml" OUT_DIR="${out}" DEPLOY_PATH="${DEPLOY_PATH}" \
+  SITE_KUBECONFIG='' RELEASE_FILE="${SPEC}" "${DEPLOY_DIR}/stages/03-describe-site.sh" run 2>&1)" || rc=$?
 if [[ "${rc}" -eq 0 ]]; then
   pass "valid.yaml: run exits 0"
 else
@@ -123,7 +125,7 @@ else
 fi
 
 rc=0
-log="$(cd "${dir}" && OUT_DIR="${out}" SITE_KUBECONFIG='' "${INSTALL_DIR}/03-describe-site.sh" check 2>&1)" || rc=$?
+log="$(cd "${dir}" && OUT_DIR="${out}" SITE_KUBECONFIG='' "${DEPLOY_DIR}/stages/03-describe-site.sh" check 2>&1)" || rc=$?
 if [[ "${rc}" -eq 0 && "${log}" == *"SKIP  live database password"* ]]; then
   pass "valid.yaml: check exits 0 and skips the live password"
 else
@@ -159,7 +161,7 @@ expect_line() { # FILE PATTERN
 expect_line spire.yaml '^      checksum: "b69d0153c8241383f24da138bc85429a620d9f962a2f10abb314aa0e39046d16"$'
 expect_line spire.yaml '^    trustDomain: "demo-site.nke.local"$'
 expect_line spire.yaml '^    clusterName: "demo-site"$'
-expect_line spire.yaml '^    - "spiffe://demo-site.nke.local/nke-service/cloud-workflow-engine"$'
+expect_line spire.yaml '^    - "spiffe://demo-site.nke.local/nke-service/nke-controller"$'
 expect_line spire.yaml '^    jwksUri: "https://192.0.2.10:30443/keys"$'
 expect_line spire.yaml '^      - "nke.site-controller.internal"$'
 expect_line spire.yaml '^      - "127.0.0.1"$'
@@ -202,7 +204,7 @@ else
 fi
 
 # normalize_image: ctr needs fully qualified references; the kubelet does not.
-norm() { (cd "${INSTALL_DIR}" && python3 -c 'import sys, describe_site; print(describe_site.normalize_image(sys.argv[1]))' "$1"); }
+norm() { (cd "${LIB_DIR}" && python3 -c 'import sys, describe_site; print(describe_site.normalize_image(sys.argv[1]))' "$1"); }
 [[ "$(norm busybox)" == "docker.io/library/busybox:latest" ]] && pass "normalize: short library name" || fail "normalize: busybox -> $(norm busybox)"
 [[ "$(norm busybox:1.37.0-uclibc)" == "docker.io/library/busybox:1.37.0-uclibc" ]] && pass "normalize: library name with a tag" || fail "normalize: busybox:tag -> $(norm busybox:1.37.0-uclibc)"
 [[ "$(norm grafana/otel-lgtm:0.32.0)" == "docker.io/grafana/otel-lgtm:0.32.0" ]] && pass "normalize: short org name" || fail "normalize: grafana"
@@ -241,7 +243,7 @@ import json, sys
 b = json.load(open(sys.argv[1]))
 assert b["bomFormat"] == "CycloneDX" and b["specVersion"] == "1.5", "format"
 root = b["metadata"]["component"]
-assert root["type"] == "application" and root["name"] == "controller/deploy/nke-sbom", "root"
+assert root["type"] == "application" and root["name"] == "nico", "root"
 assert root["version"] == "controller/v0.1.1", "root version"
 props = {p["name"]: p["value"] for p in root["properties"]}
 assert props["nke:lane"] == "local-assembly", "lane"
@@ -271,8 +273,8 @@ fi
 
 # Rerun reuses the password.
 rc=0
-log="$(cd "${dir}" && SITE_CONFIG="${dir}/site-config.yaml" OUT_DIR="${out}" SBOM_DIR="${SBOM_DIR}" \
-  SITE_KUBECONFIG='' "${INSTALL_DIR}/03-describe-site.sh" run 2>&1)" || rc=$?
+log="$(cd "${dir}" && SITE_CONFIG="${dir}/site-config.yaml" OUT_DIR="${out}" DEPLOY_PATH="${DEPLOY_PATH}" \
+  SITE_KUBECONFIG='' "${DEPLOY_DIR}/stages/03-describe-site.sh" run 2>&1)" || rc=$?
 if [[ "${rc}" -eq 0 && "${log}" == *"reusing"* && "$(cat "${out}/db-password")" == "${password}" ]]; then
   pass "rerun reuses the password"
 else
@@ -283,7 +285,7 @@ fi
 dir="${WORK}/amd64"
 stage "${dir}" valid.yaml
 sed -i.bak 's/arch: arm64/arch: amd64/' "${dir}/site-config.yaml"
-python3 "${RENDERER}" render --config "${dir}/site-config.yaml" --out "${dir}/out" --sbom-dir "${SBOM_DIR}" >/dev/null 2>&1
+python3 "${RENDERER}" render --config "${dir}/site-config.yaml" --out "${dir}/out" --deploy-path "${DEPLOY_PATH}" >/dev/null 2>&1
 if grep -q '46d0caad8c25a027dd11c93e18b58a8bc6fbd9f1fe2e36fa2a0dd440986de4dc' "${dir}/out/spire.yaml"; then
   pass "amd64 selects the amd64 checksum"
 else
@@ -295,7 +297,7 @@ dir="${WORK}/with-nktp"
 stage "${dir}" with-nktp.yaml
 out="${dir}/out"
 rc=0
-log="$(python3 "${RENDERER}" render --config "${dir}/site-config.yaml" --out "${out}" --sbom-dir "${SBOM_DIR}" 2>&1)" || rc=$?
+log="$(python3 "${RENDERER}" render --config "${dir}/site-config.yaml" --out "${out}" --deploy-path "${DEPLOY_PATH}" 2>&1)" || rc=$?
 if [[ "${rc}" -eq 0 && -f "${out}/nktp.yaml" ]]; then
   pass "with-nktp.yaml: render exits 0 and writes nktp.yaml"
 else
@@ -326,7 +328,7 @@ if [[ "${rc}" -eq 0 && "${log}" == *"nktp.yaml has keys otel-lgtm, exporters"* ]
 else
   fail "with-nktp.yaml: check rc=${rc}: ${log}"
 fi
-if python3 "${RENDERER}" keys --config "${dir}/site-config.yaml" --sbom-dir "${SBOM_DIR}" | grep -qx 'nktp.yaml exporters'; then
+if python3 "${RENDERER}" keys --config "${dir}/site-config.yaml" --deploy-path "${DEPLOY_PATH}" | grep -qx 'nktp.yaml exporters'; then
   pass "with-nktp.yaml: keys lists nktp.yaml top-level keys"
 else
   fail "with-nktp.yaml: keys does not list nktp.yaml exporters"
@@ -334,7 +336,7 @@ fi
 # Dropping the block removes the file on the next render.
 cp "${HERE}/valid.yaml" "${dir}/site-config.yaml"
 rc=0
-log="$(python3 "${RENDERER}" render --config "${dir}/site-config.yaml" --out "${out}" --sbom-dir "${SBOM_DIR}" 2>&1)" || rc=$?
+log="$(python3 "${RENDERER}" render --config "${dir}/site-config.yaml" --out "${out}" --deploy-path "${DEPLOY_PATH}" 2>&1)" || rc=$?
 if [[ "${rc}" -eq 0 && ! -e "${out}/nktp.yaml" && "${log}" == *"nktp.yaml removed"* ]]; then
   pass "rerun without the nktp block removes nktp.yaml"
 else
@@ -347,8 +349,8 @@ dir="${WORK}/no-controller"
 stage "${dir}" no-controller.yaml
 out="${dir}/out"
 rc=0
-log="$(cd "${dir}" && SITE_CONFIG="${dir}/site-config.yaml" OUT_DIR="${out}" SBOM_DIR="${SBOM_DIR}" \
-  SITE_KUBECONFIG='' RELEASE_FILE="${SPEC}" "${INSTALL_DIR}/03-describe-site.sh" run 2>&1)" || rc=$?
+log="$(cd "${dir}" && SITE_CONFIG="${dir}/site-config.yaml" OUT_DIR="${out}" DEPLOY_PATH="${DEPLOY_PATH}" \
+  SITE_KUBECONFIG='' RELEASE_FILE="${SPEC}" "${DEPLOY_DIR}/stages/03-describe-site.sh" run 2>&1)" || rc=$?
 if [[ "${rc}" -eq 0 && "${log}" == *"images.controller from the release spec"* ]]; then
   pass "no-controller.yaml: controller image defaults to the spec ref"
 else
@@ -368,13 +370,13 @@ else
   fail "no-controller.yaml: BOM controller image is not the spec ref"
 fi
 rc=0
-log="$(cd "${dir}" && OUT_DIR="${out}" SITE_KUBECONFIG='' "${INSTALL_DIR}/03-describe-site.sh" check 2>&1)" || rc=$?
+log="$(cd "${dir}" && OUT_DIR="${out}" SITE_KUBECONFIG='' "${DEPLOY_DIR}/stages/03-describe-site.sh" check 2>&1)" || rc=$?
 [[ "${rc}" -eq 0 ]] && pass "no-controller.yaml: check exits 0" || fail "no-controller.yaml: check rc=${rc}: ${log}"
 
 # Neither images.controller nor a release spec: an error naming both.
 rc=0
-err="$(cd "${dir}" && SITE_CONFIG="${dir}/site-config.yaml" OUT_DIR="${dir}/out2" SBOM_DIR="${SBOM_DIR}" \
-  SITE_KUBECONFIG='' RELEASE_FILE='' RELEASE_REF='' "${INSTALL_DIR}/03-describe-site.sh" run 2>&1 >/dev/null)" || rc=$?
+err="$(cd "${dir}" && SITE_CONFIG="${dir}/site-config.yaml" OUT_DIR="${dir}/out2" DEPLOY_PATH="${DEPLOY_PATH}" \
+  SITE_KUBECONFIG='' RELEASE_FILE='' RELEASE_REF='' "${DEPLOY_DIR}/stages/03-describe-site.sh" run 2>&1 >/dev/null)" || rc=$?
 if [[ "${rc}" -eq 1 && "${err}" == *"images.controller is missing"* && "${err}" == *"RELEASE_CONTROLLER_REF"* ]]; then
   pass "no-controller.yaml without a spec: exit 1, names images.controller and RELEASE_CONTROLLER_REF"
 else
@@ -386,8 +388,8 @@ dir="${WORK}/no-spec"
 stage "${dir}" valid.yaml
 out="${dir}/out"
 rc=0
-log="$(cd "${dir}" && SITE_CONFIG="${dir}/site-config.yaml" OUT_DIR="${out}" SBOM_DIR="${SBOM_DIR}" \
-  SITE_KUBECONFIG='' RELEASE_FILE='' RELEASE_REF='' "${INSTALL_DIR}/03-describe-site.sh" run 2>&1)" || rc=$?
+log="$(cd "${dir}" && SITE_CONFIG="${dir}/site-config.yaml" OUT_DIR="${out}" DEPLOY_PATH="${DEPLOY_PATH}" \
+  SITE_KUBECONFIG='' RELEASE_FILE='' RELEASE_REF='' "${DEPLOY_DIR}/stages/03-describe-site.sh" run 2>&1)" || rc=$?
 if [[ "${rc}" -eq 0 && ! -e "${out}/version-bom.cdx.json" && "${log}" == *"version-bom.cdx.json not written: no release spec"* ]]; then
   pass "valid.yaml without a spec: renders, no BOM, says why"
 else
@@ -400,8 +402,8 @@ dir="${WORK}/with-mirror"
 stage "${dir}" with-mirror.yaml
 out="${dir}/out"
 rc=0
-log="$(cd "${dir}" && SITE_CONFIG="${dir}/site-config.yaml" OUT_DIR="${out}" SBOM_DIR="${SBOM_DIR}" \
-  SITE_KUBECONFIG='' RELEASE_FILE="${SPEC}" "${INSTALL_DIR}/03-describe-site.sh" run 2>&1)" || rc=$?
+log="$(cd "${dir}" && SITE_CONFIG="${dir}/site-config.yaml" OUT_DIR="${out}" DEPLOY_PATH="${DEPLOY_PATH}" \
+  SITE_KUBECONFIG='' RELEASE_FILE="${SPEC}" "${DEPLOY_DIR}/stages/03-describe-site.sh" run 2>&1)" || rc=$?
 [[ "${rc}" -eq 0 ]] && pass "with-mirror.yaml: run exits 0" || fail "with-mirror.yaml: rc=${rc}: ${log}"
 expect_line postgresql.yaml '^  imageRegistry: "registry.site.example:5000"$'
 expect_line postgresql.yaml '^    allowInsecureImages: true$'
@@ -423,7 +425,7 @@ fi
 mode="$(stat -f '%Lp' "${out}/capnico-kustomization.yaml" 2>/dev/null || stat -c '%a' "${out}/capnico-kustomization.yaml")"
 [[ "${mode}" == "600" ]] && pass "capnico-kustomization.yaml is 0600" || fail "capnico-kustomization.yaml mode is ${mode}"
 rc=0
-log="$(cd "${dir}" && OUT_DIR="${out}" SITE_KUBECONFIG='' "${INSTALL_DIR}/03-describe-site.sh" check 2>&1)" || rc=$?
+log="$(cd "${dir}" && OUT_DIR="${out}" SITE_KUBECONFIG='' "${DEPLOY_DIR}/stages/03-describe-site.sh" check 2>&1)" || rc=$?
 if [[ "${rc}" -eq 0 && "${log}" == *"capnico-kustomization.yaml has keys resources, images"* ]]; then
   pass "with-mirror.yaml: check lists the kustomization keys"
 else
@@ -431,8 +433,8 @@ else
 fi
 cp "${HERE}/valid.yaml" "${dir}/site-config.yaml"
 rc=0
-log="$(cd "${dir}" && SITE_CONFIG="${dir}/site-config.yaml" OUT_DIR="${out}" SBOM_DIR="${SBOM_DIR}" \
-  SITE_KUBECONFIG='' RELEASE_FILE="${SPEC}" "${INSTALL_DIR}/03-describe-site.sh" run 2>&1)" || rc=$?
+log="$(cd "${dir}" && SITE_CONFIG="${dir}/site-config.yaml" OUT_DIR="${out}" DEPLOY_PATH="${DEPLOY_PATH}" \
+  SITE_KUBECONFIG='' RELEASE_FILE="${SPEC}" "${DEPLOY_DIR}/stages/03-describe-site.sh" run 2>&1)" || rc=$?
 if [[ "${rc}" -eq 0 && ! -e "${out}/capnico-kustomization.yaml" && "${log}" == *"capnico-kustomization.yaml removed"* ]]; then
   pass "rerun without registry.mirror removes capnico-kustomization.yaml"
 else
@@ -444,7 +446,7 @@ for bad in 'https://registry.site.example:5000' 'registry.site.example:5000/'; d
   sed "s|mirror: registry.site.example:5000|mirror: ${bad}|" "${HERE}/with-mirror.yaml" >"${dir}/site-config.yaml"
   rc=0
   err="$(RELEASE_CONTROLLER_REF="registry.example.test:5000/nke/cwe@sha256:$(printf 'a%.0s' $(seq 1 64))" \
-    python3 "${RENDERER}" render --config "${dir}/site-config.yaml" --out "${dir}/out3" --sbom-dir "${SBOM_DIR}" 2>&1 >/dev/null)" || rc=$?
+    python3 "${RENDERER}" render --config "${dir}/site-config.yaml" --out "${dir}/out3" --deploy-path "${DEPLOY_PATH}" 2>&1 >/dev/null)" || rc=$?
   if [[ "${rc}" -eq 1 && "${err}" == *registry.mirror* ]]; then
     pass "registry.mirror ${bad}: exit 1, names the key"
   else
@@ -462,7 +464,7 @@ ghcr.io/open-telemetry/opentelemetry-operator/target-allocator:0.127.0
 ghcr.io/spiffe/spire-agent:1.15.3
 registry-1.docker.io/bitnami/postgresql@sha256:b74b23f091dcc87041bcae557d840c36458af46b955279cb13aedec4c32d7f71
 temporalio/server:1.30.3'
-got="$(cd "${INSTALL_DIR}" && python3 -c 'import sys, describe_site; print("\n".join(describe_site.extract_images(open(sys.argv[1]).read())))' "${HERE}/rendered-images.yaml")"
+got="$(cd "${LIB_DIR}" && python3 -c 'import sys, describe_site; print("\n".join(describe_site.extract_images(open(sys.argv[1]).read())))' "${HERE}/rendered-images.yaml")"
 if [[ "${got}" == "${expected}" ]]; then
   pass "extract_images finds every image shape in rendered-images.yaml"
 else
@@ -470,7 +472,7 @@ else
 fi
 
 # mirror_ref keeps the upstream path under the mirror; a short name has no registry to drop.
-got="$(cd "${INSTALL_DIR}" && python3 -c 'import describe_site as d; m = "r.example:5000"; print(d.mirror_ref("busybox:1.37", m), d.mirror_ref("temporalio/server:1.30.3", m), d.mirror_ref("registry-1.docker.io/bitnami/postgresql@sha256:" + "0" * 64, m), d.mirror_ref("localhost:5000/x/y:1", m))')"
+got="$(cd "${LIB_DIR}" && python3 -c 'import describe_site as d; m = "r.example:5000"; print(d.mirror_ref("busybox:1.37", m), d.mirror_ref("temporalio/server:1.30.3", m), d.mirror_ref("registry-1.docker.io/bitnami/postgresql@sha256:" + "0" * 64, m), d.mirror_ref("localhost:5000/x/y:1", m))')"
 if [[ "${got}" == "r.example:5000/busybox:1.37 r.example:5000/temporalio/server:1.30.3 r.example:5000/bitnami/postgresql@sha256:$(printf '0%.0s' $(seq 1 64)) r.example:5000/x/y:1" ]]; then
   pass "mirror_ref keeps the upstream path under the mirror"
 else
@@ -480,7 +482,7 @@ fi
 # Golden: the key set each file carries.
 dir="${WORK}/golden"
 stage "${dir}" valid.yaml
-if python3 "${RENDERER}" keys --config "${dir}/site-config.yaml" --sbom-dir "${SBOM_DIR}" \
+if python3 "${RENDERER}" keys --config "${dir}/site-config.yaml" --deploy-path "${DEPLOY_PATH}" \
   | diff -u "${HERE}/valid.golden-keys" -; then
   pass "valid.yaml: key set matches valid.golden-keys"
 else

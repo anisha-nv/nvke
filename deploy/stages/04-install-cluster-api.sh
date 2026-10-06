@@ -7,9 +7,9 @@
 #
 # Usage: ./04-install-cluster-api.sh [run|check]
 #
-# The guide docs/site-bootstrap/install-site-controller.md is the authority.
-# Commands between `# doc-begin` and `# doc-end` are extracted verbatim into
-# the guide. Keep them copy-pasteable: use the lib variables, no functions.
+# The guide docs/site-bootstrap/install-site-controller.md describes this
+# stage. The commands between `# doc-begin` and `# doc-end` are the stage's
+# work; keep them readable on their own: lib variables, no functions.
 #
 # CAPI_VERSION and CERT_MANAGER_VERSION come from make/tool-versions.mk. The
 # clusterctl binary decides which cert-manager it installs, so the binary must
@@ -17,7 +17,7 @@
 # already Available at CAPI_VERSION. A different installed version is an error:
 # `clusterctl init` does not upgrade. See docs/site-bootstrap/infrastructure-providers.md.
 set -euo pipefail
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
 CAPI_VERSION="${CAPI_VERSION:-$(mk_var CAPI_VERSION)}"
 CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-$(mk_var CERT_MANAGER_VERSION)}"

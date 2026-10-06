@@ -4,7 +4,7 @@
 # Deploy path for the CAPNICo end-to-end lane. Hand-authored: there is no
 # umbrella chart and no generator -- each component is its own helm release, and
 # the item order below IS the install order, which is what
-# docs/site-bootstrap/deploy-repository.md specifies.
+# docs/site-bootstrap/deploy-path.md specifies.
 #
 # Absent deliberately:
 #   cert-manager   clusterctl init installs it before this runs, so a second

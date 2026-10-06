@@ -4,7 +4,7 @@
 # Deploy path for the CAPD end-to-end lane. Hand-authored: there is no umbrella
 # chart and no generator -- each component is its own helm release, and the item
 # order below IS the install order, which is what docs/site-bootstrap/
-# deploy-repository.md specifies.
+# deploy-path.md specifies.
 #
 # cert-manager is deliberately absent. clusterctl init installs it before this
 # runs, so a second owner would fail on CRDs it cannot adopt. The CAPI

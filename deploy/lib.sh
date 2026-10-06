@@ -34,7 +34,14 @@
 
 set -Eeuo pipefail
 
-INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# deploy/ holds install.sh, this file, the executor nke-deploy.sh, lib/ with
+# the Python helpers and stages/ with one script per stage. The deploy path
+# the stages install is deploy/nico unless DEPLOY_PATH names another.
+DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="${DEPLOY_DIR}/lib"
+STAGES_DIR="${DEPLOY_DIR}/stages"
+REPO_ROOT="$(cd "${DEPLOY_DIR}/.." && pwd)"
+export DEPLOY_DIR LIB_DIR STAGES_DIR REPO_ROOT
 STAGE_NAME="$(basename "$0" .sh)"
 STAGE_MODE=""
 CHECK_FAILURES=0
@@ -137,12 +144,26 @@ chmod 0700 "${OUT_DIR}"
 OUT_DIR="$(abs_path "${OUT_DIR}")"
 export OUT_DIR
 
-# The deploy tree the stages install from: controller/deploy.
-SBOM_DIR="${SBOM_DIR:-$(cd "${INSTALL_DIR}/../.." && pwd)}"
-export SBOM_DIR
+# The deploy path the stages install. Absolute, so the stages can run from
+# any directory.
+DEPLOY_PATH="${DEPLOY_PATH:-${DEPLOY_DIR}/nico}"
+DEPLOY_PATH="$(cd "${DEPLOY_PATH}" 2>/dev/null && pwd || printf '%s' "${DEPLOY_PATH}")"
+export DEPLOY_PATH
+
+# The controller release's namespace, read from the deploy path so the checks
+# follow it. The deploy item is named controller in every path.
+controller_namespace() {
+  local ns=""
+  if [[ -f "${DEPLOY_PATH}/controller/release.yaml" ]]; then
+    ns="$(python3 "${LIB_DIR}/nke-deploy-items.py" release "${DEPLOY_PATH}/controller/release.yaml" 2>/dev/null | awk -F$'\x1f' '{ print $7 }')"
+  fi
+  printf '%s' "${ns:-nke-controller}"
+}
+CONTROLLER_NAMESPACE="${CONTROLLER_NAMESPACE:-$(controller_namespace)}"
+export CONTROLLER_NAMESPACE
 
 # The repository's tool pins. mk_var reads one.
-TOOL_VERSIONS_MK="${SBOM_DIR}/../../make/tool-versions.mk"
+TOOL_VERSIONS_MK="${REPO_ROOT}/make/tool-versions.mk"
 
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-15m}"
 REQUIRE_TIMEOUT="${REQUIRE_TIMEOUT:-180s}"
@@ -206,64 +227,17 @@ RELEASE_CHART_VERSIONS="${RELEASE_CHART_VERSIONS:-}"
 # release_meta evaluates RELEASE, LANE, SCOPE, SOURCE_REPO, SOURCE_TAG and
 # SOURCE_COMMIT into the current shell.
 release_meta() {
-  eval "$(python3 "${INSTALL_DIR}/release_spec.py" meta "${RELEASE_FILE}")"
+  eval "$(python3 "${LIB_DIR}/release_spec.py" meta "${RELEASE_FILE}")"
 }
 # release_ref NAME prints the item's ref. Fails when the item is absent.
-release_ref() { python3 "${INSTALL_DIR}/release_spec.py" ref "${RELEASE_FILE}" "$1"; }
+release_ref() { python3 "${LIB_DIR}/release_spec.py" ref "${RELEASE_FILE}" "$1"; }
 # release_items [TYPE] prints "name<TAB>type<TAB>ref<TAB>version" per item.
 release_items() {
   if [[ $# -ge 1 && -n "$1" ]]; then
-    python3 "${INSTALL_DIR}/release_spec.py" items "${RELEASE_FILE}" --type "$1"
+    python3 "${LIB_DIR}/release_spec.py" items "${RELEASE_FILE}" --type "$1"
   else
-    python3 "${INSTALL_DIR}/release_spec.py" items "${RELEASE_FILE}"
+    python3 "${LIB_DIR}/release_spec.py" items "${RELEASE_FILE}"
   fi
-}
-
-# sha256_file FILE prints sha256:<hex> of FILE, or nothing when FILE is absent.
-sha256_file() {
-  [[ -f "$1" ]] || return 0
-  python3 -c 'import hashlib, sys; print("sha256:" + hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$1"
-}
-
-# chart_layer REF FALLBACK prints "<digest> <file>" for the chart archive of
-# the Helm OCI artifact REF names. REF carries the manifest digest, so the
-# manifest is fetched and the chart layer read from it: the layer with the
-# Helm chart content media type, else the first. Its digest is the sha256 of
-# the unchanged .tgz; its org.opencontainers.image.title is the file name
-# `oras pull` writes, FALLBACK when the layer has none. Under DRY_RUN nothing
-# is fetched: the argv is printed and a placeholder digest with FALLBACK.
-# PLAIN_HTTP_REGISTRIES lists registries that serve plain HTTP, space
-# separated, host:port. oras_flags prints --plain-http for a ref on one of
-# them. A registry with a port that is not listed is probed once: /v2/ over
-# https first, then http. Registries without a port are never plain HTTP.
-PLAIN_HTTP_REGISTRIES="${PLAIN_HTTP_REGISTRIES:-}"
-oras_flags() {
-  local host="${1%%/*}"
-  case " ${PLAIN_HTTP_REGISTRIES} " in *" ${host} "*) printf -- '--plain-http'; return 0 ;; esac
-  [[ "${host}" == *:* && -z "${DRY_RUN}" ]] || return 0
-  if ! curl -sS -o /dev/null --max-time 5 "https://${host}/v2/" 2>/dev/null &&
-     curl -sS -o /dev/null --max-time 5 "http://${host}/v2/" 2>/dev/null; then
-    printf -- '--plain-http'
-  fi
-  return 0
-}
-
-chart_layer() {
-  local ref="$1" fallback="$2"
-  if [[ -n "${DRY_RUN}" ]]; then
-    run oras manifest fetch $(oras_flags "${ref}") "${ref}" >&2
-    printf 'sha256:dry-run %s\n' "${fallback}"
-    return 0
-  fi
-  # shellcheck disable=SC2046
-  oras manifest fetch $(oras_flags "${ref}") "${ref}" | python3 -c '
-import json, sys
-layers = json.load(sys.stdin).get("layers", [])
-chart = [l for l in layers if l.get("mediaType") == "application/vnd.cncf.helm.chart.content.v1.tar+gzip"] or layers[:1]
-if not chart:
-    sys.exit("manifest has no layers")
-print(chart[0]["digest"], chart[0].get("annotations", {}).get("org.opencontainers.image.title") or sys.argv[1])
-' "${fallback}"
 }
 
 # resolve_release_ref verifies RELEASE_REF and converts the description into
@@ -273,7 +247,7 @@ print(chart[0]["digest"], chart[0].get("annotations", {}).get("org.opencontainer
 resolve_release_ref() {
   local out="${OUT_DIR}/release-manifest.yaml" json="${OUT_DIR}/nkd-release.json" current=""
   if [[ -f "${out}" ]]; then
-    current="$(python3 "${INSTALL_DIR}/release_spec.py" meta "${out}" 2>/dev/null |
+    current="$(python3 "${LIB_DIR}/release_spec.py" meta "${out}" 2>/dev/null |
       sed -n "s/^RELEASE='\(.*\)'$/\1/p")"
     if [[ "${current}" == "${RELEASE_REF}" ]]; then
       RELEASE_FILE="${out}"
@@ -287,7 +261,7 @@ resolve_release_ref() {
   # shellcheck disable=SC2086
   nkdctl release verify --reference "${RELEASE_REF}" ${RELEASE_VERIFY_ARGS} >"${json}" ||
     die "nkdctl release verify failed for ${RELEASE_REF}"
-  python3 "${INSTALL_DIR}/nkd-release-to-nke.py" "${json}" \
+  python3 "${LIB_DIR}/nkd-release-to-nke.py" "${json}" \
     --source-repo "${RELEASE_SOURCE_REPO}" --source-tag "${RELEASE_SOURCE_TAG}" \
     --source-commit "${RELEASE_SOURCE_COMMIT}" --versions "${RELEASE_CHART_VERSIONS}" >"${out}.tmp" ||
     die "converting ${json} into ${out} failed"
@@ -349,7 +323,7 @@ on_fail() {
   { ${k} get events -A --sort-by=.lastTimestamp 2>&1 || true; } | tail -200 >"${dir}/events.txt" || true
   helm --kubeconfig "${SITE_KUBECONFIG}" list -A >"${dir}/helm-list.txt" 2>&1 || true
   local ns deploy name
-  for ns in cloud-workflow-engine capnico-system; do
+  for ns in "${CONTROLLER_NAMESPACE}" capnico-system; do
     ${k} get namespace "${ns}" >/dev/null 2>&1 || continue
     for deploy in $(${k} -n "${ns}" get deployments -o name 2>/dev/null || true); do
       name="${deploy#deployment.apps/}"

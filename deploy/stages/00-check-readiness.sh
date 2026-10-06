@@ -8,15 +8,15 @@
 #
 # Usage: ./00-check-readiness.sh [run|check]
 #
-# The guide docs/site-bootstrap/install-site-controller.md is the authority.
-# Commands between `# doc-begin` and `# doc-end` are extracted verbatim into
-# the guide. Keep them copy-pasteable: use the lib variables, no functions.
+# The guide docs/site-bootstrap/install-site-controller.md describes this
+# stage. The commands between `# doc-begin` and `# doc-end` are the stage's
+# work; keep them readable on their own: lib variables, no functions.
 #
 # Output is one line per finding: PASS, WARN, FAIL or SKIP. The exit code is
 # the number of FAIL lines. Checks that need the cluster or the network print
 # SKIP under DRY_RUN.
 set -euo pipefail
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
 # Free space the runner needs for rendered values, diagnostics and image tarballs.
 MIN_DISK_GB="${MIN_DISK_GB:-10}"
@@ -52,7 +52,7 @@ EGRESS_URLS=(
 # after this depends on the parse, so a parse error ends the release checks.
 check_release() {
   local err
-  if ! err="$(python3 "${INSTALL_DIR}/release_spec.py" meta "${RELEASE_FILE}" 2>&1 >/dev/null)"; then
+  if ! err="$(python3 "${LIB_DIR}/release_spec.py" meta "${RELEASE_FILE}" 2>&1 >/dev/null)"; then
     check_fail "release spec: ${err}"
     return 1
   fi
@@ -70,8 +70,8 @@ check_release() {
 # rehearsal from any branch, not an install from the pinned tag.
 check_release_source() {
   local tag head msg
-  tag="$(git -C "${SBOM_DIR}" describe --tags --exact-match 2>/dev/null || true)"
-  head="$(git -C "${SBOM_DIR}" rev-parse HEAD 2>/dev/null || true)"
+  tag="$(git -C "${REPO_ROOT}" describe --tags --exact-match 2>/dev/null || true)"
+  head="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || true)"
   if [[ -n "${SOURCE_COMMIT}" && "${head}" == "${SOURCE_COMMIT}" ]]; then
     check_pass "release source: checkout is at ${SOURCE_COMMIT} (${SOURCE_TAG})"
     return 0
@@ -80,7 +80,7 @@ check_release_source() {
     check_pass "release source: checkout is at tag ${SOURCE_TAG}"
     return 0
   fi
-  msg="release source: checkout ${SBOM_DIR} is at ${tag:-${head:-unknown}}, the spec pins ${SOURCE_TAG}${SOURCE_COMMIT:+ (${SOURCE_COMMIT})}. git -C \"${SBOM_DIR}\" checkout ${SOURCE_TAG}"
+  msg="release source: checkout ${REPO_ROOT} is at ${tag:-${head:-unknown}}, the spec pins ${SOURCE_TAG}${SOURCE_COMMIT:+ (${SOURCE_COMMIT})}. git -C \"${REPO_ROOT}\" checkout ${SOURCE_TAG}"
   if [[ -n "${DRY_RUN}" ]]; then
     check_warn "${msg} (DRY_RUN)"
   else
@@ -89,16 +89,16 @@ check_release_source() {
 }
 
 # check_release_versions compares each chart item's version with the
-# chart.version pin in nke-sbom/<name>/release.yaml.
+# chart.version pin in the deploy path's <name>/release.yaml.
 check_release_versions() {
   local name version pin file
   while IFS=$'\t' read -r name _ _ version; do
-    file="${SBOM_DIR}/nke-sbom/${name}/release.yaml"
+    file="${DEPLOY_PATH}/${name}/release.yaml"
     if [[ ! -f "${file}" ]]; then
-      check_fail "release versions: ${name} has no deploy item at ${file}"
+      check_warn "release versions: ${name} has no deploy item at ${file}; the artifact is unused by this deploy path"
       continue
     fi
-    pin="$(python3 "${SBOM_DIR}/../../build/nke-sbom-items.py" release "${file}" | awk -F$'\x1f' '{ print $3 }')"
+    pin="$(python3 "${LIB_DIR}/nke-deploy-items.py" release "${file}" | awk -F$'\x1f' '{ print $3 }')"
     if [[ "${pin}" == "${version}" ]]; then
       check_pass "release versions: ${name} ${version} matches release.yaml"
     else
@@ -159,7 +159,7 @@ check_helm_version() {
   local pin bin path_bin version
   pin="$(mk_var HELM_VERSION)"
   path_bin="$(command -v helm 2>/dev/null || true)"
-  bin="${SBOM_DIR}/../.local/bin/helm"
+  bin="${REPO_ROOT}/controller/.local/bin/helm"
   [[ -x "${bin}" ]] || bin="${path_bin}"
   if [[ -z "${bin}" ]]; then
     check_fail "helm: no binary found to compare with the pin ${pin:-unknown}"
@@ -178,8 +178,8 @@ check_helm_version() {
 
 check_checkout() {
   local f
-  for f in "${SBOM_DIR}/nke-sbom/nke-deploy.yaml" \
-    "${SBOM_DIR}/charts/controller/Chart.yaml" \
+  for f in "${DEPLOY_PATH}/nke-deploy.yaml" \
+    "${REPO_ROOT}/controller/deploy/charts/controller/Chart.yaml" \
     "${TOOL_VERSIONS_MK}"; do
     if [[ -f "${f}" ]]; then
       check_pass "checkout: ${f}"
@@ -242,7 +242,7 @@ check_site_config() {
 
 # check_api_auth warns when the controller overlay leaves apiAuth disabled.
 check_api_auth() {
-  local overlay="${SBOM_DIR}/nke-sbom/controller/overlay.yaml"
+  local overlay="${DEPLOY_PATH}/controller/overlay.yaml"
   if [[ ! -f "${overlay}" ]]; then
     check_fail "api auth: ${overlay} is missing"
     return 0
@@ -320,7 +320,7 @@ stage_check() {
   check_node_imagefs
 }
 
-# The readiness report is the whole stage. A failing report stops install-all.
+# The readiness report is the whole stage. A failing report stops install.sh.
 stage_run() {
   stage_check
   [[ "${CHECK_FAILURES}" -eq 0 ]] || die "readiness check failed: ${CHECK_FAILURES} finding(s)"

@@ -8,9 +8,9 @@
 #
 # Usage: ./02-stage-images.sh [run|check]
 #
-# The guide docs/site-bootstrap/install-site-controller.md is the authority.
-# Commands between `# doc-begin` and `# doc-end` are extracted verbatim into
-# the guide. Keep them copy-pasteable: use the lib variables, no functions.
+# The guide docs/site-bootstrap/install-site-controller.md describes this
+# stage. The commands between `# doc-begin` and `# doc-end` are the stage's
+# work; keep them readable on their own: lib variables, no functions.
 #
 # Images. The controller image is the `controller` item's ref in the release
 # spec (RELEASE_FILE), a digest reference. The external images are the lines
@@ -50,14 +50,14 @@
 #
 # Reruns. A node that already holds an image is skipped. Stage order: this
 # stage runs before stage 3 writes images.txt, so a first run pulls only the
-# controller image. install-all.sh runs this stage again after stage 3 to
+# controller image. install.sh runs this stage again after stage 3 to
 # pre-pull the external images, and once more with PREPULL_EXTERNAL=0 right
 # before stage 5 to restore a garbage-collected controller image. Run by hand,
 # rerun it after stage 3 yourself; otherwise the kubelet pulls the external
 # images when the pods schedule. The check fails on a missing controller
 # digest and warns on a missing external image.
 set -euo pipefail
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
 HOSTS_DIR="${HOSTS_DIR:-/etc/containerd/certs.d}"
 EXTRA_IMAGES="${EXTRA_IMAGES:-}"
@@ -79,7 +79,7 @@ resolve_images() {
   if [[ -f "${IMAGES_TXT}" ]]; then
     EXTERNAL_IMAGES="$(grep -v '^[[:space:]]*#' "${IMAGES_TXT}" | grep -v '^[[:space:]]*$' || true)"
   elif [[ "${PREPULL_EXTERNAL}" != "0" ]]; then
-    warn "${IMAGES_TXT} not found: 03-describe-site.sh writes it. Only the controller image is pulled now; install-all.sh reruns this stage after stage 3, or rerun it yourself to pre-pull the external images."
+    warn "${IMAGES_TXT} not found: 03-describe-site.sh writes it. Only the controller image is pulled now; install.sh reruns this stage after stage 3, or rerun it yourself to pre-pull the external images."
   fi
   EXTERNAL_IMAGES="$(printf '%s %s' "${EXTERNAL_IMAGES}" "${EXTRA_IMAGES}" | xargs)"
   export CONTROLLER_REF EXTERNAL_IMAGES

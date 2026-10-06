@@ -4,7 +4,7 @@
 
   render-template.py <config.json> <item-dir> <out-dir>
 
-docs/site-bootstrap/deploy-repository.md defines `type: template` items: the
+docs/site-bootstrap/deploy-path.md defines `type: template` items: the
 deploy tooling renders each .yaml.tmpl with Go text/template, passing the full
 BootstrapConfig as the context, and the item is then applied as a manifest.
 There is no BootstrapConfig type in this repository, only the documented

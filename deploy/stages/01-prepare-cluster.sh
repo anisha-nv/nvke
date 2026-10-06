@@ -6,9 +6,9 @@
 #
 # Usage: ./01-prepare-cluster.sh [run|check]
 #
-# The guide docs/site-bootstrap/install-site-controller.md is the authority.
-# Commands between `# doc-begin` and `# doc-end` are extracted verbatim into
-# the guide. Keep them copy-pasteable: use the lib variables, no functions.
+# The guide docs/site-bootstrap/install-site-controller.md describes this
+# stage. The commands between `# doc-begin` and `# doc-end` are the stage's
+# work; keep them readable on their own: lib variables, no functions.
 #
 # nkectl bootstrap site removes the control-plane NoSchedule taint once every
 # node has joined (cluster.schedulableControlPlane, default true). This stage
@@ -19,7 +19,7 @@
 # marks its own class default; the check still requires exactly one default
 # StorageClass.
 set -euo pipefail
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
 # The same release docs/operations/faq.md installs. local-path stores volumes
 # under /opt/local-path-provisioner on the node that schedules the pod. It is

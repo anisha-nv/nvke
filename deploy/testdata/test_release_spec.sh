@@ -10,11 +10,12 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="$(cd "${HERE}/.." && pwd)"
-SBOM_DIR="$(cd "${INSTALL_DIR}/../.." && pwd)"
+DEPLOY_DIR="$(cd "${HERE}/.." && pwd)"
+LIB_DIR="${DEPLOY_DIR}/lib"
+REPO_ROOT="$(cd "${DEPLOY_DIR}/.." && pwd)"
 FIXTURES="${HERE}/release-spec"
-SPEC="${INSTALL_DIR}/release_spec.py"
-CONVERT="${INSTALL_DIR}/nkd-release-to-nke.py"
+SPEC="${LIB_DIR}/release_spec.py"
+CONVERT="${LIB_DIR}/nkd-release-to-nke.py"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/release-spec-test.XXXXXX")"
 trap 'rm -rf "${WORK}"' EXIT
@@ -147,13 +148,13 @@ err="$(python3 "${CONVERT}" "${FIXTURES}/nkd-release.json" --source-repo r --sou
 : >"${WORK}/kubeconfig"
 rc=0
 err="$(cd "${WORK}" && OUT_DIR="${WORK}/out" SITE_KUBECONFIG="${WORK}/kubeconfig" DRY_RUN=1 \
-  "${INSTALL_DIR}/00-check-readiness.sh" check 2>&1 >/dev/null)" || rc=$?
+  "${DEPLOY_DIR}/stages/00-check-readiness.sh" check 2>&1 >/dev/null)" || rc=$?
 [[ "${rc}" -eq 1 && "${err}" == *"neither RELEASE_FILE nor RELEASE_REF"* ]] &&
   pass "lib.sh: dies naming RELEASE_FILE and RELEASE_REF" || fail "lib.sh: rc=${rc}: ${err}"
 rc=0
 err="$(cd "${WORK}" && OUT_DIR="${WORK}/out" SITE_KUBECONFIG="${WORK}/kubeconfig" DRY_RUN=1 \
   RELEASE_REF="registry.example.test:5000/nke/releases@sha256:${zeros}" \
-  "${INSTALL_DIR}/00-check-readiness.sh" check 2>&1 >/dev/null)" || rc=$?
+  "${DEPLOY_DIR}/stages/00-check-readiness.sh" check 2>&1 >/dev/null)" || rc=$?
 [[ "${rc}" -eq 1 && "${err}" == *"RELEASE_SOURCE_REPO and RELEASE_SOURCE_TAG"* ]] &&
   pass "lib.sh: RELEASE_REF without a source pin names the variables" || fail "lib.sh: rc=${rc}: ${err}"
 # A converted file in OUT_DIR for the same RELEASE_REF is reused without nkdctl.
@@ -161,8 +162,8 @@ mkdir -p "${WORK}/out"
 cp "${valid}" "${WORK}/out/release-manifest.yaml"
 rc=0
 log="$(cd "${WORK}" && OUT_DIR="${WORK}/out" SITE_KUBECONFIG="${WORK}/kubeconfig" DRY_RUN=1 PATH="/usr/bin:/bin" \
-  RELEASE_REF="registry.example.test:5000/nke/releases@sha256:${zeros}" SBOM_DIR="${SBOM_DIR}" \
-  "${INSTALL_DIR}/00-check-readiness.sh" check 2>&1)" || rc=$?
+  RELEASE_REF="registry.example.test:5000/nke/releases@sha256:${zeros}" \
+  "${DEPLOY_DIR}/stages/00-check-readiness.sh" check 2>&1)" || rc=$?
 # lib.sh prints the realpath; on macOS $TMPDIR resolves through /private, so match the suffix.
 [[ "${log}" == *"PASS  release spec: "*"/out/release-manifest.yaml"* ]] &&
   pass "lib.sh: reuses the converted spec for the same RELEASE_REF" || fail "lib.sh: reuse: ${log}"
@@ -170,7 +171,7 @@ log="$(cd "${WORK}" && OUT_DIR="${WORK}/out" SITE_KUBECONFIG="${WORK}/kubeconfig
 # 00-check-readiness.sh: the release checks against this checkout.
 rc=0
 log="$(cd "${WORK}" && OUT_DIR="${WORK}/out" SITE_KUBECONFIG="${WORK}/kubeconfig" DRY_RUN=1 \
-  RELEASE_FILE="${valid}" SBOM_DIR="${SBOM_DIR}" "${INSTALL_DIR}/00-check-readiness.sh" check 2>&1)" || rc=$?
+  RELEASE_FILE="${valid}" "${DEPLOY_DIR}/stages/00-check-readiness.sh" check 2>&1)" || rc=$?
 [[ "${log}" == *"INFO  release: registry.example.test:5000/nke/releases@sha256:${zeros} lane=local-assembly scope=none"* ]] &&
   pass "stage 0: prints lane and scope" || fail "stage 0: no INFO line: ${log}"
 [[ "${log}" == *"WARN  release lane is local-assembly"* ]] &&
@@ -189,12 +190,12 @@ pass "stage 0: chart versions compared with release.yaml"
 sed 's/version: "0.74.0"/version: "0.73.0"/' "${valid}" >"${WORK}/mismatch.yaml"
 rc=0
 log="$(cd "${WORK}" && OUT_DIR="${WORK}/out" SITE_KUBECONFIG="${WORK}/kubeconfig" DRY_RUN=1 \
-  RELEASE_FILE="${WORK}/mismatch.yaml" SBOM_DIR="${SBOM_DIR}" "${INSTALL_DIR}/00-check-readiness.sh" check 2>&1)" || rc=$?
+  RELEASE_FILE="${WORK}/mismatch.yaml" "${DEPLOY_DIR}/stages/00-check-readiness.sh" check 2>&1)" || rc=$?
 [[ "${rc}" -ge 1 && "${log}" == *"FAIL  release versions: temporal is 0.73.0 in the spec and 0.74.0"* ]] &&
   pass "stage 0: a chart version mismatch fails" || fail "stage 0: mismatch rc=${rc}: ${log}"
 rc=0
 log="$(cd "${WORK}" && OUT_DIR="${WORK}/out" SITE_KUBECONFIG="${WORK}/kubeconfig" DRY_RUN=1 \
-  RELEASE_FILE="${FIXTURES}/bad-type.yaml" SBOM_DIR="${SBOM_DIR}" "${INSTALL_DIR}/00-check-readiness.sh" check 2>&1)" || rc=$?
+  RELEASE_FILE="${FIXTURES}/bad-type.yaml" "${DEPLOY_DIR}/stages/00-check-readiness.sh" check 2>&1)" || rc=$?
 [[ "${rc}" -ge 1 && "${log}" == *"FAIL  release spec: release_spec: "*"bad-type.yaml:12"* ]] &&
   pass "stage 0: a parser error is a FAIL with its message" || fail "stage 0: bad spec rc=${rc}: ${log}"
 

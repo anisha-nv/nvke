@@ -7,9 +7,9 @@
 #
 # Usage: ./06-secure-and-register.sh [run|check]
 #
-# The guide docs/site-bootstrap/install-site-controller.md is the authority.
-# Commands between `# doc-begin` and `# doc-end` are extracted verbatim into
-# the guide. Keep them copy-pasteable: use the lib variables, no functions.
+# The guide docs/site-bootstrap/install-site-controller.md describes this
+# stage. The commands between `# doc-begin` and `# doc-end` are the stage's
+# work; keep them readable on their own: lib variables, no functions.
 #
 # The patch lives in Deployments that `clusterctl init` owns. `clusterctl
 # upgrade` rewrites those Deployments and drops the patch. Rerun this stage
@@ -30,9 +30,9 @@
 # that admits them. The check requests /api/version from this host and fails
 # when it does not answer 200.
 set -euo pipefail
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
-HACK_DIR="$(cd "${SBOM_DIR}/.." && pwd)/hack"
+HACK_DIR="${REPO_ROOT}/controller/hack"
 
 # The site name and VIP come from stage 3: ${OUT_DIR}/site.env when it has
 # been run, else the site config it reads. Both can be set in the environment
@@ -95,12 +95,13 @@ require_nkectl() {
 # Client networks the API admits, space separated CIDRs. Empty applies
 # nothing. Environment only: describe_site.py does not write it to site.env.
 API_CLIENT_CIDRS="${API_CLIENT_CIDRS:-}"
-# The controller namespace and the pod port. The pod listens on 8080, the
-# service.port of nke-sbom/controller/overlay.yaml. The NodePort Service
-# forwards 30080 to it, and a NetworkPolicy matches the pod port.
-API_NAMESPACE="cloud-workflow-engine"
+# The controller namespace comes from the deploy path (lib.sh). The pod
+# listens on 8080, the service.port of the deploy path's controller overlay.
+# The NodePort Service forwards 30080 to it, and a NetworkPolicy matches the
+# pod port.
+API_NAMESPACE="${CONTROLLER_NAMESPACE}"
 API_POD_PORT=8080
-API_CLIENTS_POLICY="cloud-workflow-engine-api-clients"
+API_CLIENTS_POLICY="nke-controller-api-clients"
 API_URL_PATH="/api/version"
 
 # api_clients_policy prints a NetworkPolicy that admits API_CLIENT_CIDRS to
@@ -117,7 +118,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: cloud-workflow-engine
+      app.kubernetes.io/name: nke-controller
   policyTypes:
     - Ingress
   ingress:
@@ -236,7 +237,7 @@ stage_check() {
     if [[ "${code}" == "200" ]]; then
       check_pass "GET ${api_url}: 200"
     else
-      check_fail "GET ${api_url} answered ${code:-nothing} within 10s from this host. The chart's NetworkPolicy admits the API only from pods in the cluster, so a client off the nodes needs a NetworkPolicy that admits its CIDR. Export API_CLIENT_CIDRS=\"<cidr> ...\" (this host's network) and rerun ./06-secure-and-register.sh run. See docs/site-bootstrap/install-site-controller.md, section 7, Choices."
+      check_fail "GET ${api_url} answered ${code:-nothing} within 10s from this host. The chart's NetworkPolicy admits the API only from pods in the cluster, so a client off the nodes needs a NetworkPolicy that admits its CIDR. Export API_CLIENT_CIDRS=\"<cidr> ...\" (this host's network) and rerun ./06-secure-and-register.sh run. See docs/site-bootstrap/install-site-controller.md, section 6, Choices."
     fi
   fi
 }

@@ -11,9 +11,9 @@
 #
 # Usage: ./03-describe-site.sh [run|check]
 #
-# The guide docs/site-bootstrap/install-site-controller.md is the authority.
-# Commands between `# doc-begin` and `# doc-end` are extracted verbatim into
-# the guide. Keep them copy-pasteable: use the lib variables, no functions.
+# The guide docs/site-bootstrap/install-site-controller.md describes this
+# stage. The commands between `# doc-begin` and `# doc-end` are the stage's
+# work; keep them readable on their own: lib variables, no functions.
 set -euo pipefail
 # shellcheck disable=SC2034 # read by lib.sh
 STAGE_NEEDS_KUBECONFIG=0
@@ -24,7 +24,7 @@ if [[ -z "${RELEASE_FILE:-}" && -z "${RELEASE_REF:-}" ]]; then
   # shellcheck disable=SC2034 # read by lib.sh
   STAGE_NEEDS_RELEASE=0
 fi
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
 IMAGES_TXT_SKIP="${IMAGES_TXT_SKIP:-}"
 RELEASE_CONTROLLER_REF="${RELEASE_CONTROLLER_REF:-}"
@@ -42,15 +42,15 @@ stage_run() {
   fi
   export RELEASE_CONTROLLER_REF
   # doc-begin
-  python3 "${INSTALL_DIR}/describe_site.py" render \
-    --config "${SITE_CONFIG}" --out "${OUT_DIR}" --sbom-dir "${SBOM_DIR}" \
+  python3 "${LIB_DIR}/describe_site.py" render \
+    --config "${SITE_CONFIG}" --out "${OUT_DIR}" --deploy-path "${DEPLOY_PATH}" \
     --release-file "${RELEASE_FILE}"
   # doc-end
 }
 
 stage_check() {
   require_cmd python3
-  if python3 "${INSTALL_DIR}/describe_site.py" check --out "${OUT_DIR}"; then
+  if python3 "${LIB_DIR}/describe_site.py" check --out "${OUT_DIR}"; then
     check_pass "rendered files in ${OUT_DIR} are complete"
   else
     check_fail "rendered files in ${OUT_DIR} are incomplete"
