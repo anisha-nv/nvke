@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+kubernetes:
+  "1.36": "1.36.3"
+
+os-images:
+  ubuntu-24.04:
+    arm64:
+      image: https://d1veq6e8nuk2fy.cloudfront.net/nke-packages/os-image/releases/v0.1.0/arm64/nke-node-non-fde-ubuntu-24.04.5-arm64.qcow2
+      bootloader: https://d1veq6e8nuk2fy.cloudfront.net/nke-isos/qcow/efi/aarch64/2026-06-25/1782410719/qcow-imager.efi
+    amd64:
+      image: https://d1veq6e8nuk2fy.cloudfront.net/nke-packages/os-image/releases/v0.1.0/amd64/nke-node-non-fde-ubuntu-24.04.5-amd64.qcow2
+      bootloader: https://d1veq6e8nuk2fy.cloudfront.net/nke-isos/qcow/efi/x86_64/2026-06-25/1782410681/qcow-imager.efi
