@@ -143,7 +143,6 @@ func TestSelfRegisterCluster_RejectsSecondCluster(t *testing.T) {
 	require.True(t, ok, "expected SelfRegisterCluster409JSONResponse, got %T", resp)
 	require.Contains(t, body.Message, existingID.String())
 
-	// CreateCluster must never be reached once the conflict is detected.
 	mockDB.MockTx.AssertNotCalled(t, "CreateCluster", mock.Anything, mock.Anything)
 }
 
@@ -155,8 +154,6 @@ func TestSelfRegisterCluster_SameIDRetryIsIdempotent(t *testing.T) {
 	mockDB.GetTx = func() db.Tx { return mockDB.MockTx }
 	mockDB.On("RunInTx", mock.Anything, mock.Anything).Return(nil)
 
-	// The cluster already exists under the same ID -- a retry of an
-	// already-committed registration, not a conflict.
 	mockDB.MockTx.On("ListClusters", mock.Anything, db.ClusterFilters{}).
 		Return([]db.Cluster{{ID: clusterID}}, nil).Once()
 	mockDB.MockTx.On("GetCluster", mock.Anything, clusterID).
@@ -175,8 +172,6 @@ func TestSelfRegisterCluster_SameIDRetryIsIdempotent(t *testing.T) {
 	require.True(t, ok, "expected SelfRegisterCluster201JSONResponse, got %T", resp)
 	require.Equal(t, clusterID, body.ID)
 
-	// Nothing downstream of the existing-cluster check may run: no duplicate
-	// cluster/config/node rows, no second workflow enqueued.
 	mockDB.MockTx.AssertNotCalled(t, "CreateCluster", mock.Anything, mock.Anything)
 	mockDB.MockTx.AssertNotCalled(t, "CreateControlPlaneConfiguration", mock.Anything, mock.Anything)
 	mockDB.MockTx.AssertNotCalled(t, "CreateNode", mock.Anything, mock.Anything)
@@ -271,10 +266,6 @@ func TestSelfRegisterCluster_RejectsNicoProvider(t *testing.T) {
 	mockDB := &mockDB{}
 	svc := newTestClusterService(discardLogger(), mockDB)
 
-	// Self-registration only supports CAPI-backed clusters (see
-	// dbClusterFromSelfRegisterAPI): a Nico-provider cluster must be
-	// rejected, not silently mapped -- that path has never been exercised
-	// end to end.
 	cluster := selfRegisterTestCluster(uuid.New(), uuid.New())
 	cluster.Infra = nil
 	cluster.Nico = &api.NicoClusterProvider{OrgID: "org-1"}
@@ -293,10 +284,6 @@ func TestSelfRegisterCluster_RejectsNodePoolManagedNode(t *testing.T) {
 	mockDB := &mockDB{}
 	svc := newTestClusterService(discardLogger(), mockDB)
 
-	// nodes.node_pool_id/node_set_id are foreign keys into node_pools/node_sets,
-	// which SelfRegisterClusterRequest has no way to carry. A node-pool-managed
-	// node must be rejected up front rather than failing CreateNode's FK
-	// constraint partway through the transaction.
 	clusterID := uuid.New()
 	configID := uuid.New()
 	node := selfRegisterTestNode(uuid.New(), configID)

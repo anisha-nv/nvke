@@ -17,10 +17,6 @@ import (
 	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
-// selfRegisterConflictError means this CWE instance already has a cluster
-// registered. Self-registration is a one-cluster operation -- it exists so a
-// site controller can register itself, not to bulk-import arbitrary clusters
-// -- so a second, different cluster ID is always rejected.
 type selfRegisterConflictError struct {
 	existingClusterID uuid.UUID
 }
@@ -29,12 +25,6 @@ func (e *selfRegisterConflictError) Error() string {
 	return fmt.Sprintf("this CWE instance already has cluster %s registered; only one cluster may be self-registered", e.existingClusterID)
 }
 
-// SelfRegisterCluster imports an already-provisioned cluster's data --
-// preserving every ID -- from the api.Cluster/api.Node shapes a source CWE's
-// GET /clusters/{clusterID} and GET /nodes already return, then enqueues
-// SelfRegisterCluster, which recreates the cluster's live CAPI objects
-// (Cluster, ProvisionedCluster, Machine, ProvisionedMachine) on this CWE's
-// own management Kubernetes API without touching the real nodes.
 func (s *clusterService) SelfRegisterCluster(
 	ctx context.Context,
 	req api.SelfRegisterClusterRequestObject,
@@ -76,11 +66,7 @@ func (s *clusterService) SelfRegisterCluster(
 			if existing[0].ID != dbCluster.ID {
 				return &selfRegisterConflictError{existingClusterID: existing[0].ID}
 			}
-			// A retry of an already-committed registration: the OpenAPI contract
-			// only documents 409 for a different cluster ID, so a same-ID request
-			// is idempotent -- return the existing cluster rather than attempting
-			// tx.CreateCluster again, which would fail the primary-key constraint
-			// and surface as an unclassified 500.
+			// Retry of an already-committed registration: idempotent, not a conflict.
 			registeredCluster, err = tx.GetCluster(ctx, dbCluster.ID)
 			if err != nil {
 				return fmt.Errorf("failed to reload existing cluster: %w", err)
@@ -89,10 +75,7 @@ func (s *clusterService) SelfRegisterCluster(
 		}
 
 		// clusters.configuration_id and control_plane_configurations.cluster_id
-		// reference each other, so the cluster row is created first with its
-		// configuration_id left unset, the config row is created second (now
-		// that cluster_id resolves), and the cluster is updated afterward --
-		// same three-step order the normal CreateCluster handler uses.
+		// reference each other, so create cluster -> create config -> update cluster.
 		configurationID := dbCluster.ControlPlaneConfig.ConfigurationID
 		dbCluster.ControlPlaneConfig.ConfigurationID = uuid.Nil
 		if _, err := tx.CreateCluster(ctx, &dbCluster); err != nil {
@@ -169,12 +152,7 @@ func dbClusterFromSelfRegisterAPI(c api.Cluster) (db.Cluster, error) {
 		return db.Cluster{}, fmt.Errorf("cluster.conditions: %w", err)
 	}
 
-	// Self-registration exists for a site controller to register itself as
-	// the one cluster it manages, which in every deployment this ships for
-	// is CAPI-backed (cluster-api-provider-provisioned). A Nico-provider
-	// cluster is rejected rather than silently mapped: nothing here has ever
-	// exercised that path end to end, and accepting it unverified would ship
-	// a code path indistinguishable from a tested one.
+	// Only CAPI-backed clusters are supported; the Nico path is untested.
 	if c.Infra == nil {
 		return db.Cluster{}, errors.New("self-registration only supports CAPI-backed clusters (cluster.infra is required)")
 	}
@@ -226,10 +204,6 @@ func dbControlPlaneConfigurationFromSelfRegisterAPI(c api.Cluster) (db.ControlPl
 		spec.Capi = capi
 	}
 
-	// No Nico mapping: dbClusterFromSelfRegisterAPI already rejects any
-	// cluster that isn't CAPI-backed, so cfg.Nico is never populated for
-	// input that reaches here.
-
 	return db.ControlPlaneConfiguration{
 		ID:           cfg.ConfigurationID,
 		ClusterID:    c.ID,
@@ -243,14 +217,7 @@ func dbNodeFromSelfRegisterAPI(n api.Node, clusterID uuid.UUID) (db.Node, error)
 	if n.ID == uuid.Nil {
 		return db.Node{}, errors.New("node.id is required")
 	}
-	// nodes.node_pool_id/node_set_id are foreign keys into node_pools/node_sets,
-	// and SelfRegisterClusterRequest has no way to carry those rows. A
-	// node-pool-managed node (non-nil NodePoolID/NodeSetID) would fail
-	// CreateNode on the FK constraint, so reject it up front instead of
-	// letting the transaction fail partway through. Self-registration only
-	// supports control-plane-controller-managed nodes (nil NodePoolID/
-	// NodeSetID, pinned via ControlPlaneConfigurationID instead), matching
-	// the only path this has been exercised against.
+	// node_pool_id/node_set_id are FKs this request has no rows for.
 	if n.NodePoolID != uuid.Nil || n.NodeSetID != uuid.Nil {
 		return db.Node{}, fmt.Errorf("node %s: self-registration does not support node-pool-managed nodes (nodePoolID/nodeSetID must be unset)", n.Name)
 	}
@@ -277,10 +244,6 @@ func dbNodeFromSelfRegisterAPI(n api.Node, clusterID uuid.UUID) (db.Node, error)
 	return out, nil
 }
 
-// reencode converts between two JSON-compatible types that are expected to
-// marshal to the same shape (an api.* condition set and its db.* twin), so a
-// single source of field names -- the JSON tags -- drives both directions
-// instead of a long hand-written field-by-field copy.
 func reencode(src, dst interface{}) error {
 	raw, err := json.Marshal(src)
 	if err != nil {

@@ -53,9 +53,7 @@ func TestSelfRegisterClusterFailsIfClusterResourcesFail(t *testing.T) {
 	env := testSuite.NewTestWorkflowEnvironment()
 	var a *activities.Activities
 
-	// No .Once(): the activity's own retry policy (MaximumAttempts: 5) replays
-	// it against this mock several times before the workflow gives up, same as
-	// it would against the real activity.
+	// No .Once(): retries replay against the mock.
 	env.OnActivity(a.ApplyCAPIClusterResources, mock.Anything, activities.ApplyCAPIClusterResourcesInput{
 		ClusterID: clusterID,
 	}).Return(errors.New("boom"))
@@ -64,9 +62,6 @@ func TestSelfRegisterClusterFailsIfClusterResourcesFail(t *testing.T) {
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.Error(t, env.GetWorkflowError())
-	// ListNodes/CreateCAPIInfraMachineForNode must never run after
-	// ApplyCAPIClusterResources fails -- AssertExpectations fails the test if
-	// an OnActivity mock we didn't register above was called.
 	env.AssertExpectations(t)
 }
 
@@ -83,7 +78,6 @@ func TestSelfRegisterClusterFailsIfANodeFails(t *testing.T) {
 	}).Return(nil).Once()
 	env.OnActivity(a.ListNodes, mock.Anything, db.NodeFilters{ClusterID: &clusterID}).
 		Return([]db.Node{{ID: node1}}, nil).Once()
-	// No .Once(): see the comment in TestSelfRegisterClusterFailsIfClusterResourcesFail.
 	env.OnActivity(a.CreateCAPIInfraMachineForNode, mock.Anything, activities.CreateCAPIInfraMachineForNodeInput{
 		NodeID: node1,
 	}).Return(errors.New("boom"))

@@ -19,18 +19,9 @@ type SelfRegisterClusterInput struct {
 	ClusterID uuid.UUID `json:"clusterID"`
 }
 
-// SelfRegisterCluster brings the live CAPI objects (Cluster, ProvisionedCluster,
-// Machine, ProvisionedMachine) for an already-provisioned cluster back into
-// existence on the Kubernetes API this CWE talks to, without touching the real
-// nodes. It exists for the self-registration case: a cluster's DB rows (already
-// marked Provisioned) were imported from another CWE instance, but the live K8s
-// objects only ever existed on that instance's management cluster.
-//
-// Unlike ProvisionCluster/ProvisionNode, this workflow never runs
-// NodePreflight, join hooks, CNI prerequisite configuration, or a node reboot:
-// it only calls the two activities that create CAPI objects, both of which are
-// server-side-apply patches and therefore safe no-ops if the objects already
-// exist.
+// SelfRegisterCluster recreates the live CAPI objects (Cluster,
+// ProvisionedCluster, Machine, ProvisionedMachine) for an already-provisioned
+// cluster without touching the real nodes.
 func SelfRegisterCluster(ctx workflow.Context, input SelfRegisterClusterInput) error {
 	logger := workflow.GetLogger(ctx)
 	logger.Info("Self-registering cluster", "clusterID", input.ClusterID)
