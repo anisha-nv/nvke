@@ -243,6 +243,17 @@ func dbNodeFromSelfRegisterAPI(n api.Node, clusterID uuid.UUID) (db.Node, error)
 	if n.ID == uuid.Nil {
 		return db.Node{}, errors.New("node.id is required")
 	}
+	// nodes.node_pool_id/node_set_id are foreign keys into node_pools/node_sets,
+	// and SelfRegisterClusterRequest has no way to carry those rows. A
+	// node-pool-managed node (non-nil NodePoolID/NodeSetID) would fail
+	// CreateNode on the FK constraint, so reject it up front instead of
+	// letting the transaction fail partway through. Self-registration only
+	// supports control-plane-controller-managed nodes (nil NodePoolID/
+	// NodeSetID, pinned via ControlPlaneConfigurationID instead), matching
+	// the only path this has been exercised against.
+	if n.NodePoolID != uuid.Nil || n.NodeSetID != uuid.Nil {
+		return db.Node{}, fmt.Errorf("node %s: self-registration does not support node-pool-managed nodes (nodePoolID/nodeSetID must be unset)", n.Name)
+	}
 
 	out := db.Node{
 		ID:                     n.ID,

@@ -289,6 +289,33 @@ func TestSelfRegisterCluster_RejectsNicoProvider(t *testing.T) {
 	mockDB.AssertNotCalled(t, "RunInTx", mock.Anything, mock.Anything)
 }
 
+func TestSelfRegisterCluster_RejectsNodePoolManagedNode(t *testing.T) {
+	mockDB := &mockDB{}
+	svc := newTestClusterService(discardLogger(), mockDB)
+
+	// nodes.node_pool_id/node_set_id are foreign keys into node_pools/node_sets,
+	// which SelfRegisterClusterRequest has no way to carry. A node-pool-managed
+	// node must be rejected up front rather than failing CreateNode's FK
+	// constraint partway through the transaction.
+	clusterID := uuid.New()
+	configID := uuid.New()
+	node := selfRegisterTestNode(uuid.New(), configID)
+	node.NodePoolID = uuid.New()
+
+	resp, err := svc.SelfRegisterCluster(context.Background(), api.SelfRegisterClusterRequestObject{
+		Body: &api.SelfRegisterClusterRequest{
+			Cluster: selfRegisterTestCluster(clusterID, configID),
+			Nodes:   []api.Node{node},
+		},
+	})
+	require.NoError(t, err)
+
+	body, ok := resp.(api.SelfRegisterCluster400JSONResponse)
+	require.True(t, ok, "expected SelfRegisterCluster400JSONResponse, got %T", resp)
+	require.Contains(t, body.Message, "node-pool-managed")
+	mockDB.AssertNotCalled(t, "RunInTx", mock.Anything, mock.Anything)
+}
+
 func TestSelfRegisterCluster_RejectsNilBody(t *testing.T) {
 	mockDB := &mockDB{}
 	svc := newTestClusterService(discardLogger(), mockDB)
