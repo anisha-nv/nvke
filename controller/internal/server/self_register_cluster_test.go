@@ -280,6 +280,46 @@ func TestSelfRegisterCluster_RejectsNicoProvider(t *testing.T) {
 	mockDB.AssertNotCalled(t, "RunInTx", mock.Anything, mock.Anything)
 }
 
+func TestSelfRegisterCluster_RejectsMixedProvider(t *testing.T) {
+	mockDB := &mockDB{}
+	svc := newTestClusterService(discardLogger(), mockDB)
+
+	cluster := selfRegisterTestCluster(uuid.New(), uuid.New())
+	cluster.Nico = &api.NicoClusterProvider{OrgID: "org-1"}
+	resp, err := svc.SelfRegisterCluster(context.Background(), api.SelfRegisterClusterRequestObject{
+		Body: &api.SelfRegisterClusterRequest{Cluster: cluster},
+	})
+	require.NoError(t, err)
+
+	body, ok := resp.(api.SelfRegisterCluster400JSONResponse)
+	require.True(t, ok, "expected SelfRegisterCluster400JSONResponse, got %T", resp)
+	require.Contains(t, body.Message, "CAPI-backed")
+	mockDB.AssertNotCalled(t, "RunInTx", mock.Anything, mock.Anything)
+}
+
+func TestSelfRegisterCluster_RejectsNicoNode(t *testing.T) {
+	mockDB := &mockDB{}
+	svc := newTestClusterService(discardLogger(), mockDB)
+
+	clusterID := uuid.New()
+	configID := uuid.New()
+	node := selfRegisterTestNode(uuid.New(), configID)
+	node.Nico = &api.NicoNodeProvider{InstanceID: "inst-1"}
+
+	resp, err := svc.SelfRegisterCluster(context.Background(), api.SelfRegisterClusterRequestObject{
+		Body: &api.SelfRegisterClusterRequest{
+			Cluster: selfRegisterTestCluster(clusterID, configID),
+			Nodes:   []api.Node{node},
+		},
+	})
+	require.NoError(t, err)
+
+	body, ok := resp.(api.SelfRegisterCluster400JSONResponse)
+	require.True(t, ok, "expected SelfRegisterCluster400JSONResponse, got %T", resp)
+	require.Contains(t, body.Message, "Nico-provider")
+	mockDB.AssertNotCalled(t, "RunInTx", mock.Anything, mock.Anything)
+}
+
 func TestSelfRegisterCluster_RejectsNodePoolManagedNode(t *testing.T) {
 	mockDB := &mockDB{}
 	svc := newTestClusterService(discardLogger(), mockDB)

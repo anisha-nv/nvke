@@ -152,9 +152,10 @@ func dbClusterFromSelfRegisterAPI(c api.Cluster) (db.Cluster, error) {
 		return db.Cluster{}, fmt.Errorf("cluster.conditions: %w", err)
 	}
 
-	// Only CAPI-backed clusters are supported; the Nico path is untested.
-	if c.Infra == nil {
-		return db.Cluster{}, errors.New("self-registration only supports CAPI-backed clusters (cluster.infra is required)")
+	// Self-registration is for static (pre-provisioned, CAPI-backed) nodes
+	// only; the Nico use case is not supported.
+	if c.Infra == nil || c.Nico != nil {
+		return db.Cluster{}, errors.New("self-registration only supports CAPI-backed clusters (cluster.infra is required, cluster.nico is rejected)")
 	}
 	out.ProviderType = db.ProviderTypeCAPI
 	infraCluster, err := json.Marshal(c.Infra.Cluster)
@@ -220,6 +221,9 @@ func dbNodeFromSelfRegisterAPI(n api.Node, clusterID uuid.UUID) (db.Node, error)
 	// node_pool_id/node_set_id are FKs this request has no rows for.
 	if n.NodePoolID != uuid.Nil || n.NodeSetID != uuid.Nil {
 		return db.Node{}, fmt.Errorf("node %s: self-registration does not support node-pool-managed nodes (nodePoolID/nodeSetID must be unset)", n.Name)
+	}
+	if n.Nico != nil {
+		return db.Node{}, fmt.Errorf("node %s: self-registration does not support Nico-provider nodes", n.Name)
 	}
 
 	out := db.Node{
