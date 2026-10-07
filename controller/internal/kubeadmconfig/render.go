@@ -33,7 +33,6 @@ const (
 	defaultCertificatesDir        = "/etc/kubernetes/pki"
 	defaultEtcdDataDir            = "/var/lib/etcd"
 	defaultListenMetricsURLs      = "http://0.0.0.0:2381"
-	defaultKubeProxyMetricsBind   = "0.0.0.0:10249"
 	defaultBindAddress            = "0.0.0.0"
 	defaultAuditLogMaxAge         = "30"
 	// defaultControlPlaneBindAddress keeps kube-controller-manager and
@@ -45,6 +44,13 @@ const (
 	// it. A scraper that later needs these endpoints should reach them through a
 	// localhost-scoped path rather than widening this back to 0.0.0.0.
 	defaultControlPlaneBindAddress = "127.0.0.1"
+	// defaultKubeProxyMetricsBind keeps kube-proxy's metrics endpoint on
+	// loopback, which is also kube-proxy's own default (CIS 4.3.1). Binding all
+	// interfaces served it on every node address for no consumer NKE ships; the
+	// NKTP values NKE deploys already disable the kube-proxy monitor. Only Calico
+	// clusters run kube-proxy at all: an OVN-Kubernetes cluster skips the addon
+	// (SkipKubeProxy).
+	defaultKubeProxyMetricsBind = "127.0.0.1:10249"
 	// defaultAuditLogMaxBackup is held at or above ten so a rotation storm cannot
 	// age the audit trail out faster than it can be shipped. Three rotations of a
 	// 100Mi log is well under a day of retained history on a busy API server,
