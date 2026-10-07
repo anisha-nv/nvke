@@ -38,6 +38,7 @@ type clusterService interface {
 	GetCluster(ctx context.Context, req api.GetClusterRequestObject) (api.GetClusterResponseObject, error)
 	UpdateCluster(ctx context.Context, req api.UpdateClusterRequestObject) (api.UpdateClusterResponseObject, error)
 	DeleteCluster(ctx context.Context, req api.DeleteClusterRequestObject) (api.DeleteClusterResponseObject, error)
+	SelfRegisterCluster(ctx context.Context, req api.SelfRegisterClusterRequestObject) (api.SelfRegisterClusterResponseObject, error)
 }
 
 func newTestClusterService(logger *slog.Logger, mockDB *mockDB) clusterService {
