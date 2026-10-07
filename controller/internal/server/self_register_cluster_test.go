@@ -147,6 +147,92 @@ func TestSelfRegisterCluster_RejectsSecondCluster(t *testing.T) {
 	mockDB.MockTx.AssertNotCalled(t, "CreateCluster", mock.Anything, mock.Anything)
 }
 
+func TestSelfRegisterCluster_SameIDRetryIsIdempotent(t *testing.T) {
+	clusterID := uuid.New()
+
+	mockDB := &mockDB{}
+	mockDB.MockTx = &mockTx{}
+	mockDB.GetTx = func() db.Tx { return mockDB.MockTx }
+	mockDB.On("RunInTx", mock.Anything, mock.Anything).Return(nil)
+
+	// The cluster already exists under the same ID -- a retry of an
+	// already-committed registration, not a conflict.
+	mockDB.MockTx.On("ListClusters", mock.Anything, db.ClusterFilters{}).
+		Return([]db.Cluster{{ID: clusterID}}, nil).Once()
+	mockDB.MockTx.On("GetCluster", mock.Anything, clusterID).
+		Return(db.Cluster{ID: clusterID, Name: "dev-local"}, nil).Once()
+
+	svc := newTestClusterService(discardLogger(), mockDB)
+	resp, err := svc.SelfRegisterCluster(context.Background(), api.SelfRegisterClusterRequestObject{
+		Body: &api.SelfRegisterClusterRequest{
+			Cluster: selfRegisterTestCluster(clusterID, uuid.New()),
+			Nodes:   []api.Node{selfRegisterTestNode(uuid.New(), uuid.New())},
+		},
+	})
+	require.NoError(t, err)
+
+	body, ok := resp.(api.SelfRegisterCluster201JSONResponse)
+	require.True(t, ok, "expected SelfRegisterCluster201JSONResponse, got %T", resp)
+	require.Equal(t, clusterID, body.ID)
+
+	// Nothing downstream of the existing-cluster check may run: no duplicate
+	// cluster/config/node rows, no second workflow enqueued.
+	mockDB.MockTx.AssertNotCalled(t, "CreateCluster", mock.Anything, mock.Anything)
+	mockDB.MockTx.AssertNotCalled(t, "CreateControlPlaneConfiguration", mock.Anything, mock.Anything)
+	mockDB.MockTx.AssertNotCalled(t, "CreateNode", mock.Anything, mock.Anything)
+	mockDB.MockTx.AssertNotCalled(t, "CreateWorkflowOutboxEntry", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestSelfRegisterCluster_PreservesControlPlaneConfigFields(t *testing.T) {
+	clusterID := uuid.New()
+	nodeID := uuid.New()
+	configID := uuid.New()
+
+	cluster := selfRegisterTestCluster(clusterID, configID)
+	teleportEnabled := true
+	provisioningMonitorDisabled := true
+	cluster.ControlPlaneConfig.NodeLabels = []string{"role=cp"}
+	cluster.ControlPlaneConfig.TeleportEnabled = &teleportEnabled
+	cluster.ControlPlaneConfig.ProvisioningMonitorDisabled = &provisioningMonitorDisabled
+	cluster.ControlPlaneConfig.Infra.BootstrapFiles = []api.CloudInitFile{
+		{Path: "/etc/example.conf", Content: "hello"},
+	}
+	cluster.ControlPlaneConfig.Infra.PreKubeadmCommands = []string{"echo hi"}
+
+	mockDB := &mockDB{}
+	mockDB.MockTx = &mockTx{}
+	mockDB.GetTx = func() db.Tx { return mockDB.MockTx }
+	mockDB.On("RunInTx", mock.Anything, mock.Anything).Return(nil)
+
+	mockDB.MockTx.On("ListClusters", mock.Anything, db.ClusterFilters{}).Return([]db.Cluster{}, nil).Once()
+	mockDB.MockTx.On("CreateCluster", mock.Anything, mock.Anything).Return(db.Cluster{ID: clusterID}, nil).Once()
+	mockDB.MockTx.On("CreateControlPlaneConfiguration", mock.Anything, mock.MatchedBy(func(c *db.ControlPlaneConfiguration) bool {
+		return c.Config.NodeLabels[0] == "role=cp" &&
+			c.Config.TeleportEnabled &&
+			c.Config.ProvisioningMonitorDisabled &&
+			c.Config.Capi != nil &&
+			len(c.Config.Capi.BootstrapFiles) == 1 &&
+			c.Config.Capi.BootstrapFiles[0].Path == "/etc/example.conf" &&
+			len(c.Config.Capi.PreKubeadmCommands) == 1 &&
+			c.Config.Capi.PreKubeadmCommands[0] == "echo hi"
+	})).Return(db.ControlPlaneConfiguration{ID: configID, ClusterID: clusterID}, nil).Once()
+	mockDB.MockTx.On("UpdateCluster", mock.Anything, mock.Anything).Return(db.Cluster{ID: clusterID}, nil).Once()
+	mockDB.MockTx.On("CreateNode", mock.Anything, mock.Anything).Return(db.Node{ID: nodeID}, nil).Once()
+	mockDB.MockTx.On("CreateWorkflowOutboxEntry", mock.Anything, "SelfRegisterCluster", mock.Anything, mock.Anything).
+		Return(db.WorkflowOutbox{}, nil).Once()
+	mockDB.MockTx.On("GetCluster", mock.Anything, clusterID).Return(db.Cluster{ID: clusterID}, nil).Once()
+
+	svc := newTestClusterService(discardLogger(), mockDB)
+	_, err := svc.SelfRegisterCluster(context.Background(), api.SelfRegisterClusterRequestObject{
+		Body: &api.SelfRegisterClusterRequest{
+			Cluster: cluster,
+			Nodes:   []api.Node{selfRegisterTestNode(nodeID, configID)},
+		},
+	})
+	require.NoError(t, err)
+	mockDB.MockTx.AssertExpectations(t)
+}
+
 func TestSelfRegisterCluster_RejectsMissingClusterID(t *testing.T) {
 	mockDB := &mockDB{}
 	svc := newTestClusterService(discardLogger(), mockDB)

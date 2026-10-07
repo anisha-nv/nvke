@@ -72,8 +72,20 @@ func (s *clusterService) SelfRegisterCluster(
 		if err != nil {
 			return fmt.Errorf("failed to check for an existing cluster: %w", err)
 		}
-		if len(existing) > 0 && existing[0].ID != dbCluster.ID {
-			return &selfRegisterConflictError{existingClusterID: existing[0].ID}
+		if len(existing) > 0 {
+			if existing[0].ID != dbCluster.ID {
+				return &selfRegisterConflictError{existingClusterID: existing[0].ID}
+			}
+			// A retry of an already-committed registration: the OpenAPI contract
+			// only documents 409 for a different cluster ID, so a same-ID request
+			// is idempotent -- return the existing cluster rather than attempting
+			// tx.CreateCluster again, which would fail the primary-key constraint
+			// and surface as an unclassified 500.
+			registeredCluster, err = tx.GetCluster(ctx, dbCluster.ID)
+			if err != nil {
+				return fmt.Errorf("failed to reload existing cluster: %w", err)
+			}
+			return nil
 		}
 
 		// clusters.configuration_id and control_plane_configurations.cluster_id
@@ -188,28 +200,56 @@ func dbClusterFromSelfRegisterAPI(c api.Cluster) (db.Cluster, error) {
 }
 
 func dbControlPlaneConfigurationFromSelfRegisterAPI(c api.Cluster) (db.ControlPlaneConfiguration, error) {
+	cfg := c.ControlPlaneConfig
 	spec := db.ControlPlaneConfigSpec{
 		KubernetesVersion:    c.ControlPlaneKubernetesVersion,
-		SystemReservedMemory: c.ControlPlaneConfig.SystemReservedMemory,
+		SystemReservedMemory: cfg.SystemReservedMemory,
+		NodeLabels:           cfg.NodeLabels,
 	}
-	if c.ControlPlaneConfig.Infra != nil {
-		var machineTemplate json.RawMessage
-		if c.ControlPlaneConfig.Infra.MachineTemplate != nil {
-			mt, err := json.Marshal(c.ControlPlaneConfig.Infra.MachineTemplate)
+	if cfg.TeleportEnabled != nil {
+		spec.TeleportEnabled = *cfg.TeleportEnabled
+	}
+	if cfg.ProvisioningMonitorDisabled != nil {
+		spec.ProvisioningMonitorDisabled = *cfg.ProvisioningMonitorDisabled
+	}
+
+	if cfg.Infra != nil {
+		capi := &db.CAPIControlPlaneProvider{}
+		if cfg.Infra.MachineTemplate != nil {
+			mt, err := json.Marshal(cfg.Infra.MachineTemplate)
 			if err != nil {
 				return db.ControlPlaneConfiguration{}, fmt.Errorf("cluster.controlPlaneConfig.infra.machineTemplate: %w", err)
 			}
-			machineTemplate = mt
+			capi.InfraMachineTemplatePreferences = []json.RawMessage{mt}
 		}
-		if len(machineTemplate) > 0 {
-			spec.Capi = &db.CAPIControlPlaneProvider{
-				InfraMachineTemplatePreferences: []json.RawMessage{machineTemplate},
+		if err := reencode(cfg.Infra.BootstrapFiles, &capi.BootstrapFiles); err != nil {
+			return db.ControlPlaneConfiguration{}, fmt.Errorf("cluster.controlPlaneConfig.infra.bootstrapFiles: %w", err)
+		}
+		capi.PreKubeadmCommands = cfg.Infra.PreKubeadmCommands
+		spec.Capi = capi
+	}
+
+	if cfg.Nico != nil {
+		nico := &db.NicoControlPlaneProvider{
+			OSProfile:      cfg.Nico.OSProfile,
+			ConfigProfile:  cfg.Nico.ConfigProfile,
+			SSHKeyGroupIDs: cfg.Nico.SSHKeyGroupIDs,
+			SubnetIDs:      cfg.Nico.SubnetIDs,
+			VpcPrefixIDs:   cfg.Nico.VpcPrefixIDs,
+		}
+		if cfg.Nico.DiskSelectionStrategy != nil {
+			if err := reencode(cfg.Nico.DiskSelectionStrategy, &nico.DiskSelectionStrategy); err != nil {
+				return db.ControlPlaneConfiguration{}, fmt.Errorf("cluster.controlPlaneConfig.nico.diskSelectionStrategy: %w", err)
 			}
 		}
+		if err := reencode(cfg.Nico.InstanceTypePreference, &nico.InstanceTypePreference); err != nil {
+			return db.ControlPlaneConfiguration{}, fmt.Errorf("cluster.controlPlaneConfig.nico.instanceTypePreference: %w", err)
+		}
+		spec.Nico = nico
 	}
 
 	return db.ControlPlaneConfiguration{
-		ID:           c.ControlPlaneConfig.ConfigurationID,
+		ID:           cfg.ConfigurationID,
 		ClusterID:    c.ID,
 		Config:       spec,
 		ChangeReason: "self-register",
