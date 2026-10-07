@@ -7,6 +7,7 @@
                           [--release-file release-manifest.yaml]
   describe_site.py check  --out DIR
   describe_site.py keys   --config site-config.yaml --deploy-path deploy/nico
+  describe_site.py show   --config site-config.yaml
 
 render writes seven files to DIR, mode 0600:
 
@@ -975,6 +976,28 @@ def remove_stale(path, why):
         note("%s removed; %s" % (os.path.basename(path), why))
 
 
+SECRET_KEYS = ("token", "password")
+
+
+def cmd_show(args):
+    """Print the site config's own keys and values, credentials redacted.
+    For reviewing or showing what the operator wrote; render reads the file,
+    this only echoes it."""
+    text = open(args.config).read()
+    data = parse_site_config(text, args.config)
+    for section, keys in data.items():
+        print("%s:" % section)
+        if not isinstance(keys, dict):
+            print("  %s" % keys)
+            continue
+        for key, value in keys.items():
+            if key in SECRET_KEYS:
+                value = "<redacted>"
+            elif isinstance(value, dict):
+                value = json.dumps(value)
+            print("  %s: %s" % (key, value))
+
+
 def cmd_render(args):
     flat, files, passthrough = load_config(args.config)
     os.makedirs(args.out, mode=0o700, exist_ok=True)
@@ -1179,12 +1202,16 @@ def main(argv):
     p = sub.add_parser("keys")
     p.add_argument("--config", required=True)
     p.add_argument("--deploy-path", required=True)
+    p = sub.add_parser("show")
+    p.add_argument("--config", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "render":
             cmd_render(args)
         elif args.command == "keys":
             cmd_keys(args)
+        elif args.command == "show":
+            cmd_show(args)
         else:
             return cmd_check(args)
     except ConfigError as err:
