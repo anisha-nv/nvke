@@ -85,3 +85,4 @@ controller/test/e2e/site-e2e.log
 controller/test/e2e/site-e2e.junit.xml
 controller/test/e2e/report.json
 controller/test/e2e/site-diagnostics.tar.gz
+controller/test/e2e/testgrid-metadata.txt

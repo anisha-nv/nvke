@@ -622,6 +622,8 @@ func tenantSubtree(resolve managementResolver) func(spec testSpec) {
 			if test.cluster == nil {
 				Skip("Cluster creation failed")
 			}
+			// Before the lifecycle skips, so a kept tenant is still described.
+			recordTenantObserved(ctx, &test)
 			if test.cfg.Lifecycle.ReuseCluster != "" || test.cfg.Lifecycle.SkipDelete {
 				Skip("Lifecycle config keeps the cluster")
 			}

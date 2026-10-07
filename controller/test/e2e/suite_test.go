@@ -166,7 +166,11 @@ func optionalVersion(component string) string {
 
 // Specs reach NKE over a port-forward they share and establish lazily; this
 // closes it. A no-op when no spec ever talked to NKE.
+//
+// It also writes the TestGrid metadata, a no-op unless -e2e.testgrid-metadata
+// is set. Ginkgo allows one AfterSuite.
 var _ = AfterSuite(func() {
+	writeTestGridMetadata()
 	kube.CloseSharedForwarders()
 })
 

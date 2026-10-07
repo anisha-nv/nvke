@@ -25,6 +25,7 @@ whichever of these the run produced:
 | `run-inputs.txt` | Which versions, images and settings the run actually resolved — including which were overridden. Answers "was it even testing what I thought?" |
 | `site-diagnostics.tar.gz` | What `nkectl` collected **on the node**. Present only when nkectl wrote a diagnostics directory, which it does when it fails. |
 | `tbot.log` | The Teleport bot. Only interesting when nothing could be reached at all. |
+| `testgrid-metadata.txt` | What the run asked for and observed: stage, GPU, Kubernetes version, site, node shape. Every run that got past checkout has one. A run with no TestGrid column was cancelled, asked for a stage or GPU the publisher does not know, or its publish job failed — that job's log says which. |
 
 **An absent `site-diagnostics.tar.gz` is normal and is information.** `nkectl`
 writes its diagnostics directory when it fails, so no tarball usually means
@@ -73,7 +74,7 @@ The provider waits twice, and the two waits fail differently.
 **`not ready after 30m`** — Forge never brought the instance up, or brought it
 up without an address. Ours to report, not to fix.
 
-**`not reachable through <jump host> after 20m`** — Forge says Ready but sshd
+**`not reachable through [jump-host] after 20m`** — Forge says Ready but sshd
 never answered. This is the interesting one, because "Ready" means Forge handed
 the machine over, not that the image was written and booted. The gap covers
 the entire iPXE boot, disk write and first boot.

@@ -363,6 +363,26 @@ jobs:
         with:
           persist-credentials: false
 
+      # What the run was asked for, before any step that can fail, so a run
+      # that dies in setup (the inputs guard, the image build, the Teleport
+      # join) still has a TestGrid column, red. The suite rewrites this file
+      # with the same keys once it starts. The publisher validates every
+      # value, so these are written as given. The Kubernetes default mirrors
+      # forgeDefaultKubernetesVersion in tenant_test.go; a test holds the two
+      # equal.
+      - name: Record what the run was asked for
+        shell: bash
+        working-directory: controller/test/e2e
+        run: |
+          set -Eeuo pipefail
+          kubernetes_version="${KUBERNETES_VERSION:-1.36.3}"
+          {
+            printf 'stage=%s\n' "${SITE_STAGE}"
+            printf 'arch=%s\n' "${ARCH:-amd64}"
+            [ -z "${GPU}" ] || printf 'gpu=%s\n' "${GPU}"
+            printf 'kubernetes_version=v%s\n' "${kubernetes_version#v}"
+          } > testgrid-metadata.txt
+
       # Three `docker save` archives of multi-hundred-megabyte images, written
       # to the workspace and read back by dind. Reported rather than freed:
       # the ubuntu-latest trick of deleting /usr/share/dotnet and friends has
@@ -1021,6 +1041,12 @@ jobs:
           #                  output, which on this lane is remote command
           #                  output, so it stays on the runner for a
           #                  summarise step to reduce to an outcome.
+          #
+          # -e2e.testgrid-metadata is this lane's own: what the run built and
+          # observed, as key=value lines, for testgrid-publish.yml. It
+          # replaces the file the first step wrote, and is rewritten as each
+          # fact is learned, so a run that dies part way still names what it
+          # tried.
           go test -v -timeout 220m . -args \
             -ginkgo.label-filter=site-controller \
             -ginkgo.timeout=150m \
@@ -1034,11 +1060,16 @@ jobs:
             -e2e.site-stage="${SITE_STAGE}" \
             -e2e.versions="controller=${SITE_CONTROLLER_VERSION},capi-provisioned=${CAPI_PROVISIONED_VERSION},${OS_IMAGE_VERSIONS}" \
             -e2e.capabilities="${CAPABILITIES}" \
+            -e2e.testgrid-metadata=testgrid-metadata.txt \
             "${keep[@]}" 2>&1 | tee site-e2e.log
 
       # The suite names the jump host in its own errors ("not reachable
       # through ..."), and those land in the log and the JUnit report. GitHub
       # masks a secret in the job log, not in an uploaded artifact.
+      #
+      # The placeholder is plain text on purpose. It lands inside the JUnit
+      # report, which the TestGrid publisher parses as XML, and an angle
+      # bracket there made every redacted failure unpublishable.
       #
       # Both sites' hosts: a run reaches one of them, and which one is not
       # worth branching on here.
@@ -1051,9 +1082,9 @@ jobs:
           for raw in "${FORGE_JUMP_HOST}" "${FORGE_YTL_JUMP_HOST}"; do
             [ -n "${raw}" ] || continue
             host="$(printf '%s' "${raw}" | sed 's/[][\.*^$/]/\\&/g')"
-            for f in site-e2e.log site-e2e.junit.xml tenant-diagnostics.json site-cluster-state.txt; do
+            for f in site-e2e.log site-e2e.junit.xml tenant-diagnostics.json site-cluster-state.txt testgrid-metadata.txt; do
               [ -f "${f}" ] || continue
-              sed -i "s/${host}/<jump host>/g" "${f}"
+              sed -i "s/${host}/[jump-host]/g" "${f}"
             done
           done
 
@@ -1072,17 +1103,23 @@ jobs:
       # recorded nothing beyond "did not become healthy within 10m0s". It
       # carries the Service endpoints, so it says whether CWE was unready or
       # merely unreachable.
+      #
+      # testgrid-metadata.txt is what the run was asked for, written by the
+      # first step, and what the suite then learned about what it built. It
+      # is for testgrid-publish.yml, which runs after this workflow and can
+      # only see this artifact.
       - name: Upload the run log
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: forge-site-${{ env.SITE_STAGE }}-${{ github.run_id }}
+          name: forge-site-${{ env.SITE_STAGE }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             controller/test/e2e/site-e2e.log
             controller/test/e2e/site-e2e.junit.xml
             controller/test/e2e/site-diagnostics.tar.gz
             controller/test/e2e/tenant-diagnostics.json
             controller/test/e2e/site-cluster-state.txt
+            controller/test/e2e/testgrid-metadata.txt
             ${{ runner.temp }}/run-inputs.txt
             ${{ runner.temp }}/tbot.log
           if-no-files-found: warn

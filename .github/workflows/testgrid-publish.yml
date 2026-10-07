@@ -1,0 +1,294 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Publishes each Forge site controller e2e run to TestGrid, where it lands
+# beside the qualification runs of the rest of the stack.
+#
+# WHY A SEPARATE WORKFLOW ON `workflow_run`
+#
+# Writing to the TestGrid bucket takes a Google identity, reached through
+# Workload Identity Federation with this repository's GitHub OIDC token. The
+# federation trusts exactly one workflow: this file, on main. Keeping the write
+# here rather than as a step of the e2e job means:
+#
+#   * The identity never meets the code under test. The e2e job runs a pull
+#     request's branch, and its OIDC token would carry that branch; this one
+#     always runs main's definition.
+#   * Pull request runs publish too, which they could not if the trust had to
+#     accept every branch.
+#   * The e2e job keeps its id-token permission for the Teleport join alone.
+#
+# The cost is that this job cannot see the run. Everything it publishes comes
+# from the run's artifact (the JUnit report and testgrid-metadata.txt, which
+# the suite writes as it learns what it built) and from the workflow_run
+# event. The artifact was produced by code from a pull request, so it is
+# treated as untrusted: the publishing action takes only the keys listed below
+# from the metadata file, validates every value, and never lets the file
+# override what this workflow states itself.
+#
+# WHICH RUNS, AND WHERE. workflow_run matches a workflow by name, so the job
+# also requires the run to come from the e2e workflow's own file; a branch
+# cannot add another file with the same name and publish from it. A pull
+# request run still executes that branch's copy of the file, which the
+# label gate already trusts, but it lands on a tab of its own (-pr), so
+# work in progress never reads as a qualification result.
+#
+# PASS OR FAIL is the workflow run's conclusion, the way a GitLab column is
+# its job's status: a run whose tests passed but whose upload or teardown
+# failed is a failed run.
+#
+# INERT UNTIL CONFIGURED. Nothing runs until the TESTGRID_BUCKET,
+# TESTGRID_WIF_PROVIDER and TESTGRID_PUBLISH_SA repository variables are all
+# set. TESTGRID_DRY_RUN=true writes nothing, but still authenticates, so the
+# federation has to exist first.
+name: TestGrid publish
+
+on:
+  workflow_run:
+    workflows: ["Forge site controller e2e"]
+    types: [completed]
+
+permissions: {}
+
+# One publish per run attempt. Never cancelled: a publish is a handful of
+# create-only writes, and a retry with the same inputs is a no-op.
+concurrency:
+  group: testgrid-publish-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to TestGrid
+    # A run whose job was skipped (a label other than forge-e2e) or cancelled
+    # has nothing to say. A fork cannot run the lane, and is excluded anyway.
+    if: >-
+      github.repository == 'dsx-ai-factory/nke' &&
+      vars.TESTGRID_BUCKET != '' &&
+      vars.TESTGRID_WIF_PROVIDER != '' &&
+      vars.TESTGRID_PUBLISH_SA != '' &&
+      github.event.workflow_run.path == '.github/workflows/forge-site-controller-e2e.yml' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      (github.event.workflow_run.conclusion == 'success' ||
+       github.event.workflow_run.conclusion == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # The run's artifact and its job list.
+      actions: read
+      # Workload Identity Federation to the publishing service account.
+      id-token: write
+    env:
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+      STARTED_AT: ${{ github.event.workflow_run.run_started_at }}
+      FINISHED_AT: ${{ github.event.workflow_run.updated_at }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      EVENT: ${{ github.event.workflow_run.event }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      # This attempt's artifact and no other: download-artifact lists the
+      # latest artifact of each name across all attempts, so the name carries
+      # the attempt. Not merged, so two matches stay two files, which the next
+      # step refuses rather than picking one. A run that uploaded nothing
+      # matches nothing, which is not an error here.
+      - name: Download the run's artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          pattern: forge-site-*-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: ${{ runner.temp }}/run
+
+      # Where the files sit inside the artifact depends on the paths it was
+      # uploaded with, so they are found by name. The dashboard is named from
+      # what the run built: the GPU it asked for (cpu without one) and the
+      # Kubernetes minor version, as every other DGXC qualification dashboard
+      # is.
+      - name: Read what the run built
+        id: run
+        shell: bash
+        env:
+          RUN_DIR: ${{ runner.temp }}/run
+        run: |
+          set -Eeuo pipefail
+          one() { # name -> the single file of that name, or nothing
+            local found
+            mapfile -t found < <(find "${RUN_DIR}" -type f -name "$1")
+            [ "${#found[@]}" -eq 1 ] && printf '%s' "${found[0]}"
+            return 0
+          }
+          metadata="$(one testgrid-metadata.txt)"
+          if [ -z "${metadata}" ]; then
+            echo "::notice::The run left no testgrid-metadata.txt, so there is nothing to name a dashboard from; not publishing."
+            echo "publish=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          junit="$(one site-e2e.junit.xml)"
+          if [ -z "${junit}" ]; then
+            echo "::warning::Not exactly one site-e2e.junit.xml in the artifact; publishing a one-test result from the run's conclusion."
+          fi
+          # The file is untrusted. Read a key's last value only if it is one
+          # short token; anything else reads as unset. The pattern is the
+          # suite's own (valueRE in internal/testgrid), and a test there holds
+          # the two equal.
+          fact() {
+            local v
+            v="$(grep -E "^$1=" "${metadata}" | tail -n 1 | cut -d= -f2-)" || true
+            [[ "${v}" =~ ^[A-Za-z0-9._+-]{1,128}$ ]] && printf '%s' "${v}"
+            return 0
+          }
+          gpu="$(fact gpu)"
+          # A GPU that is present but unreadable must not quietly become the
+          # cpu dashboard.
+          if [ -z "${gpu}" ] && grep -q '^gpu=' "${metadata}"; then
+            echo "::notice::The run recorded a GPU that is not a valid value; not publishing."
+            echo "publish=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          stage="$(fact stage)"
+          kube="$(fact kubernetes_version)"
+          if [[ ! "${kube#v}" =~ ^([0-9]+)\.([0-9]+) ]]; then
+            echo "::notice::The run recorded no usable Kubernetes version; not publishing."
+            echo "publish=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          minor="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+          # The GPU names a dashboard, and the file comes from the run, so
+          # only models this lane runs on are accepted. A new one is added
+          # here when the lane first runs on it.
+          gpu="${gpu,,}"
+          case "${gpu}" in
+            "" | gb200 | gb300 | b200 | h100 | h200) ;;
+            *)
+              echo "::notice::The run recorded a GPU this workflow does not publish; not publishing."
+              echo "publish=false" >> "${GITHUB_OUTPUT}"
+              exit 0
+              ;;
+          esac
+          # A full run is the site controller result; a shorter stage gets a
+          # tab of its own, so a provision-only pass is not read as one.
+          case "${stage}" in
+            full) tab=site-controller-github ;;
+            provision | bootstrap) tab="site-controller-github-${stage}" ;;
+            *)
+              echo "::notice::The run recorded no known stage; not publishing."
+              echo "publish=false" >> "${GITHUB_OUTPUT}"
+              exit 0
+              ;;
+          esac
+          # A pull request run tests that branch, not main.
+          if [ "${EVENT}" = pull_request ]; then
+            tab="${tab}-pr"
+          fi
+          # TestGrid lists only builds whose id sorts above the newest one it
+          # has, and the run id orders runs by when they started, not when
+          # they finished. With runs on several branches at once, and re-runs
+          # of old ones, a run that finished last would sort low and never be
+          # shown. Leading with the finish time sorts by finish instead; 14
+          # digits also sort above the 11-digit run ids already in the tab.
+          # The event's updated_at is UTC, YYYY-MM-DDTHH:MM:SSZ.
+          finished="${FINISHED_AT//[^0-9]/}"
+          if [[ ! "${finished}" =~ ^[0-9]{14}$ ]]; then
+            echo "::error::Cannot read a finish time from the run; not publishing."
+            exit 1
+          fi
+          build="${finished}-${RUN_ID}-${RUN_ATTEMPT}"
+          {
+            echo "publish=true"
+            echo "build=${build}"
+            echo "metadata=${metadata}"
+            echo "junit=${junit}"
+            echo "dashboard=${gpu:-cpu}-v${minor}-nke-mgmt-e2e"
+            echo "tab=${tab}"
+            if [ "${CONCLUSION}" = success ]; then echo "result=pass"; else echo "result=fail"; fi
+          } >> "${GITHUB_OUTPUT}"
+
+      # The column links to the job, not the run, the way a GitLab column
+      # links to its job. The URL is stored for good with create-only writes,
+      # so it has to come out the same on every attempt to publish: a lookup
+      # that fails is retried, then fails the job, rather than falling back
+      # to a different link that would conflict with an earlier, half-written
+      # publish. Re-run this job to retry, and promptly: TestGrid shows only
+      # builds that sort above the newest one it has, so a retry that lands
+      # after a later run has published is written but never shown.
+      - name: Find the job's URL
+        id: job
+        if: steps.run.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          want="^https://github\.com/${REPOSITORY}/actions/runs/${RUN_ID}/job/[0-9]+$"
+          url=""
+          for try in 1 2 3; do
+            url="$(gh api "repos/${REPOSITORY}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}/jobs" \
+              --jq '[.jobs[] | select(.name | startswith("site controller"))][0].html_url // empty' || true)"
+            [[ ! "${url}" =~ ${want} ]] || break
+            [ "${try}" -eq 3 ] || sleep 10
+          done
+          if [[ ! "${url}" =~ ${want} ]]; then
+            echo "::error::Could not find the site controller job's URL; nothing was published. Re-run this job now: once a later run on this tab publishes, a retry is no longer shown."
+            exit 1
+          fi
+          echo "url=${url}" >> "${GITHUB_OUTPUT}"
+
+      - name: Authenticate to Google Cloud
+        if: steps.run.outputs.publish == 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.TESTGRID_WIF_PROVIDER }}
+          service_account: ${{ vars.TESTGRID_PUBLISH_SA }}
+
+      - name: Set up gcloud
+        if: steps.run.outputs.publish == 'true'
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      # The build id carries the run and its attempt, so a re-run is a new
+      # column rather than a conflict with the first, and re-running this
+      # workflow for the same attempt is a no-op: every stored value comes
+      # from the event, which a re-run replays unchanged.
+      #
+      # meta is what this workflow knows; meta-file-keys is what the run may
+      # add about itself. A key in both keeps the value from meta.
+      - name: Publish
+        if: steps.run.outputs.publish == 'true'
+        uses: NVIDIA-dev/testgrid-publish@45f8df45abcb1d2921820bf895e28fef5220e274 # main, 2026-10-07
+        with:
+          bucket: ${{ vars.TESTGRID_BUCKET }}
+          group: forge-oss-non-prod
+          dashboard: ${{ steps.run.outputs.dashboard }}
+          tab: ${{ steps.run.outputs.tab }}
+          result: ${{ steps.run.outputs.result }}
+          started-at: ${{ env.STARTED_AT }}
+          finished-at: ${{ env.FINISHED_AT }}
+          build-id: ${{ steps.run.outputs.build }}
+          junit: ${{ steps.run.outputs.junit }}
+          meta: |
+            run_url=${{ steps.job.outputs.url }}
+            repository=${{ env.REPOSITORY }}
+            pipeline_id=${{ env.RUN_ID }}
+            run_attempt=${{ env.RUN_ATTEMPT }}
+            trigger=${{ env.EVENT }}
+            commit_sha=${{ env.HEAD_SHA }}
+            service_name=github-actions
+            environment=non-prod
+            cloud_provider=forge
+            cluster_type=nke-site-controller
+            test_suite=nke-mgmt-e2e
+            job_name=forge-site-controller-github
+            timestamp_iso=${{ env.FINISHED_AT }}
+          meta-file: ${{ steps.run.outputs.metadata }}
+          meta-file-keys: |
+            cluster_name
+            site
+            stage
+            arch
+            gpu
+            kubernetes_version
+            node_arch
+            instance_type
+            gpu_product
+            tenant_kubernetes_version
+          dry-run: ${{ vars.TESTGRID_DRY_RUN == 'true' && 'true' || 'false' }}

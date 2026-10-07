@@ -83,6 +83,7 @@ Every run uploads the same artifacts whether it passed or failed:
 | `run-inputs.txt` | which versions and settings the run actually resolved, and which were overridden |
 | `site-diagnostics.tar.gz` | what `nkectl` collected on the node — present only when it failed |
 | `tbot.log` | the Teleport bot, for when nothing could be reached at all |
+| `testgrid-metadata.txt` | what the run asked for and observed, as `key=value` lines; what the TestGrid column is named and described from |
 
 A red run is as likely to be the site as the code. [triage.md](triage.md) is how
 to tell the difference without spending an afternoon on it.

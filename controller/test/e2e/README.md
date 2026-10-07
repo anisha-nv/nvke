@@ -423,6 +423,18 @@ a bare `nico-forge` without it selects 4 specs and reaches no hardware.
 The node is torn down afterwards (tenants are deleted first). `-e2e.keep-site`, or
 `lifecycle.preserveOnFailure` with a failed spec, keeps it.
 
+`-e2e.testgrid-metadata=<path>` writes what the run asked for and observed
+(stage, arch, GPU, Kubernetes version, cluster name and site, the site's node
+shape, the tenant's GPU product and kubelet version) to `<path>` as `key=value`
+lines. CI passes it so `testgrid-publish.yml` can name the TestGrid dashboard
+and describe the column; it can only see the run's artifact. The file is
+rewritten as each fact is learned, starting before the site is resolved, so a
+run that fails early or is killed before `AfterSuite` still leaves what it
+knew. Unset, nothing is recorded and no cluster is read for it. Reading is best
+effort: a fact that cannot be observed is logged and left out, and never fails
+a spec. `testgrid.Keys()` lists the keys; the publishing workflow accepts
+exactly those, and a test holds the two lists equal.
+
 Prerequisites: a way to reach the jump host (below), the jump host in
 `FORGE_JUMP_HOST` (read by `environments/forge.yaml`), `FORGE_API_KEY`, and for
 `full` `GHCR_USERNAME` and `GHCR_TOKEN`, which the node pulls CAPNICo with.

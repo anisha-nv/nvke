@@ -21,7 +21,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/client-go/discovery"
 
 	"github.com/dsx-ai-factory/nke/controller/test/e2e/internal/config"
 	"github.com/dsx-ai-factory/nke/controller/test/e2e/internal/environment"
@@ -135,7 +134,9 @@ var _ = Describe("Site controller on Forge", Ordered, ContinueOnFailure, Label("
 		if err := os.Remove(siteDiagnostics); err != nil && !errors.Is(err, os.ErrNotExist) {
 			Fail(fmt.Sprintf("removing a stale %s: %v", siteDiagnostics, err))
 		}
+		recordRunDeclared()
 		lane = expectSucceed(newSiteLane())
+		recordSiteResolved(lane)
 	})
 
 	AfterEach(func() { failed = failed || CurrentSpecReport().Failed() })
@@ -182,6 +183,7 @@ var _ = Describe("Site controller on Forge", Ordered, ContinueOnFailure, Label("
 			}
 			Expect(err).NotTo(HaveOccurred(), "should build the site controller")
 			GinkgoLogr.Info("site controller", "kubeconfig", built.Kubeconfig, "cweVersion", built.Version)
+			recordSiteObserved(ctx, built.Kubeconfig)
 		}, NodeTimeout(3*time.Hour))
 	}
 
@@ -640,14 +642,8 @@ func probeAPIServer(_ context.Context, kubeconfig string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	client, err := discovery.NewDiscoveryClientForConfig(restConfig)
-	if err != nil {
-		return "", err
-	}
-	if _, err := client.ServerVersion(); err != nil {
-		return "", err
-	}
-	return "", nil
+	_, err = siteServerVersion(restConfig)
+	return "", err
 }
 
 // Budgets for the teardown sweep, sized against the AfterAll's 45-minute
