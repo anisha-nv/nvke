@@ -1279,6 +1279,9 @@ type ListNodesParams struct {
 // CreateClusterJSONRequestBody defines body for CreateCluster for application/json ContentType.
 type CreateClusterJSONRequestBody = CreateClusterRequest
 
+// SelfRegisterClusterJSONRequestBody defines body for SelfRegisterCluster for application/json ContentType.
+type SelfRegisterClusterJSONRequestBody = SelfRegisterClusterRequest
+
 // UpdateClusterJSONRequestBody defines body for UpdateCluster for application/json ContentType.
 type UpdateClusterJSONRequestBody = UpdateClusterRequest
 
@@ -1290,6 +1293,3 @@ type UpdateNodePoolJSONRequestBody = UpdateNodePoolRequest
 
 // DeleteNodeJSONRequestBody defines body for DeleteNode for application/json ContentType.
 type DeleteNodeJSONRequestBody = DeleteNodeRequest
-
-// SelfRegisterClusterJSONRequestBody defines body for SelfRegisterCluster for application/json ContentType.
-type SelfRegisterClusterJSONRequestBody = SelfRegisterClusterRequest

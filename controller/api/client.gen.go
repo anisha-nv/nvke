@@ -101,6 +101,11 @@ type ClientInterface interface {
 
 	CreateCluster(ctx context.Context, body CreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// SelfRegisterClusterWithBody request with any body
+	SelfRegisterClusterWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	SelfRegisterCluster(ctx context.Context, body SelfRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DeleteCluster request
 	DeleteCluster(ctx context.Context, clusterID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -162,11 +167,6 @@ type ClientInterface interface {
 
 	// ListOSProfiles request
 	ListOSProfiles(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SelfRegisterClusterWithBody request with any body
-	SelfRegisterClusterWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	SelfRegisterCluster(ctx context.Context, body SelfRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) ListClusters(ctx context.Context, params *ListClustersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -195,6 +195,30 @@ func (c *Client) CreateClusterWithBody(ctx context.Context, contentType string, 
 
 func (c *Client) CreateCluster(ctx context.Context, body CreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateClusterRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SelfRegisterClusterWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSelfRegisterClusterRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SelfRegisterCluster(ctx context.Context, body SelfRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSelfRegisterClusterRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -469,30 +493,6 @@ func (c *Client) ListOSProfiles(ctx context.Context, reqEditors ...RequestEditor
 	return c.Client.Do(req)
 }
 
-func (c *Client) SelfRegisterClusterWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSelfRegisterClusterRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) SelfRegisterCluster(ctx context.Context, body SelfRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSelfRegisterClusterRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // NewListClustersRequest generates requests for ListClusters
 func NewListClustersRequest(server string, params *ListClustersParams) (*http.Request, error) {
 	var err error
@@ -561,6 +561,46 @@ func NewCreateClusterRequestWithBody(server, contentType string, body io.Reader)
 	}
 
 	operationPath := fmt.Sprintf("/clusters")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSelfRegisterClusterRequest calls the generic SelfRegisterCluster builder with application/json body
+func NewSelfRegisterClusterRequest(server string, body SelfRegisterClusterJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSelfRegisterClusterRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewSelfRegisterClusterRequestWithBody generates requests for SelfRegisterCluster with any type of body
+func NewSelfRegisterClusterRequestWithBody(server, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/clusters/selfRegister")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1346,46 +1386,6 @@ func NewListOSProfilesRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewSelfRegisterClusterRequest calls the generic SelfRegisterCluster builder with application/json body
-func NewSelfRegisterClusterRequest(server string, body SelfRegisterClusterJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewSelfRegisterClusterRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewSelfRegisterClusterRequestWithBody generates requests for SelfRegisterCluster with any type of body
-func NewSelfRegisterClusterRequestWithBody(server, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/selfRegisterCluster")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -1436,6 +1436,11 @@ type ClientWithResponsesInterface interface {
 	CreateClusterWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateClusterClientResponse, error)
 
 	CreateClusterWithResponse(ctx context.Context, body CreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateClusterClientResponse, error)
+
+	// SelfRegisterClusterWithBodyWithResponse request with any body
+	SelfRegisterClusterWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SelfRegisterClusterClientResponse, error)
+
+	SelfRegisterClusterWithResponse(ctx context.Context, body SelfRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*SelfRegisterClusterClientResponse, error)
 
 	// DeleteClusterWithResponse request
 	DeleteClusterWithResponse(ctx context.Context, clusterID openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteClusterClientResponse, error)
@@ -1498,11 +1503,6 @@ type ClientWithResponsesInterface interface {
 
 	// ListOSProfilesWithResponse request
 	ListOSProfilesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListOSProfilesClientResponse, error)
-
-	// SelfRegisterClusterWithBodyWithResponse request with any body
-	SelfRegisterClusterWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SelfRegisterClusterClientResponse, error)
-
-	SelfRegisterClusterWithResponse(ctx context.Context, body SelfRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*SelfRegisterClusterClientResponse, error)
 }
 
 type ListClustersClientResponse struct {
@@ -1548,6 +1548,32 @@ func (r CreateClusterClientResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r CreateClusterClientResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type SelfRegisterClusterClientResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *Cluster
+	JSON400      *GenericError
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON409      *GenericError
+}
+
+// Status returns HTTPResponse.Status
+func (r SelfRegisterClusterClientResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SelfRegisterClusterClientResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -1988,32 +2014,6 @@ func (r ListOSProfilesClientResponse) StatusCode() int {
 	return 0
 }
 
-type SelfRegisterClusterClientResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON201      *Cluster
-	JSON400      *GenericError
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON409      *GenericError
-}
-
-// Status returns HTTPResponse.Status
-func (r SelfRegisterClusterClientResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r SelfRegisterClusterClientResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
 // ListClustersWithResponse request returning *ListClustersClientResponse
 func (c *ClientWithResponses) ListClustersWithResponse(ctx context.Context, params *ListClustersParams, reqEditors ...RequestEditorFn) (*ListClustersClientResponse, error) {
 	rsp, err := c.ListClusters(ctx, params, reqEditors...)
@@ -2038,6 +2038,23 @@ func (c *ClientWithResponses) CreateClusterWithResponse(ctx context.Context, bod
 		return nil, err
 	}
 	return ParseCreateClusterClientResponse(rsp)
+}
+
+// SelfRegisterClusterWithBodyWithResponse request with arbitrary body returning *SelfRegisterClusterClientResponse
+func (c *ClientWithResponses) SelfRegisterClusterWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SelfRegisterClusterClientResponse, error) {
+	rsp, err := c.SelfRegisterClusterWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSelfRegisterClusterClientResponse(rsp)
+}
+
+func (c *ClientWithResponses) SelfRegisterClusterWithResponse(ctx context.Context, body SelfRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*SelfRegisterClusterClientResponse, error) {
+	rsp, err := c.SelfRegisterCluster(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSelfRegisterClusterClientResponse(rsp)
 }
 
 // DeleteClusterWithResponse request returning *DeleteClusterClientResponse
@@ -2234,23 +2251,6 @@ func (c *ClientWithResponses) ListOSProfilesWithResponse(ctx context.Context, re
 	return ParseListOSProfilesClientResponse(rsp)
 }
 
-// SelfRegisterClusterWithBodyWithResponse request with arbitrary body returning *SelfRegisterClusterClientResponse
-func (c *ClientWithResponses) SelfRegisterClusterWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SelfRegisterClusterClientResponse, error) {
-	rsp, err := c.SelfRegisterClusterWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSelfRegisterClusterClientResponse(rsp)
-}
-
-func (c *ClientWithResponses) SelfRegisterClusterWithResponse(ctx context.Context, body SelfRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*SelfRegisterClusterClientResponse, error) {
-	rsp, err := c.SelfRegisterCluster(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSelfRegisterClusterClientResponse(rsp)
-}
-
 // ParseListClustersClientResponse parses an HTTP response from a ListClustersWithResponse call
 func ParseListClustersClientResponse(rsp *http.Response) (*ListClustersClientResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2332,6 +2332,60 @@ func ParseCreateClusterClientResponse(rsp *http.Response) (*CreateClusterClientR
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSelfRegisterClusterClientResponse parses an HTTP response from a SelfRegisterClusterWithResponse call
+func ParseSelfRegisterClusterClientResponse(rsp *http.Response) (*SelfRegisterClusterClientResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SelfRegisterClusterClientResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Cluster
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GenericError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest GenericError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	}
 
@@ -3065,60 +3119,6 @@ func ParseListOSProfilesClientResponse(rsp *http.Response) (*ListOSProfilesClien
 			return nil, err
 		}
 		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseSelfRegisterClusterClientResponse parses an HTTP response from a SelfRegisterClusterWithResponse call
-func ParseSelfRegisterClusterClientResponse(rsp *http.Response) (*SelfRegisterClusterClientResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &SelfRegisterClusterClientResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest Cluster
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest GenericError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest GenericError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
 
 	}
 
