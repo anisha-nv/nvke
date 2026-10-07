@@ -263,7 +263,29 @@ func TestSelfRegisterCluster_RejectsMissingProvider(t *testing.T) {
 
 	body, ok := resp.(api.SelfRegisterCluster400JSONResponse)
 	require.True(t, ok, "expected SelfRegisterCluster400JSONResponse, got %T", resp)
-	require.Contains(t, body.Message, "infra or nico")
+	require.Contains(t, body.Message, "CAPI-backed")
+	mockDB.AssertNotCalled(t, "RunInTx", mock.Anything, mock.Anything)
+}
+
+func TestSelfRegisterCluster_RejectsNicoProvider(t *testing.T) {
+	mockDB := &mockDB{}
+	svc := newTestClusterService(discardLogger(), mockDB)
+
+	// Self-registration only supports CAPI-backed clusters (see
+	// dbClusterFromSelfRegisterAPI): a Nico-provider cluster must be
+	// rejected, not silently mapped -- that path has never been exercised
+	// end to end.
+	cluster := selfRegisterTestCluster(uuid.New(), uuid.New())
+	cluster.Infra = nil
+	cluster.Nico = &api.NicoClusterProvider{OrgID: "org-1"}
+	resp, err := svc.SelfRegisterCluster(context.Background(), api.SelfRegisterClusterRequestObject{
+		Body: &api.SelfRegisterClusterRequest{Cluster: cluster},
+	})
+	require.NoError(t, err)
+
+	body, ok := resp.(api.SelfRegisterCluster400JSONResponse)
+	require.True(t, ok, "expected SelfRegisterCluster400JSONResponse, got %T", resp)
+	require.Contains(t, body.Message, "CAPI-backed")
 	mockDB.AssertNotCalled(t, "RunInTx", mock.Anything, mock.Anything)
 }
 

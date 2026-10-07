@@ -169,24 +169,21 @@ func dbClusterFromSelfRegisterAPI(c api.Cluster) (db.Cluster, error) {
 		return db.Cluster{}, fmt.Errorf("cluster.conditions: %w", err)
 	}
 
-	switch {
-	case c.Infra != nil:
-		out.ProviderType = db.ProviderTypeCAPI
-		infraCluster, err := json.Marshal(c.Infra.Cluster)
-		if err != nil {
-			return db.Cluster{}, fmt.Errorf("cluster.infra.cluster: %w", err)
-		}
-		out.Capi = &db.CAPIClusterProvider{InfraCluster: infraCluster}
-	case c.Nico != nil:
-		out.ProviderType = db.ProviderTypeNico
-		out.Nico = &db.NicoClusterProvider{
-			OrgID:  c.Nico.OrgID,
-			SiteID: c.Nico.SiteID,
-			VpcID:  c.Nico.VpcID,
-		}
-	default:
-		return db.Cluster{}, errors.New("cluster must carry infra or nico")
+	// Self-registration exists for a site controller to register itself as
+	// the one cluster it manages, which in every deployment this ships for
+	// is CAPI-backed (cluster-api-provider-provisioned). A Nico-provider
+	// cluster is rejected rather than silently mapped: nothing here has ever
+	// exercised that path end to end, and accepting it unverified would ship
+	// a code path indistinguishable from a tested one.
+	if c.Infra == nil {
+		return db.Cluster{}, errors.New("self-registration only supports CAPI-backed clusters (cluster.infra is required)")
 	}
+	out.ProviderType = db.ProviderTypeCAPI
+	infraCluster, err := json.Marshal(c.Infra.Cluster)
+	if err != nil {
+		return db.Cluster{}, fmt.Errorf("cluster.infra.cluster: %w", err)
+	}
+	out.Capi = &db.CAPIClusterProvider{InfraCluster: infraCluster}
 
 	if c.ControlPlaneConfig != nil {
 		out.ControlPlaneConfig.ConfigurationID = c.ControlPlaneConfig.ConfigurationID
@@ -229,24 +226,9 @@ func dbControlPlaneConfigurationFromSelfRegisterAPI(c api.Cluster) (db.ControlPl
 		spec.Capi = capi
 	}
 
-	if cfg.Nico != nil {
-		nico := &db.NicoControlPlaneProvider{
-			OSProfile:      cfg.Nico.OSProfile,
-			ConfigProfile:  cfg.Nico.ConfigProfile,
-			SSHKeyGroupIDs: cfg.Nico.SSHKeyGroupIDs,
-			SubnetIDs:      cfg.Nico.SubnetIDs,
-			VpcPrefixIDs:   cfg.Nico.VpcPrefixIDs,
-		}
-		if cfg.Nico.DiskSelectionStrategy != nil {
-			if err := reencode(cfg.Nico.DiskSelectionStrategy, &nico.DiskSelectionStrategy); err != nil {
-				return db.ControlPlaneConfiguration{}, fmt.Errorf("cluster.controlPlaneConfig.nico.diskSelectionStrategy: %w", err)
-			}
-		}
-		if err := reencode(cfg.Nico.InstanceTypePreference, &nico.InstanceTypePreference); err != nil {
-			return db.ControlPlaneConfiguration{}, fmt.Errorf("cluster.controlPlaneConfig.nico.instanceTypePreference: %w", err)
-		}
-		spec.Nico = nico
-	}
+	// No Nico mapping: dbClusterFromSelfRegisterAPI already rejects any
+	// cluster that isn't CAPI-backed, so cfg.Nico is never populated for
+	// input that reaches here.
 
 	return db.ControlPlaneConfiguration{
 		ID:           cfg.ConfigurationID,
