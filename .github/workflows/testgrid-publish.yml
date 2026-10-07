@@ -38,8 +38,9 @@
 # failed is a failed run.
 #
 # INERT UNTIL CONFIGURED. Nothing runs until the TESTGRID_BUCKET,
-# TESTGRID_WIF_PROVIDER and TESTGRID_PUBLISH_SA repository variables are all
-# set. TESTGRID_DRY_RUN=true writes nothing, but still authenticates, so the
+# TESTGRID_GROUP, TESTGRID_WIF_PROVIDER and TESTGRID_PUBLISH_SA repository
+# variables are all set. They name infrastructure outside this repository, so
+# they live in the repository's settings rather than here. TESTGRID_DRY_RUN=true writes nothing, but still authenticates, so the
 # federation has to exist first.
 name: TestGrid publish
 
@@ -64,6 +65,7 @@ jobs:
     if: >-
       github.repository == 'dsx-ai-factory/nke' &&
       vars.TESTGRID_BUCKET != '' &&
+      vars.TESTGRID_GROUP != '' &&
       vars.TESTGRID_WIF_PROVIDER != '' &&
       vars.TESTGRID_PUBLISH_SA != '' &&
       github.event.workflow_run.path == '.github/workflows/forge-site-controller-e2e.yml' &&
@@ -103,8 +105,8 @@ jobs:
       # Where the files sit inside the artifact depends on the paths it was
       # uploaded with, so they are found by name. The dashboard is named from
       # what the run built: the GPU it asked for (cpu without one) and the
-      # Kubernetes minor version, as every other DGXC qualification dashboard
-      # is.
+      # Kubernetes minor version, the way the other qualification dashboards
+      # in that TestGrid are named.
       - name: Read what the run built
         id: run
         shell: bash
@@ -257,7 +259,7 @@ jobs:
         uses: NVIDIA-dev/testgrid-publish@45f8df45abcb1d2921820bf895e28fef5220e274 # main, 2026-10-07
         with:
           bucket: ${{ vars.TESTGRID_BUCKET }}
-          group: forge-oss-non-prod
+          group: ${{ vars.TESTGRID_GROUP }}
           dashboard: ${{ steps.run.outputs.dashboard }}
           tab: ${{ steps.run.outputs.tab }}
           result: ${{ steps.run.outputs.result }}
