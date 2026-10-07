@@ -1081,10 +1081,9 @@ type OSProfile struct {
 	Name string `json:"name"`
 }
 
-// SelfRegisterClusterRequest defines model for SelfRegisterClusterRequest.
+// SelfRegisterClusterRequest The cluster and nodes to self-register, as returned by the source CWE.
 type SelfRegisterClusterRequest struct {
-	// Cluster A Kubernetes cluster. Holds the Kubernetes version, network, CNI, etcd
-	// encryption, control-plane configuration and conditions.
+	// Cluster The cluster to register, exactly as returned by the source CWE's GET /clusters/{clusterID} -- including its id, which is preserved.
 	Cluster Cluster `json:"cluster"`
 
 	// Nodes The cluster's nodes, exactly as returned by the source CWE's GET /nodes filtered to this cluster.

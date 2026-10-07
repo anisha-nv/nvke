@@ -16,7 +16,7 @@ import (
 	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
-func selfRegisterTestCluster(id uuid.UUID, configurationID uuid.UUID) api.Cluster {
+func selfRegisterTestCluster(id, configurationID uuid.UUID) api.Cluster {
 	return api.Cluster{
 		ID:                            id,
 		Name:                          "dev-local",

@@ -464,6 +464,7 @@ paths:
 
   /self-register-cluster:
     post:
+      tags: [Clusters]
       summary: Self-Register Cluster
       operationId: selfRegisterCluster
       description: >-
@@ -479,6 +480,7 @@ paths:
         registered is rejected with 409.
       requestBody:
         required: true
+        description: The cluster and nodes to register.
         content:
           application/json:
             schema:
@@ -1397,12 +1399,14 @@ components:
           description: Infra provider fields.
     SelfRegisterClusterRequest:
       type: object
+      description: The cluster and nodes to self-register, as returned by the source CWE.
       required:
         - cluster
         - nodes
       properties:
         cluster:
-          $ref: "#/components/schemas/Cluster"
+          allOf:
+            - $ref: "#/components/schemas/Cluster"
           description: >-
             The cluster to register, exactly as returned by the source CWE's
             GET /clusters/{clusterID} -- including its id, which is preserved.
