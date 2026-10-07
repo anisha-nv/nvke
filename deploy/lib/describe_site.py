@@ -381,6 +381,15 @@ def validate(data, config_dir):
     else:
         ref = os.environ.get(CONTROLLER_REF_ENV, "").strip()
         if not ref:
+            # Run on its own, outside 03-describe-site.sh: read the controller
+            # item from the release manifest RELEASE_FILE names.
+            release_file = os.environ.get("RELEASE_FILE", "").strip()
+            if release_file and os.path.isfile(release_file):
+                try:
+                    ref = release_spec(LIB_DIR, release_file, "ref", "controller").strip()
+                except ConfigError:
+                    ref = ""
+        if not ref:
             raise ConfigError("images.controller is missing and %s is not set: set images.controller in the "
                               "site config, or export RELEASE_FILE so the controller item's ref is the default."
                               % CONTROLLER_REF_ENV)
