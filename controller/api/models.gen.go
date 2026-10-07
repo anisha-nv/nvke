@@ -1081,6 +1081,16 @@ type OSProfile struct {
 	Name string `json:"name"`
 }
 
+// SelfRegisterClusterRequest defines model for SelfRegisterClusterRequest.
+type SelfRegisterClusterRequest struct {
+	// Cluster A Kubernetes cluster. Holds the Kubernetes version, network, CNI, etcd
+	// encryption, control-plane configuration and conditions.
+	Cluster Cluster `json:"cluster"`
+
+	// Nodes The cluster's nodes, exactly as returned by the source CWE's GET /nodes filtered to this cluster.
+	Nodes []Node `json:"nodes"`
+}
+
 // UpdateClusterControlPlaneConfig Changes to `osProfile` or the Kubernetes version start a control-plane
 // rollout. All fields are optional. A provider payload that does not match the
 // cluster's provider is rejected with 400.
@@ -1281,3 +1291,6 @@ type UpdateNodePoolJSONRequestBody = UpdateNodePoolRequest
 
 // DeleteNodeJSONRequestBody defines body for DeleteNode for application/json ContentType.
 type DeleteNodeJSONRequestBody = DeleteNodeRequest
+
+// SelfRegisterClusterJSONRequestBody defines body for SelfRegisterCluster for application/json ContentType.
+type SelfRegisterClusterJSONRequestBody = SelfRegisterClusterRequest

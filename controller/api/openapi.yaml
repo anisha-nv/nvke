@@ -462,6 +462,51 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /self-register-cluster:
+    post:
+      summary: Self-Register Cluster
+      operationId: selfRegisterCluster
+      description: >-
+        Imports an already-provisioned cluster's data -- preserving its ID --
+        from another CWE instance's GET /clusters/{clusterID} and GET /nodes
+        responses, then recreates the cluster's live CAPI objects (Cluster,
+        ProvisionedCluster, Machine, ProvisionedMachine) on this CWE's own
+        management Kubernetes API without touching the real nodes: no
+        NodePreflight, join hooks, CNI prerequisite configuration, or reboot
+        runs. For a site controller cluster to register itself as the one
+        cluster it manages. A CWE instance can self-register only one
+        cluster; a request naming a different cluster ID than one already
+        registered is rejected with 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SelfRegisterClusterRequest"
+      responses:
+        "201":
+          description: Cluster self-registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cluster"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenericError"
+        "409":
+          description: This CWE instance already has a different cluster registered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenericError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /nodePools:
     get:
       tags: [Node pools]
@@ -1059,7 +1104,6 @@ components:
         configurationId:
           type: string
           format: uuid
-          readOnly: true
           description: ID of the current configuration snapshot.
           x-go-type-skip-optional-pointer: true
         desiredCount:
@@ -1351,6 +1395,24 @@ components:
           allOf:
             - $ref: "#/components/schemas/InfraClusterProvider"
           description: Infra provider fields.
+    SelfRegisterClusterRequest:
+      type: object
+      required:
+        - cluster
+        - nodes
+      properties:
+        cluster:
+          $ref: "#/components/schemas/Cluster"
+          description: >-
+            The cluster to register, exactly as returned by the source CWE's
+            GET /clusters/{clusterID} -- including its id, which is preserved.
+        nodes:
+          type: array
+          description: >-
+            The cluster's nodes, exactly as returned by the source CWE's
+            GET /nodes filtered to this cluster.
+          items:
+            $ref: "#/components/schemas/Node"
     UpdateClusterRequest:
       description: Changes to a cluster. All fields are optional; unknown fields are rejected.
       type: object

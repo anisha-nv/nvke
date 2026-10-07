@@ -6,95 +6,252 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log/slog"
-	"net/http"
+	"time"
 
 	"github.com/google/uuid"
-	"go.temporal.io/sdk/client"
 
+	"github.com/dsx-ai-factory/nke/controller/api"
 	"github.com/dsx-ai-factory/nke/controller/internal/constants"
 	"github.com/dsx-ai-factory/nke/controller/internal/db"
 )
 
-// selfRegisterClusterRequest carries an already-provisioned cluster's DB rows,
-// imported wholesale (preserving every ID) from another CWE instance's
-// /api/clusters{,/nodePools,/nodes} responses. This is the data-import half of
-// self-registration; the SelfRegisterCluster Temporal workflow it enqueues is
-// the live-K8s-object half.
-type selfRegisterClusterRequest struct {
-	Cluster                   db.Cluster                    `json:"cluster"`
-	ControlPlaneConfiguration *db.ControlPlaneConfiguration `json:"controlPlaneConfiguration,omitempty"`
-	Nodes                     []db.Node                     `json:"nodes"`
+// selfRegisterConflictError means this CWE instance already has a cluster
+// registered. Self-registration is a one-cluster operation -- it exists so a
+// site controller can register itself, not to bulk-import arbitrary clusters
+// -- so a second, different cluster ID is always rejected.
+type selfRegisterConflictError struct {
+	existingClusterID uuid.UUID
 }
 
-// selfRegisterClusterHandler is a prototype endpoint, registered directly on
-// the raw mux (not generated from openapi.yaml): POST /api/self-register-cluster.
-// It writes the cluster/control-plane-configuration/node rows with their
-// IDs preserved from the request, then enqueues SelfRegisterCluster, which
-// recreates the live CAPI objects (Cluster, ProvisionedCluster, Machine,
-// ProvisionedMachine) without touching the real nodes.
-func selfRegisterClusterHandler(database db.DB, temporalClient client.Client, logger *slog.Logger) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req selfRegisterClusterRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			handleError(w, logger, fmt.Sprintf("invalid request body: %s", err), http.StatusBadRequest)
-			return
-		}
-		if req.Cluster.ID == uuid.Nil {
-			handleError(w, logger, "cluster.id is required", http.StatusBadRequest)
-			return
-		}
+func (e *selfRegisterConflictError) Error() string {
+	return fmt.Sprintf("this CWE instance already has cluster %s registered; only one cluster may be self-registered", e.existingClusterID)
+}
 
-		ctx := r.Context()
-		err := database.RunInTx(ctx, func(ctx context.Context, tx db.Tx) error {
-			// clusters.configuration_id and control_plane_configurations.cluster_id
-			// reference each other, so the cluster row is created first with its
-			// configuration_id left at the request's original value, the config row
-			// is created second (now that cluster_id resolves), and the cluster is
-			// updated afterward if that first value didn't already match -- same
-			// three-step order the normal CreateCluster handler uses.
-			configurationID := req.Cluster.ControlPlaneConfig.ConfigurationID
-			req.Cluster.ControlPlaneConfig.ConfigurationID = uuid.Nil
-			if _, err := tx.CreateCluster(ctx, &req.Cluster); err != nil {
-				return fmt.Errorf("failed to create cluster: %w", err)
-			}
-
-			if req.ControlPlaneConfiguration != nil {
-				if _, err := tx.CreateControlPlaneConfiguration(ctx, req.ControlPlaneConfiguration); err != nil {
-					return fmt.Errorf("failed to create control plane configuration: %w", err)
-				}
-				req.Cluster.ControlPlaneConfig.ConfigurationID = configurationID
-				if _, err := tx.UpdateCluster(ctx, &req.Cluster); err != nil {
-					return fmt.Errorf("failed to set cluster configuration id: %w", err)
-				}
-			}
-
-			for i := range req.Nodes {
-				node := req.Nodes[i]
-				node.ClusterID = req.Cluster.ID
-				if _, err := tx.CreateNode(ctx, &node); err != nil {
-					return fmt.Errorf("failed to create node %s: %w", node.Name, err)
-				}
-			}
-
-			workflowID := constants.SelfRegisterClusterWorkflowPrefix + req.Cluster.ID.String()
-			if _, err := tx.CreateWorkflowOutboxEntry(ctx, "SelfRegisterCluster", workflowID, map[string]interface{}{
-				"clusterID": req.Cluster.ID,
-			}); err != nil {
-				return fmt.Errorf("failed to create workflow outbox entry: %w", err)
-			}
-
-			return nil
-		})
-		if err != nil {
-			logger.Error("self-register cluster failed", "error", err)
-			handleError(w, logger, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]string{"clusterID": req.Cluster.ID.String()})
+// SelfRegisterCluster imports an already-provisioned cluster's data --
+// preserving every ID -- from the api.Cluster/api.Node shapes a source CWE's
+// GET /clusters/{clusterID} and GET /nodes already return, then enqueues
+// SelfRegisterCluster, which recreates the cluster's live CAPI objects
+// (Cluster, ProvisionedCluster, Machine, ProvisionedMachine) on this CWE's
+// own management Kubernetes API without touching the real nodes.
+func (s *clusterService) SelfRegisterCluster(
+	ctx context.Context,
+	req api.SelfRegisterClusterRequestObject,
+) (api.SelfRegisterClusterResponseObject, error) {
+	if req.Body == nil {
+		return api.SelfRegisterCluster400JSONResponse{Message: "request body is required"}, nil
 	}
+
+	dbCluster, err := dbClusterFromSelfRegisterAPI(req.Body.Cluster)
+	if err != nil {
+		return api.SelfRegisterCluster400JSONResponse{Message: err.Error()}, nil
+	}
+
+	var cpc *db.ControlPlaneConfiguration
+	if req.Body.Cluster.ControlPlaneConfig != nil && req.Body.Cluster.ControlPlaneConfig.ConfigurationID != uuid.Nil {
+		row, err := dbControlPlaneConfigurationFromSelfRegisterAPI(req.Body.Cluster)
+		if err != nil {
+			return api.SelfRegisterCluster400JSONResponse{Message: err.Error()}, nil
+		}
+		cpc = &row
+	}
+
+	dbNodes := make([]db.Node, 0, len(req.Body.Nodes))
+	for _, n := range req.Body.Nodes {
+		dbNode, err := dbNodeFromSelfRegisterAPI(n, dbCluster.ID)
+		if err != nil {
+			return api.SelfRegisterCluster400JSONResponse{Message: err.Error()}, nil
+		}
+		dbNodes = append(dbNodes, dbNode)
+	}
+
+	var registeredCluster db.Cluster
+	err = s.db.RunInTx(ctx, func(ctx context.Context, tx db.Tx) error {
+		existing, err := tx.ListClusters(ctx, db.ClusterFilters{})
+		if err != nil {
+			return fmt.Errorf("failed to check for an existing cluster: %w", err)
+		}
+		if len(existing) > 0 && existing[0].ID != dbCluster.ID {
+			return &selfRegisterConflictError{existingClusterID: existing[0].ID}
+		}
+
+		// clusters.configuration_id and control_plane_configurations.cluster_id
+		// reference each other, so the cluster row is created first with its
+		// configuration_id left unset, the config row is created second (now
+		// that cluster_id resolves), and the cluster is updated afterward --
+		// same three-step order the normal CreateCluster handler uses.
+		configurationID := dbCluster.ControlPlaneConfig.ConfigurationID
+		dbCluster.ControlPlaneConfig.ConfigurationID = uuid.Nil
+		if _, err := tx.CreateCluster(ctx, &dbCluster); err != nil {
+			return fmt.Errorf("failed to create cluster: %w", err)
+		}
+
+		if cpc != nil {
+			if _, err := tx.CreateControlPlaneConfiguration(ctx, cpc); err != nil {
+				return fmt.Errorf("failed to create control plane configuration: %w", err)
+			}
+			dbCluster.ControlPlaneConfig.ConfigurationID = configurationID
+			if _, err := tx.UpdateCluster(ctx, &dbCluster); err != nil {
+				return fmt.Errorf("failed to set cluster configuration id: %w", err)
+			}
+		}
+
+		for i := range dbNodes {
+			if _, err := tx.CreateNode(ctx, &dbNodes[i]); err != nil {
+				return fmt.Errorf("failed to create node %s: %w", dbNodes[i].Name, err)
+			}
+		}
+
+		workflowID := constants.SelfRegisterClusterWorkflowPrefix + dbCluster.ID.String()
+		if _, err := tx.CreateWorkflowOutboxEntry(ctx, "SelfRegisterCluster", workflowID, map[string]interface{}{
+			"clusterID": dbCluster.ID,
+		}); err != nil {
+			return fmt.Errorf("failed to create workflow outbox entry: %w", err)
+		}
+
+		registeredCluster, err = tx.GetCluster(ctx, dbCluster.ID)
+		if err != nil {
+			return fmt.Errorf("failed to reload registered cluster: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		var conflictErr *selfRegisterConflictError
+		if errors.As(err, &conflictErr) {
+			return api.SelfRegisterCluster409JSONResponse{Message: conflictErr.Error()}, nil
+		}
+		return nil, err
+	}
+
+	return api.SelfRegisterCluster201JSONResponse(APIClusterFromDB(&registeredCluster)), nil
+}
+
+func dbClusterFromSelfRegisterAPI(c api.Cluster) (db.Cluster, error) {
+	if c.ID == uuid.Nil {
+		return db.Cluster{}, errors.New("cluster.id is required")
+	}
+
+	out := db.Cluster{
+		ID:                c.ID,
+		Name:              c.Name,
+		CniPlugin:         db.CniPlugin(c.CniPlugin),
+		CniVersion:        c.CniVersion,
+		EtcdEncrypted:     c.EtcdEncrypted,
+		KubernetesVersion: c.ControlPlaneKubernetesVersion,
+		PodCIDR:           c.Network.PodCIDR,
+		ServiceCIDR:       c.Network.ServiceCIDR,
+		CreatedAt:         c.CreatedAt,
+		UpdatedAt:         c.CreatedAt,
+	}
+	if c.ControlPlaneVIP != nil {
+		out.ControlPlaneVIP = *c.ControlPlaneVIP
+	}
+	if c.EnableCPNodeRecycling != nil {
+		out.EnableCPNodeRecycling = *c.EnableCPNodeRecycling
+	}
+	if c.TeleportEnabled != nil {
+		out.TeleportEnabled = *c.TeleportEnabled
+	}
+	if err := reencode(c.Conditions, &out.Conditions); err != nil {
+		return db.Cluster{}, fmt.Errorf("cluster.conditions: %w", err)
+	}
+
+	switch {
+	case c.Infra != nil:
+		out.ProviderType = db.ProviderTypeCAPI
+		infraCluster, err := json.Marshal(c.Infra.Cluster)
+		if err != nil {
+			return db.Cluster{}, fmt.Errorf("cluster.infra.cluster: %w", err)
+		}
+		out.Capi = &db.CAPIClusterProvider{InfraCluster: infraCluster}
+	case c.Nico != nil:
+		out.ProviderType = db.ProviderTypeNico
+		out.Nico = &db.NicoClusterProvider{
+			OrgID:  c.Nico.OrgID,
+			SiteID: c.Nico.SiteID,
+			VpcID:  c.Nico.VpcID,
+		}
+	default:
+		return db.Cluster{}, errors.New("cluster must carry infra or nico")
+	}
+
+	if c.ControlPlaneConfig != nil {
+		out.ControlPlaneConfig.ConfigurationID = c.ControlPlaneConfig.ConfigurationID
+		out.ControlPlaneConfig.DesiredCount = c.ControlPlaneConfig.DesiredCount
+		if c.ControlPlaneConfig.MaxSurge != nil {
+			out.ControlPlaneConfig.MaxSurge = *c.ControlPlaneConfig.MaxSurge
+		}
+	}
+
+	return out, nil
+}
+
+func dbControlPlaneConfigurationFromSelfRegisterAPI(c api.Cluster) (db.ControlPlaneConfiguration, error) {
+	spec := db.ControlPlaneConfigSpec{
+		KubernetesVersion:    c.ControlPlaneKubernetesVersion,
+		SystemReservedMemory: c.ControlPlaneConfig.SystemReservedMemory,
+	}
+	if c.ControlPlaneConfig.Infra != nil {
+		var machineTemplate json.RawMessage
+		if c.ControlPlaneConfig.Infra.MachineTemplate != nil {
+			mt, err := json.Marshal(c.ControlPlaneConfig.Infra.MachineTemplate)
+			if err != nil {
+				return db.ControlPlaneConfiguration{}, fmt.Errorf("cluster.controlPlaneConfig.infra.machineTemplate: %w", err)
+			}
+			machineTemplate = mt
+		}
+		if len(machineTemplate) > 0 {
+			spec.Capi = &db.CAPIControlPlaneProvider{
+				InfraMachineTemplatePreferences: []json.RawMessage{machineTemplate},
+			}
+		}
+	}
+
+	return db.ControlPlaneConfiguration{
+		ID:           c.ControlPlaneConfig.ConfigurationID,
+		ClusterID:    c.ID,
+		Config:       spec,
+		ChangeReason: "self-register",
+		CreatedAt:    c.CreatedAt,
+	}, nil
+}
+
+func dbNodeFromSelfRegisterAPI(n api.Node, clusterID uuid.UUID) (db.Node, error) {
+	if n.ID == uuid.Nil {
+		return db.Node{}, errors.New("node.id is required")
+	}
+
+	out := db.Node{
+		ID:                     n.ID,
+		NodePoolID:             n.NodePoolID,
+		NodeSetID:              n.NodeSetID,
+		ClusterID:              clusterID,
+		ControlPlane:           n.ControlPlane,
+		Name:                   n.Name,
+		IP:                     n.IP,
+		CreatedAt:              time.Now(),
+		UpdatedAt:              time.Now(),
+		SpireAttestationMethod: db.SpireAttestationMethodTPM,
+	}
+	if err := reencode(n.Conditions, &out.Conditions); err != nil {
+		return db.Node{}, fmt.Errorf("node %s conditions: %w", n.Name, err)
+	}
+	if n.ControlPlaneRollout != nil {
+		out.ControlPlaneConfigurationID = n.ControlPlaneRollout.PinnedConfigurationID
+	}
+
+	return out, nil
+}
+
+// reencode converts between two JSON-compatible types that are expected to
+// marshal to the same shape (an api.* condition set and its db.* twin), so a
+// single source of field names -- the JSON tags -- drives both directions
+// instead of a long hand-written field-by-field copy.
+func reencode(src, dst interface{}) error {
+	raw, err := json.Marshal(src)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, dst)
 }
