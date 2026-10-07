@@ -1366,7 +1366,7 @@ func NewSelfRegisterClusterRequestWithBody(server, contentType string, body io.R
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/self-register-cluster")
+	operationPath := fmt.Sprintf("/selfRegisterCluster")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}

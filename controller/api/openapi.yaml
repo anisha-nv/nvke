@@ -462,7 +462,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
-  /self-register-cluster:
+  /selfRegisterCluster:
     post:
       tags: [Clusters]
       summary: Self-Register Cluster
