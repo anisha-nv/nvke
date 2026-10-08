@@ -125,6 +125,17 @@ func (c *Collector) Set(key, value string) error {
 	return nil
 }
 
+// Delete forgets the value recorded under key, for a fact the run states it
+// does not have, such as a GPU when it asked for none.
+func (c *Collector) Delete(key string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.facts, key)
+}
+
 // Get returns the value recorded under key.
 func (c *Collector) Get(key string) (string, bool) {
 	if c == nil {

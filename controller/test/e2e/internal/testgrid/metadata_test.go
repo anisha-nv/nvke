@@ -56,6 +56,17 @@ func TestSetKeepsAnEarlierValueWhenTheLaterOneIsEmpty(t *testing.T) {
 	}
 }
 
+func TestDeleteForgetsAFact(t *testing.T) {
+	c := NewCollector()
+	mustSet(t, c, KeyGPU, "gb200")
+	c.Delete(KeyGPU)
+	if _, ok := c.Get(KeyGPU); ok {
+		t.Fatal("Delete left the GPU in place")
+	}
+	var nilCollector *Collector
+	nilCollector.Delete(KeyGPU) // must not panic
+}
+
 func TestEncodeIsSortedAndStable(t *testing.T) {
 	c := NewCollector()
 	mustSet(t, c, KeyStage, "full")

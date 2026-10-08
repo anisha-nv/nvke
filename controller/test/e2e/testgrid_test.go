@@ -56,12 +56,22 @@ var testGridFacts = sync.OnceValue(func() *testgrid.Collector {
 		key, value, _ := strings.Cut(line, "=")
 		switch key {
 		case testgrid.KeyStage, testgrid.KeyArch, testgrid.KeyGPU, testgrid.KeyKubernetesVersion:
-			// Invalid values are dropped here as everywhere else.
-			_ = c.Set(key, value)
+			// A declared value that is present but unreadable becomes a
+			// marker the publisher refuses, rather than vanishing: a GPU run
+			// whose GPU was dropped would otherwise publish as a CPU run.
+			if err := c.Set(key, value); err != nil {
+				_ = c.Set(key, invalidDeclared)
+			}
 		}
 	}
 	return c
 })
+
+// invalidDeclared stands in for a declared value the suite could not read. It
+// is a valid value, so it survives the rewrite, and it is not a stage, GPU or
+// version the publisher accepts, so the run is not published under the wrong
+// name.
+const invalidDeclared = "invalid"
 
 // Observing is best effort and bounded: it reads a cluster the run already
 // reached, and a slow answer must not hold up the specs it rides along with.
@@ -88,10 +98,16 @@ func recordRunDeclared() {
 		return
 	}
 	defer writeTestGridMetadata()
-	capabilities, _ := runCapabilities()
+	capabilities, err := runCapabilities()
 	recordTestGrid(testgrid.KeyStage, siteStage)
 	recordTestGrid(testgrid.KeyArch, capabilities["arch"])
 	recordTestGrid(testgrid.KeyGPU, capabilities["gpu"])
+	// A run that parsed its capabilities and asked for no GPU has none, even if
+	// a file left by an earlier run said otherwise. One that could not parse
+	// them says nothing, and keeps what the workflow declared.
+	if err == nil && capabilities["gpu"] == "" {
+		testGridFacts().Delete(testgrid.KeyGPU)
+	}
 	kubernetesVersion := cmp.Or(optionalVersion("kube"), forgeDefaultKubernetesVersion)
 	recordTestGrid(testgrid.KeyKubernetesVersion, "v"+strings.TrimPrefix(kubernetesVersion, "v"))
 }

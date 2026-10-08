@@ -25,7 +25,7 @@ whichever of these the run produced:
 | `run-inputs.txt` | Which versions, images and settings the run actually resolved — including which were overridden. Answers "was it even testing what I thought?" |
 | `site-diagnostics.tar.gz` | What `nkectl` collected **on the node**. Present only when nkectl wrote a diagnostics directory, which it does when it fails. |
 | `tbot.log` | The Teleport bot. Only interesting when nothing could be reached at all. |
-| `testgrid-metadata.txt` | What the run asked for and observed: stage, GPU, Kubernetes version, site, node shape. Every run that got past checkout has one. A run with no TestGrid column was cancelled, asked for a stage or GPU the publisher does not know, or its publish job failed — that job's log says which. |
+| `testgrid-metadata.txt` | What the run asked for and observed: stage, GPU, Kubernetes version, site, node shape. Every run that got past checkout has one. A run with no TestGrid column usually means publishing is off: `testgrid-publish.yml` runs only when the `TESTGRID_PUBLISH_ENABLED` repository variable is `true` and `TESTGRID_BUCKET`, `TESTGRID_GROUP`, `TESTGRID_WIF_PROVIDER` and `TESTGRID_PUBLISH_SA` are set. Otherwise the run was cancelled, recorded a stage, GPU or version the publisher does not accept, or its publish job failed — that job's log says which. |
 
 **An absent `site-diagnostics.tar.gz` is normal and is information.** `nkectl`
 writes its diagnostics directory when it fails, so no tarball usually means
