@@ -186,6 +186,8 @@ metadata.
 | `NKECTL_BOOTSTRAP_CLUSTER_NAME` | `nkectl-bootstrap` | Name of the ephemeral cluster |
 | `NKECTL_CWE_IMAGE` | `nke-controller:latest` | CWE image to deploy. A reference without a registry is side-loaded from the local image store; `make -C cli images` builds the default with nerdctl. For Docker Hub, write `docker.io/<org>/<name>`. |
 | `NKECTL_CAPI_PROVISIONED_IMAGE` | `cluster-api-provider-provisioned:latest` | Provisioned-provider image, same semantics. |
+| `NKECTL_CWE_PROFILES_IMAGE` | unset | OCI image holding the OS and config profiles CWE reads, copied to its profiles directory by the chart's init container. Needed to provision nodes CAPNICo creates; unset leaves CWE with an empty profiles directory. Loaded like `NKECTL_CWE_IMAGE`, and it must carry a tag other than `latest` or a digest. |
+| `NKECTL_CWE_TENANT_CREDENTIALS_SECRET` | unset | Name of a Secret in CWE's namespace (`nke-controller`), with keys `user` and `password`, that the chart injects as `DGXC_TENANT_USER` and `DGXC_TENANT_PASSWORD`. CWE builds the login for nodes CAPNICo creates from them and fails every node without them. `nkectl` does not create the Secret: create it once the bootstrap cluster exists and before CWE starts. |
 | `NKECTL_CWE_TEMPORAL_CHART` | `temporal` from `https://go.temporal.io/helm-charts` | Temporal chart, as an OCI reference or a local path. Set, it replaces the repo lookup. |
 | `NKECTL_CWE_SPIRE_CHART` | `spire` from `https://spiffe.github.io/helm-charts-hardened/` | SPIRE chart, same semantics |
 | `NKECTL_CWE_SPIRE_CRDS_CHART` | `spire-crds` from `https://spiffe.github.io/helm-charts-hardened/` | SPIRE CRDs chart, same semantics |

@@ -11,6 +11,12 @@ bin/
 e2e/bootstrap/.hosts.csv
 e2e/bootstrap/.sitespec.rendered.yaml
 
+# E2E scratch from run-nico.sh: the nico site spec, nkectl's log, and the node and
+# nico-sim dump it writes when it fails.
+e2e/bootstrap/.sitespec.nico.rendered.yaml
+e2e/bootstrap/.bootstrap-nico.log
+e2e/bootstrap/.nico-diagnostics.txt
+
 # The etcd encryption key `nkectl bootstrap site` writes, the temporary file
 # it is assembled in, and the E2E's copy next to the site spec. The root
 # .gitignore carries the same rules for a bootstrap run from anywhere else.

@@ -872,14 +872,18 @@ func deployAndWaitForCWE(
 	return nil
 }
 
-// cweImages lists the images this repository builds that the bootstrap loads
-// into the Kind cluster. The provisioned provider is among them only when it is
-// the infrastructure provider in use.
+// cweImages lists the images the bootstrap loads into the Kind cluster rather
+// than pulling. The provisioned provider is among them only when it is the
+// infrastructure provider in use, and the profiles image only when one is set.
 func cweImages(cfg cwedeploy.Config) []string {
-	if cfg.NicoInfrastructure {
-		return []string{cfg.CWEImage}
+	images := []string{cfg.CWEImage}
+	if !cfg.NicoInfrastructure {
+		images = append(images, cfg.ProvisionedProviderImage)
 	}
-	return []string{cfg.CWEImage, cfg.ProvisionedProviderImage}
+	if cfg.ProfilesImage != "" {
+		images = append(images, cfg.ProfilesImage)
+	}
+	return images
 }
 
 // requireNicoCredentials refuses a nico bootstrap that has no readable

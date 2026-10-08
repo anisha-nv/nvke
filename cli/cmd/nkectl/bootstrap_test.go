@@ -1467,16 +1467,24 @@ func TestRequireNicoCredentials(t *testing.T) {
 
 func TestCWEImages(t *testing.T) {
 	tests := []struct {
-		name string
-		nico bool
-		want []string
+		name     string
+		nico     bool
+		profiles string
+		want     []string
 	}{
-		{"provisioned loads both images", false, []string{"cwe:1", "prov:1"}},
-		{"nico loads only the CWE image", true, []string{"cwe:1"}},
+		{"provisioned loads both images", false, "", []string{"cwe:1", "prov:1"}},
+		{"nico loads only the CWE image", true, "", []string{"cwe:1"}},
+		{"a profiles image is loaded too", false, "profiles:e2e", []string{"cwe:1", "prov:1", "profiles:e2e"}},
+		{"nico with profiles loads the CWE and profiles images", true, "profiles:e2e", []string{"cwe:1", "profiles:e2e"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := cwedeploy.Config{CWEImage: "cwe:1", ProvisionedProviderImage: "prov:1", NicoInfrastructure: tt.nico}
+			cfg := cwedeploy.Config{
+				CWEImage:                 "cwe:1",
+				ProvisionedProviderImage: "prov:1",
+				NicoInfrastructure:       tt.nico,
+				ProfilesImage:            tt.profiles,
+			}
 			if got := cweImages(cfg); !slices.Equal(got, tt.want) {
 				t.Errorf("cweImages = %v, want %v", got, tt.want)
 			}

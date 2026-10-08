@@ -77,7 +77,7 @@ NKECTL_LDFLAGS := \
 	-X 'github.com/dsx-ai-factory/nke/cli/internal/bootstrap/cwedeploy.capiVersion=$(CAPI_VERSION)' \
 	$(RELEASE_LDFLAGS)
 
-.PHONY: build build-cross test test-e2e-bootstrap fmt lint license file-license-check check-no-docker \
+.PHONY: build build-cross test test-e2e-bootstrap test-e2e-bootstrap-nico fmt lint license file-license-check check-no-docker \
 	ensure-capd-image ensure-provisioned-provider-image images \
 	nodes-up nodes-down nodes-status nodes-hosts nodes-attested
 
@@ -147,6 +147,13 @@ test: ## Run this module's tests. (run by the merge gate)
 # site.
 test-e2e-bootstrap: build
 	./e2e/bootstrap/run.sh
+
+# The same suite for `infrastructure: nico`: CAPNICo allocates the nodes from a
+# nico-sim running on the host, instead of fake hosts being listed in the site
+# spec. Needs everything run.sh does, plus a Go toolchain and gcc to build
+# nico-sim and network access to ghcr.io. See e2e/bootstrap/run-nico.sh.
+test-e2e-bootstrap-nico: build
+	./e2e/bootstrap/run-nico.sh
 
 # Fake-node fixture for the bootstrap e2e suite: nerdctl containers running
 # nke-agent, standing in for pre-provisioned hardware. cli/e2e/bootstrap/substrate

@@ -1088,3 +1088,115 @@ func hasArgs(call string, args ...string) bool {
 	}
 	return false
 }
+
+func TestProfilesImageArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		image   string
+		want    []string // substrings the args must contain; empty means no args at all
+		wantErr string
+	}{
+		{"unset adds nothing", "", nil, ""},
+		{
+			"a tagged local image",
+			"cwe-profiles:e2e",
+			[]string{"profiles.image.enabled=true", "profiles.image.repository=cwe-profiles", "profiles.image.tag=e2e", "profiles.image.digest="},
+			"",
+		},
+		{
+			"a registry image with a port and a tag",
+			"localhost:5000/team/profiles:v1",
+			[]string{"profiles.image.repository=localhost:5000/team/profiles", "profiles.image.tag=v1"},
+			"",
+		},
+		{
+			"a digest pin needs no tag",
+			"registry.example.com/profiles@sha256:abc123",
+			[]string{"profiles.image.repository=registry.example.com/profiles", "profiles.image.digest=sha256:abc123"},
+			"",
+		},
+		{"an explicit latest tag is refused", "cwe-profiles:latest", nil, "other than latest"},
+		{"an untagged reference reads as latest and is refused", "cwe-profiles", nil, "other than latest"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args, err := profilesImageArgs(Config{ProfilesImage: tt.image})
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("profilesImageArgs error = %v, want one containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("profilesImageArgs: %v", err)
+			}
+			if len(tt.want) == 0 && len(args) != 0 {
+				t.Fatalf("args = %v, want none", args)
+			}
+			joined := strings.Join(args, " ")
+			for _, want := range tt.want {
+				if !strings.Contains(joined, want) {
+					t.Errorf("args = %q, want %q", joined, want)
+				}
+			}
+		})
+	}
+}
+
+// TestDeploy_ProfilesImageReachesTheCWEInstall: the chart values are on the
+// release that runs CWE, not just built.
+func TestDeploy_ProfilesImageReachesTheCWEInstall(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.ProfilesImage = "cwe-profiles:e2e"
+	runner := &fakeRunner{}
+	if err := New(runner, nil).Deploy(context.Background(), "/tmp/kubeconfig", cfg); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	cwe := joinArgs(runner.calls[callIndex(runner, "upgrade --install "+cweReleaseName)].args)
+	for _, want := range []string{"profiles.image.enabled=true", "profiles.image.repository=cwe-profiles", "profiles.image.tag=e2e"} {
+		if !strings.Contains(cwe, want) {
+			t.Errorf("cwe install = %q, want %q", cwe, want)
+		}
+	}
+}
+
+func TestDeploy_RefusesAProfilesImageTheClusterWouldPull(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.ProfilesImage = "cwe-profiles:latest"
+	runner := &fakeRunner{}
+	if err := New(runner, nil).Deploy(context.Background(), "/tmp/kubeconfig", cfg); err == nil {
+		t.Fatal("Deploy accepted a latest-tagged profiles image")
+	}
+}
+
+// TestDeploy_TenantCredentialsSecret: the chart value that makes CWE read the
+// tenant login credentials is set exactly when a Secret is named, so hosts that
+// already exist keep their CWE deployed as before.
+func TestDeploy_TenantCredentialsSecret(t *testing.T) {
+	tests := []struct {
+		name   string
+		secret string
+		want   bool
+	}{
+		{"unset leaves the chart value alone", "", false},
+		{"a named Secret reaches the CWE install", "nke-e2e-tenant-creds", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testConfig(t)
+			cfg.TenantCredentialsSecret = tt.secret
+			runner := &fakeRunner{}
+			if err := New(runner, nil).Deploy(context.Background(), "/tmp/kubeconfig", cfg); err != nil {
+				t.Fatalf("Deploy: %v", err)
+			}
+			cwe := joinArgs(runner.calls[callIndex(runner, "upgrade --install "+cweReleaseName)].args)
+			got := strings.Contains(cwe, "secrets.dgxcTenantCredSecretName="+tt.secret) && tt.secret != ""
+			if got != tt.want {
+				t.Errorf("cwe install = %q; secret value present = %t, want %t", cwe, got, tt.want)
+			}
+			if !tt.want && strings.Contains(cwe, "dgxcTenantCredSecretName") {
+				t.Errorf("cwe install names a tenant credentials Secret none was configured: %q", cwe)
+			}
+		})
+	}
+}
