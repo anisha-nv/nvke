@@ -8,7 +8,7 @@ Installing the deploy path is a post-bootstrap step. `nkectl bootstrap site` bri
 
 | Path | For |
 |---|---|
-| [`deploy/nico/`](../../deploy/nico/) | Customers. A NICo site controller on real hardware, with SPIRE. Its [README](../../deploy/nico/README.md) explains the item order |
+| [`deploy/nico/`](https://github.com/dsx-ai-factory/nke/tree/main/deploy/nico) | Customers. A NICo site controller on real hardware, with SPIRE. Its [README](https://github.com/dsx-ai-factory/nke/blob/main/deploy/nico/README.md) explains the item order |
 | `controller/deploy/capd-e2e/` | The CAPD end-to-end lane. Internal |
 | `controller/deploy/capnico-e2e/` | The CAPNICo end-to-end lane against the NICo simulator. Internal |
 

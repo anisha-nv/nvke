@@ -6,13 +6,13 @@ The install takes three inputs.
 
 | Input | Says |
 |---|---|
-| The deploy path, [`deploy/nico/`](../../deploy/nico/) | What to install and in which order. See [Deploy Path](deploy-path.md) |
+| The deploy path, [`deploy/nico/`](https://github.com/dsx-ai-factory/nke/tree/main/deploy/nico) | What to install and in which order. See [Deploy Path](deploy-path.md) |
 | `release-manifest.yaml` | Which published artifacts to use, each by OCI reference and digest. See [Release Manifest](#release-manifest) |
 | `site-config.yaml` | What is specific to this site. See [Describe Your Site](#3-describe-your-site) |
 
 `site-config.yaml` is the interim site input. Its contents belong in the site spec, and folding them in is the intended end state. Until then it is a separate file.
 
-The install has seven stages, numbered 0 to 6. Each stage has a `run` step and a `check` step. Each `run` is safe to repeat. You can stop after any stage and resume later. The scripts live in [`deploy/`](../../deploy/): `install.sh` runs every stage, `stages/0N-name.sh` runs one. The [deploy README](../../deploy/README.md) lists every environment variable they read.
+The install has seven stages, numbered 0 to 6. Each stage has a `run` step and a `check` step. Each `run` is safe to repeat. You can stop after any stage and resume later. The scripts live in [`deploy/`](https://github.com/dsx-ai-factory/nke/tree/main/deploy): `install.sh` runs every stage, `stages/0N-name.sh` runs one. The [deploy README](https://github.com/dsx-ai-factory/nke/blob/main/deploy/README.md) lists every environment variable they read.
 
 ```bash
 export SITE_KUBECONFIG=./my-site.kubeconfig
@@ -60,7 +60,7 @@ The controller image and the four external charts are pinned here. The controlle
 There are two ways to get the file.
 
 - **From an NKD Release.** `nkdctl release verify` checks the signature and provenance of a Release and prints its artifacts with references. The converter `deploy/lib/nkd-release-to-nke.py` turns that output into this file. NKD's description carries no source pin and no chart versions, so you add them. With `RELEASE_REF` set instead of `RELEASE_FILE`, Check Readiness does both; it also needs `RELEASE_SOURCE_REPO`, `RELEASE_SOURCE_TAG` and `RELEASE_CHART_VERSIONS`.
-- **By hand.** Build the artifacts, push them to a registry the nodes reach, and write the file with those refs. See [Artifacts](#artifacts). An air-gapped site points every ref at its own registry. [`deploy/release-manifest.example.yaml`](../../deploy/release-manifest.example.yaml) shows the shape.
+- **By hand.** Build the artifacts, push them to a registry the nodes reach, and write the file with those refs. See [Artifacts](#artifacts). An air-gapped site points every ref at its own registry. [`deploy/release-manifest.example.yaml`](https://github.com/dsx-ai-factory/nke/blob/main/deploy/release-manifest.example.yaml) shows the shape.
 
 ## Before You Begin
 
