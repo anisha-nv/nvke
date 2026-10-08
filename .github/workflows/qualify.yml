@@ -83,7 +83,7 @@ jobs:
   qualify:
     name: ${{ matrix.name }}
     needs: plan
-    if: needs.plan.outputs.streams != '[]'
+    if: success() && needs.plan.outputs.streams != '[]'
     permissions:
       actions: write
     strategy:
@@ -132,6 +132,17 @@ jobs:
               "cni-ovn-version": (($c.dependencies[] | select(.name=="nke-cni-ovn") | .version) // "")
             } + $images)
           ' <<<"${PLAN}")"
+
+          # The jq filter above binds $s and $artifacts with `as`, which
+          # silently emits one JSON document per match rather than erroring
+          # if a stream name or an os-image dependency isn't unique -- catch
+          # that here, since a second document would otherwise corrupt
+          # GITHUB_OUTPUT with an embedded newline.
+          count="$(wc -l <<<"${stream}")"
+          if [ "${count}" -ne 1 ]; then
+            echo "::error::stream ${STREAM_NAME} matched ${count} times in the plan; expected exactly 1 -- check for a duplicate stream name or os-image dependency"
+            exit 1
+          fi
 
           if [ -z "${stream}" ] || [ "${stream}" = "null" ]; then
             echo "::error::stream ${STREAM_NAME} not found in the plan this job was handed"

@@ -69,6 +69,15 @@ while IFS= read -r name; do
     } + $images)
   ' <<<"${plan}")"
 
+  # The jq filter above binds $s and $artifacts with `as`, which silently
+  # emits one JSON document per match rather than erroring if a stream name
+  # or an os-image dependency isn't unique -- catch that here.
+  count="$(wc -l <<<"${stream}")"
+  if [ "${count}" -ne 1 ]; then
+    echo "error: stream ${name} matched ${count} times in the plan; expected exactly 1 -- check for a duplicate stream name or os-image dependency" >&2
+    exit 1
+  fi
+
   echo "=== ${name} ==="
   jq . <<<"${stream}"
 
