@@ -1,0 +1,134 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Resolves qualify/qualification.yaml against qualify/versions.yaml into a
+# GitHub Actions matrix, then dispatches forge-site-controller-e2e.yml once
+# per stream and waits for each to finish.
+#
+# This is the scheduled, unattended counterpart to qualify/run-matrix.sh,
+# which does the identical resolution but is meant to be run by hand. The
+# resolution logic in the plan job below is kept in lockstep with that
+# script; a change to one should be mirrored in the other until there is a
+# single place both read from.
+#
+# Needs a GitHub App installed on this repo, Actions: Read and write and
+# nothing else, with its ID and private key stored as the QUALIFY_APP_ID and
+# QUALIFY_APP_PRIVATE_KEY secrets. The default GITHUB_TOKEN cannot trigger
+# workflow_dispatch on another workflow in the same repo -- GitHub blocks
+# that specifically to prevent one workflow's automatic token from chaining
+# into another run. Nothing here works until that App exists and is
+# installed; ask whoever owns the dsx-ai-factory GitHub org to set it up.
+name: Qualify
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Resolve the qualification matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve each stream against versions.yaml
+        id: resolve
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          DIR="qualify"
+          stream_count="$(yq '.streams | length' "${DIR}/qualification.yaml")"
+          entries="[]"
+          for ((i=0; i<stream_count; i++)); do
+            name="$(yq ".streams[$i].name" "${DIR}/qualification.yaml")"
+            arch="$(yq ".streams[$i].arch" "${DIR}/qualification.yaml")"
+            gpu="$(yq ".streams[$i].gpu" "${DIR}/qualification.yaml")"
+            kube="$(yq ".streams[$i].kube" "${DIR}/qualification.yaml")"
+            os="$(yq ".streams[$i].os" "${DIR}/qualification.yaml")"
+
+            kube_version="$(yq ".kubernetes.\"${kube}\"" "${DIR}/versions.yaml")"
+            image="$(yq ".os-images.\"${os}\".\"${arch}\".image" "${DIR}/versions.yaml")"
+            bootloader="$(yq ".os-images.\"${os}\".\"${arch}\".bootloader" "${DIR}/versions.yaml")"
+
+            entry="$(jq -n \
+              --arg name "$name" --arg arch "$arch" --arg gpu "$gpu" \
+              --arg kube_version "$kube_version" --arg image "$image" --arg bootloader "$bootloader" \
+              '{name: $name, arch: $arch, gpu: $gpu, "kubernetes-version": $kube_version,
+                "os-image": $image, "os-image-bootloader": $bootloader}')"
+            entries="$(jq -c --argjson e "$entry" '. + [$e]' <<<"$entries")"
+          done
+          echo "matrix=${entries}" >> "${GITHUB_OUTPUT}"
+          echo "::notice::resolved ${stream_count} streams"
+          jq . <<<"$entries"
+
+  qualify:
+    name: ${{ matrix.name }}
+    needs: plan
+    if: needs.plan.outputs.matrix != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint a short-lived App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.QUALIFY_APP_ID }}
+          private-key: ${{ secrets.QUALIFY_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: nke
+
+      - name: Dispatch forge-site-controller-e2e.yml for this stream
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -Eeuo pipefail
+          args=(
+            --repo "${{ github.repository }}"
+            --ref main
+            -f stage=full
+            -f "arch=${{ matrix.arch }}"
+            -f "gpu=${{ matrix.gpu }}"
+            -f "kubernetes-version=${{ matrix['kubernetes-version'] }}"
+          )
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            args+=(-f "os-image-arm64=${{ matrix['os-image'] }}" -f "os-image-bootloader-arm64=${{ matrix['os-image-bootloader'] }}")
+          else
+            args+=(-f "os-image-amd64=${{ matrix['os-image'] }}" -f "os-image-bootloader-amd64=${{ matrix['os-image-bootloader'] }}")
+          fi
+
+          # workflow_dispatch returns nothing identifying the run it created,
+          # so the run is found the same way a person would: the newest
+          # workflow_dispatch run against this workflow after the moment this
+          # dispatched. A concurrent manual dispatch of the same workflow in
+          # this window would be misattributed; accepted for now since this
+          # job is the only thing expected to dispatch it on a schedule.
+          before="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          gh workflow run forge-site-controller-e2e.yml "${args[@]}"
+          sleep 15
+          run_id="$(gh run list --repo "${{ github.repository }}" --workflow forge-site-controller-e2e.yml \
+            --json databaseId,event,createdAt \
+            --jq "[.[] | select(.event==\"workflow_dispatch\" and .createdAt>=\"${before}\")] | sort_by(.createdAt) | first | .databaseId")"
+          if [ -z "${run_id}" ] || [ "${run_id}" = "null" ]; then
+            echo "::error::could not find the dispatched run for ${{ matrix.name }}"
+            exit 1
+          fi
+          echo "run_id=${run_id}" >> "${GITHUB_OUTPUT}"
+          echo "::notice::dispatched run ${run_id} for ${{ matrix.name }}"
+
+      - name: Wait for it to finish
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -Eeuo pipefail
+          gh run watch "${{ steps.dispatch.outputs.run_id }}" --exit-status --repo "${{ github.repository }}"
