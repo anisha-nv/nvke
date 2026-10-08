@@ -22,13 +22,6 @@
 # by hand. The two are kept in lockstep; a change to one should be mirrored
 # in the other until there is a single place both read from.
 #
-# Needs a GitHub App installed on this repo, Actions: Read and write and
-# nothing else, with its ID and private key stored as the QUALIFY_APP_ID and
-# QUALIFY_APP_PRIVATE_KEY secrets. The default GITHUB_TOKEN cannot trigger
-# workflow_dispatch on another workflow in the same repo -- GitHub blocks
-# that specifically to prevent one workflow's automatic token from chaining
-# into another run. Nothing here works until that App exists and is
-# installed; ask whoever owns the dsx-ai-factory GitHub org to set it up.
 name: Qualify
 
 on:
@@ -38,6 +31,8 @@ on:
 
 permissions:
   contents: read
+  actions: write
+  actions: write
 
 jobs:
   plan:
@@ -134,19 +129,10 @@ jobs:
           echo "stream-json=${stream}" >> "${GITHUB_OUTPUT}"
           jq . <<<"${stream}"
 
-      - name: Mint a short-lived App token
-        id: app-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.QUALIFY_APP_ID }}
-          private-key: ${{ secrets.QUALIFY_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: nke
-
       - name: Dispatch forge-site-controller-e2e.yml for this stream
         id: dispatch
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           STREAM_JSON: ${{ steps.decode.outputs.stream-json }}
         run: |
           set -Eeuo pipefail
@@ -177,7 +163,7 @@ jobs:
 
       - name: Wait for it to finish
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           gh run watch "${{ steps.dispatch.outputs.run_id }}" --exit-status --repo "${{ github.repository }}"
