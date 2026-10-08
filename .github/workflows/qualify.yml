@@ -1,25 +1,26 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Fills the placeholders in qualify/plan.json from the same SITE_E2E_*
-# repository variables forge-site-controller-e2e.yml itself falls back to,
-# flattens each combination/stream pair into the shape that workflow's
-# stream-json input takes, fans the result out as a GitHub Actions matrix,
-# then dispatches forge-site-controller-e2e.yml once per stream and waits
-# for each to finish.
+# The plan job only fills the placeholders in qualify/plan.json from the
+# same SITE_E2E_*/QUALIFY_* repository variables forge-site-controller-e2e.yml
+# itself falls back to, and outputs the substituted plan whole. Everything
+# after that -- deciding which streams exist, flattening one into the shape
+# forge-site-controller-e2e.yml's stream-json input takes, dispatching it,
+# waiting for it -- happens once per stream in the qualify job below, fanned
+# out over a GitHub Actions matrix.
 #
 # qualify/plan.json is hand-authored for now. Replacing it with the output of
 # a real `qualify plan` resolver is a change to what produces that file, not
-# to this workflow -- the plan job below only cares that it has plan.json's
-# shape (subject/version/scope/combinations[], each combination carrying
+# to this workflow -- the plan job only cares that it has plan.json's shape
+# (subject/version/scope/combinations[], each combination carrying
 # components[], dependencies[] and streams[], each stream carrying
 # capabilities and its own dependencies[]) with placeholders already
 # substitutable from the environment.
 #
 # This is the scheduled, unattended counterpart to qualify/run-matrix.sh,
-# which does the identical substitution and flattening but is meant to be
-# run by hand. The two are kept in lockstep; a change to one should be
-# mirrored in the other until there is a single place both read from.
+# which does the identical substitution and decoding but is meant to be run
+# by hand. The two are kept in lockstep; a change to one should be mirrored
+# in the other until there is a single place both read from.
 #
 # Needs a GitHub App installed on this repo, Actions: Read and write and
 # nothing else, with its ID and private key stored as the QUALIFY_APP_ID and
@@ -40,10 +41,11 @@ permissions:
 
 jobs:
   plan:
-    name: Resolve the qualification matrix
+    name: Fill the plan's placeholders
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.resolve.outputs.matrix }}
+      plan: ${{ steps.resolve.outputs.plan }}
+      streams: ${{ steps.resolve.outputs.streams }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,51 +70,70 @@ jobs:
           SITE_E2E_OS_IMAGE_BOOTLOADER_AMD64: ${{ vars.SITE_E2E_OS_IMAGE_BOOTLOADER_AMD64 }}
         run: |
           set -Eeuo pipefail
-          resolved="$(envsubst < qualify/plan.json)"
+          plan="$(envsubst < qualify/plan.json | jq -c .)"
+          echo "plan=${plan}" >> "${GITHUB_OUTPUT}"
 
-          # Each stream becomes one flat object: its own capabilities, the
-          # component versions from the combination it belongs to, and --
-          # from its own os-image dependency's artifacts -- just the one
-          # image and bootloader URL matching its own arch. This is the
-          # exact shape forge-site-controller-e2e.yml's stream-json input
-          # takes, so the qualify job below can pass a matrix entry straight
-          # through with no further reshaping.
-          matrix="$(jq -c '
-            [
-              .combinations[] as $c |
-              $c.streams[] as $s |
-              ($s.capabilities.arch) as $arch |
-              ($s.dependencies[] | select(.name=="os-image") | .artifacts) as $artifacts |
-              (reduce ($artifacts[] | select(.arch==$arch)) as $a
-                 ({}; . + {($a.name + "-" + $a.arch): $a.url})
-              ) as $images |
-              ({
-                name: $s.name,
-                arch: $arch,
-                gpu: ($s.capabilities.gpu // ""),
-                "kubernetes-version": (($s.dependencies[] | select(.name=="kube") | .version) // ""),
-                "controller-version": (($c.components[] | select(.name=="controller") | .version) // ""),
-                "cli-version": (($c.components[] | select(.name=="cli") | .version) // ""),
-                "capi-provisioned-version": (($c.components[] | select(.name=="capi-provisioned") | .version) // ""),
-                "cni-ovn-version": (($c.dependencies[] | select(.name=="nke-cni-ovn") | .version) // "")
-              } + $images)
-            ]
-          ' <<<"${resolved}")"
+          # The matrix only needs enough to fan out and to find this stream
+          # again inside the plan: its name. Everything else is decoded
+          # per-stream in the qualify job below, from the full plan this job
+          # output above, not computed here.
+          streams="$(jq -c '[.combinations[] as $c | $c.streams[] | {name: .name}]' <<<"${plan}")"
+          echo "streams=${streams}" >> "${GITHUB_OUTPUT}"
 
-          echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
-          echo "::notice::resolved $(jq 'length' <<<"${matrix}") streams"
-          jq . <<<"${matrix}"
+          echo "::notice::filled the plan; $(jq 'length' <<<"${streams}") streams"
+          jq . <<<"${plan}"
 
   qualify:
     name: ${{ matrix.name }}
     needs: plan
-    if: needs.plan.outputs.matrix != '[]'
+    if: needs.plan.outputs.streams != '[]'
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJson(needs.plan.outputs.matrix) }}
+        include: ${{ fromJson(needs.plan.outputs.streams) }}
     runs-on: ubuntu-latest
     steps:
+      - name: Decode this stream from the plan
+        id: decode
+        env:
+          PLAN: ${{ needs.plan.outputs.plan }}
+          STREAM_NAME: ${{ matrix.name }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          # One flat object: this stream's own capabilities, the component
+          # versions from the combination it belongs to, and -- from its own
+          # os-image dependency's artifacts -- just the one image and
+          # bootloader URL matching its own arch. This is the exact shape
+          # forge-site-controller-e2e.yml's stream-json input takes.
+          stream="$(jq -c --arg name "${STREAM_NAME}" '
+            .combinations[] as $c |
+            ($c.streams[] | select(.name==$name)) as $s |
+            ($s.capabilities.arch) as $arch |
+            ($s.dependencies[] | select(.name=="os-image") | .artifacts) as $artifacts |
+            (reduce ($artifacts[] | select(.arch==$arch)) as $a
+               ({}; . + {($a.name + "-" + $a.arch): $a.url})
+            ) as $images |
+            ({
+              name: $s.name,
+              arch: $arch,
+              gpu: ($s.capabilities.gpu // ""),
+              "kubernetes-version": (($s.dependencies[] | select(.name=="kube") | .version) // ""),
+              "controller-version": (($c.components[] | select(.name=="controller") | .version) // ""),
+              "cli-version": (($c.components[] | select(.name=="cli") | .version) // ""),
+              "capi-provisioned-version": (($c.components[] | select(.name=="capi-provisioned") | .version) // ""),
+              "cni-ovn-version": (($c.dependencies[] | select(.name=="nke-cni-ovn") | .version) // "")
+            } + $images)
+          ' <<<"${PLAN}")"
+
+          if [ -z "${stream}" ] || [ "${stream}" = "null" ]; then
+            echo "::error::stream ${STREAM_NAME} not found in the plan this job was handed"
+            exit 1
+          fi
+          echo "stream-json=${stream}" >> "${GITHUB_OUTPUT}"
+          jq . <<<"${stream}"
+
       - name: Mint a short-lived App token
         id: app-token
         uses: actions/create-github-app-token@v2
@@ -126,7 +147,7 @@ jobs:
         id: dispatch
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          STREAM_JSON: ${{ toJson(matrix) }}
+          STREAM_JSON: ${{ steps.decode.outputs.stream-json }}
         run: |
           set -Eeuo pipefail
 

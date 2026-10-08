@@ -4,8 +4,9 @@
 #
 # Fills the placeholders in plan.json from the same SITE_E2E_* and QUALIFY_*
 # repository variables forge-site-controller-e2e.yml itself falls back to,
-# flattens each combination/stream pair into that workflow's stream-json
-# shape, then dispatches it once per stream.
+# then -- per stream, same as the qualify job in qualify.yml does -- decodes
+# just that stream into the shape forge-site-controller-e2e.yml's
+# stream-json input takes and dispatches it.
 #
 # Usage: qualify/run-matrix.sh [ref]
 # Set DRY_RUN=1 to print the resolved gh workflow run command instead of
@@ -28,17 +29,17 @@ for name in QUALIFY_VERSION QUALIFY_KIND_VERSION QUALIFY_CLUSTERCTL_VERSION QUAL
   export "${name}=$(gh variable get "${name}" --repo "${REPO}" 2>/dev/null || true)"
 done
 
-resolved="$(envsubst < "${DIR}/plan.json")"
+plan="$(envsubst < "${DIR}/plan.json" | jq -c .)"
+names="$(jq -r '[.combinations[] as $c | $c.streams[] | .name] | .[]' <<<"${plan}")"
 
-# Each stream becomes one flat object: its own capabilities, the component
-# versions from the combination it belongs to, and -- from its own os-image
-# dependency's artifacts -- just the one image and bootloader URL matching
-# its own arch. This is the exact shape forge-site-controller-e2e.yml's
-# stream-json input takes.
-matrix="$(jq -c '
-  [
+while IFS= read -r name; do
+  # One flat object: this stream's own capabilities, the component versions
+  # from the combination it belongs to, and -- from its own os-image
+  # dependency's artifacts -- just the one image and bootloader URL matching
+  # its own arch.
+  stream="$(jq -c --arg name "${name}" '
     .combinations[] as $c |
-    $c.streams[] as $s |
+    ($c.streams[] | select(.name==$name)) as $s |
     ($s.capabilities.arch) as $arch |
     ($s.dependencies[] | select(.name=="os-image") | .artifacts) as $artifacts |
     (reduce ($artifacts[] | select(.arch==$arch)) as $a
@@ -54,14 +55,7 @@ matrix="$(jq -c '
       "capi-provisioned-version": (($c.components[] | select(.name=="capi-provisioned") | .version) // ""),
       "cni-ovn-version": (($c.dependencies[] | select(.name=="nke-cni-ovn") | .version) // "")
     } + $images)
-  ]
-' <<<"${resolved}")"
-
-stream_count="$(jq 'length' <<<"${matrix}")"
-
-for ((i=0; i<stream_count; i++)); do
-  stream="$(jq -c ".[$i]" <<<"${matrix}")"
-  name="$(jq -r '.name' <<<"${stream}")"
+  ' <<<"${plan}")"
 
   echo "=== ${name} ==="
   jq . <<<"${stream}"
@@ -79,4 +73,4 @@ for ((i=0; i<stream_count; i++)); do
     "${cmd[@]}"
   fi
   echo
-done
+done <<<"${names}"
