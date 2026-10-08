@@ -28,14 +28,6 @@ on:
   schedule:
     - cron: "0 6 * * *"
   workflow_dispatch: {}
-  # TEMPORARY: a brand-new workflow file can't be workflow_dispatch'd until
-  # it has existed on the default branch once, so this is the only way to
-  # exercise plan/qualify for real pre-merge. pull_request has no such
-  # requirement -- it runs whatever's on the PR's own branch, same as
-  # forge-site-controller-e2e.yml's own labeled path. Remove once this has
-  # run clean from main at least once.
-  pull_request:
-    types: [labeled]
 
 permissions:
   contents: read
@@ -44,13 +36,6 @@ jobs:
   plan:
     name: Fill the plan's placeholders
     runs-on: ubuntu-latest
-    # TEMPORARY, paired with the pull_request trigger above: a dispatch or
-    # schedule run has no event.label, so this only restricts the
-    # pull_request path, to a deliberate label rather than every PR.
-    if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-       github.event.label.name == 'qualify-test')
     outputs:
       plan: ${{ steps.resolve.outputs.plan }}
       streams: ${{ steps.resolve.outputs.streams }}
@@ -160,12 +145,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           STREAM_JSON: ${{ steps.decode.outputs.stream-json }}
-          # TEMPORARY: head_ref is only set on a pull_request run, which
-          # only happens here via the TEMPORARY trigger above -- it lets a
-          # PR exercise this against its own branch's forge-site-controller-
-          # e2e.yml instead of main's. Revert to a bare 'main' alongside
-          # that trigger.
-          DISPATCH_REF: ${{ github.head_ref || 'main' }}
         run: |
           set -Eeuo pipefail
 
@@ -178,7 +157,7 @@ jobs:
           before="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           gh workflow run forge-site-controller-e2e.yml \
             --repo "${{ github.repository }}" \
-            --ref "${DISPATCH_REF}" \
+            --ref main \
             -f stage=full \
             -f "stream-json=${STREAM_JSON}"
           sleep 15
