@@ -55,6 +55,13 @@
 # private half, which never leaves the runner.
 name: Site and tenant e2e
 
+# A stream dispatch names its own run: workflow_dispatch returns no run id,
+# so a caller matching a dispatch back to the run it created has to do it by
+# something else about the run. Falls back to the run id itself, which is
+# unique but only knowable after the fact -- fine for every other trigger,
+# which has no caller waiting to find this specific run.
+run-name: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['name']) || github.run_id }}
+
 on:
   workflow_dispatch:
     inputs:

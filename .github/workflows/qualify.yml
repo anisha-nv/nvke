@@ -31,8 +31,6 @@ on:
 
 permissions:
   contents: read
-  actions: write
-  actions: write
 
 jobs:
   plan:
@@ -65,7 +63,11 @@ jobs:
           SITE_E2E_OS_IMAGE_BOOTLOADER_AMD64: ${{ vars.SITE_E2E_OS_IMAGE_BOOTLOADER_AMD64 }}
         run: |
           set -Eeuo pipefail
-          plan="$(envsubst < qualify/plan.json | jq -c .)"
+          # Restricted to these names: a bare envsubst replaces every
+          # $VAR-shaped piece of text in the file, which would corrupt any
+          # literal $ a URL or value happens to contain.
+          names='$QUALIFY_VERSION $QUALIFY_KIND_VERSION $QUALIFY_CLUSTERCTL_VERSION $QUALIFY_NERDCTL_VERSION $SITE_E2E_CONTROLLER_VERSION $SITE_E2E_CLI_VERSION $SITE_E2E_OS_IMAGE_VERSION $SITE_E2E_CAPI_PROVISIONED_VERSION $SITE_E2E_CNI_OVN_VERSION $SITE_E2E_KUBERNETES_VERSION $SITE_E2E_OS_IMAGE_ARM64 $SITE_E2E_OS_IMAGE_BOOTLOADER_ARM64 $SITE_E2E_OS_IMAGE_AMD64 $SITE_E2E_OS_IMAGE_BOOTLOADER_AMD64'
+          plan="$(envsubst "${names}" < qualify/plan.json | jq -c .)"
           echo "plan=${plan}" >> "${GITHUB_OUTPUT}"
 
           # The matrix only needs enough to fan out and to find this stream
@@ -82,8 +84,17 @@ jobs:
     name: ${{ matrix.name }}
     needs: plan
     if: needs.plan.outputs.streams != '[]'
+    permissions:
+      actions: write
     strategy:
       fail-fast: false
+      # Each dispatch is matched back to its own run by its run-name (the
+      # stream's own name, unique per dispatch), not by timing, so dispatching
+      # several at once is safe. forge-site-controller-e2e.yml's own
+      # concurrency group still serializes same-ref runs underneath this, so
+      # raising this only affects how many of these jobs wait in parallel for
+      # that, not how many Forge instances run at once.
+      max-parallel: 2
       matrix:
         include: ${{ fromJson(needs.plan.outputs.streams) }}
     runs-on: ubuntu-latest
@@ -138,12 +149,11 @@ jobs:
           set -Eeuo pipefail
 
           # workflow_dispatch returns nothing identifying the run it
-          # created, so the run is found the same way a person would: the
-          # newest workflow_dispatch run against this workflow after the
-          # moment this dispatched. A concurrent manual dispatch of the same
-          # workflow in this window would be misattributed; accepted for
-          # now since this job is the only thing expected to dispatch it on
-          # a schedule.
+          # created, so the run is found by the two things that together
+          # pin it down: its run-name, which forge-site-controller-e2e.yml
+          # sets to this stream's own name (unique among whatever dispatched
+          # at the same moment), and createdAt, which rules out an older run
+          # of a stream by the same name from a previous night.
           before="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           gh workflow run forge-site-controller-e2e.yml \
             --repo "${{ github.repository }}" \
@@ -152,8 +162,8 @@ jobs:
             -f "stream-json=${STREAM_JSON}"
           sleep 15
           run_id="$(gh run list --repo "${{ github.repository }}" --workflow forge-site-controller-e2e.yml \
-            --json databaseId,event,createdAt \
-            --jq "[.[] | select(.event==\"workflow_dispatch\" and .createdAt>=\"${before}\")] | sort_by(.createdAt) | first | .databaseId")"
+            --json databaseId,displayTitle,event,createdAt \
+            --jq "[.[] | select(.event==\"workflow_dispatch\" and .createdAt>=\"${before}\" and .displayTitle==\"${{ matrix.name }}\")] | sort_by(.createdAt) | first | .databaseId")"
           if [ -z "${run_id}" ] || [ "${run_id}" = "null" ]; then
             echo "::error::could not find the dispatched run for ${{ matrix.name }}"
             exit 1

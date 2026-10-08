@@ -19,17 +19,29 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # The exact set plan.json's placeholders reference. Pulled from the
 # repository variables rather than hardcoded, so a value changed in GitHub
-# settings is picked up without touching this script. An unset variable
-# resolves to empty, same as it would inside the scheduled workflow.
-for name in QUALIFY_VERSION QUALIFY_KIND_VERSION QUALIFY_CLUSTERCTL_VERSION QUALIFY_NERDCTL_VERSION \
-            SITE_E2E_CONTROLLER_VERSION SITE_E2E_CLI_VERSION SITE_E2E_OS_IMAGE_VERSION \
-            SITE_E2E_CAPI_PROVISIONED_VERSION SITE_E2E_CNI_OVN_VERSION SITE_E2E_KUBERNETES_VERSION \
-            SITE_E2E_OS_IMAGE_ARM64 SITE_E2E_OS_IMAGE_BOOTLOADER_ARM64 \
-            SITE_E2E_OS_IMAGE_AMD64 SITE_E2E_OS_IMAGE_BOOTLOADER_AMD64; do
-  export "${name}=$(gh variable get "${name}" --repo "${REPO}" 2>/dev/null || true)"
+# settings is picked up without touching this script. A variable that
+# genuinely does not exist resolves to empty, same as it would inside the
+# scheduled workflow; a failed gh call (auth, wrong repo) warns instead of
+# silently resolving the same way.
+var_names=(QUALIFY_VERSION QUALIFY_KIND_VERSION QUALIFY_CLUSTERCTL_VERSION QUALIFY_NERDCTL_VERSION
+           SITE_E2E_CONTROLLER_VERSION SITE_E2E_CLI_VERSION SITE_E2E_OS_IMAGE_VERSION
+           SITE_E2E_CAPI_PROVISIONED_VERSION SITE_E2E_CNI_OVN_VERSION SITE_E2E_KUBERNETES_VERSION
+           SITE_E2E_OS_IMAGE_ARM64 SITE_E2E_OS_IMAGE_BOOTLOADER_ARM64
+           SITE_E2E_OS_IMAGE_AMD64 SITE_E2E_OS_IMAGE_BOOTLOADER_AMD64)
+envsubst_names=""
+for name in "${var_names[@]}"; do
+  value="$(gh variable get "${name}" --repo "${REPO}" 2>&1)" || {
+    echo "warning: gh variable get ${name} failed: ${value}" >&2
+    value=""
+  }
+  export "${name}=${value}"
+  envsubst_names="${envsubst_names}\${${name}} "
 done
 
-plan="$(envsubst < "${DIR}/plan.json" | jq -c .)"
+# Restricted to the names above: a bare envsubst replaces every $VAR-shaped
+# piece of text in the file, which would corrupt any literal $ a URL or
+# value happens to contain.
+plan="$(envsubst "${envsubst_names}" < "${DIR}/plan.json" | jq -c .)"
 names="$(jq -r '[.combinations[] as $c | $c.streams[] | .name] | .[]' <<<"${plan}")"
 
 while IFS= read -r name; do
