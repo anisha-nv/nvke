@@ -37,11 +37,14 @@
 # its job's status: a run whose tests passed but whose upload or teardown
 # failed is a failed run.
 #
-# INERT UNTIL CONFIGURED. Nothing runs until the TESTGRID_BUCKET,
+# OFF UNTIL ENABLED. Nothing runs unless the TESTGRID_PUBLISH_ENABLED
+# repository variable is exactly 'true', so turning publishing on or off is a
+# settings change, not a code change. It also needs the TESTGRID_BUCKET,
 # TESTGRID_GROUP, TESTGRID_WIF_PROVIDER and TESTGRID_PUBLISH_SA repository
-# variables are all set. They name infrastructure outside this repository, so
-# they live in the repository's settings rather than here. TESTGRID_DRY_RUN=true writes nothing, but still authenticates, so the
-# federation has to exist first.
+# variables. They name infrastructure outside this repository, so they live in
+# the repository's settings rather than here. TESTGRID_DRY_RUN=true writes
+# nothing, but still authenticates, so the federation has to exist first.
+# Enable with dry run on, check a run's publish log, then turn dry run off.
 name: TestGrid publish
 
 on:
@@ -64,6 +67,7 @@ jobs:
     # has nothing to say. A fork cannot run the lane, and is excluded anyway.
     if: >-
       github.repository == 'dsx-ai-factory/nke' &&
+      vars.TESTGRID_PUBLISH_ENABLED == 'true' &&
       vars.TESTGRID_BUCKET != '' &&
       vars.TESTGRID_GROUP != '' &&
       vars.TESTGRID_WIF_PROVIDER != '' &&
