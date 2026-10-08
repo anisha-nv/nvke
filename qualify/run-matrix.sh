@@ -11,7 +11,7 @@
 set -Eeuo pipefail
 
 REPO="dsx-ai-factory/nke"
-REF="${1:-hasampath/e2e-site-fixes}"
+REF="${1:-main}"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 stream_count="$(yq '.streams | length' "${DIR}/qualification.yaml")"
