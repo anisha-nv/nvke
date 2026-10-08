@@ -58,6 +58,10 @@ name: Site and tenant e2e
 on:
   workflow_dispatch:
     inputs:
+      stream-json:
+        description: "A single resolved stream, as JSON, e.g. from qualify/plan.json: {\"arch\", \"gpu\", \"kubernetes-version\", \"controller-version\", \"cli-version\", \"capi-provisioned-version\", \"cni-ovn-version\", \"os-image-<arch>\", \"os-image-bootloader-<arch>\"}. Any key it carries wins over the individual input/variable of the same name below; a key it omits falls through to that input or variable exactly as if stream-json were never set. Empty leaves every value to the inputs below, which is what a person running this by hand gets."
+        type: string
+        required: false
       stage:
         description: How far to go. provision stops at a booted node, bootstrap adds vanilla Kubernetes, full adds the deploy path and a tenant.
         type: choice
@@ -234,13 +238,13 @@ jobs:
       # in. Every use of it downstream -- the image site-inputs stages, the
       # NKECTL_CWE_IMAGE the bootstrap runs, and the tag the SBOM deploys --
       # reads this one value, which is what keeps them the same image.
-      SITE_CONTROLLER_VERSION: ${{ inputs.controller-version || vars.SITE_E2E_CONTROLLER_VERSION || vars.FORGE_E2E_CONTROLLER_VERSION }}
+      SITE_CONTROLLER_VERSION: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['controller-version']) || inputs.controller-version || vars.SITE_E2E_CONTROLLER_VERSION || vars.FORGE_E2E_CONTROLLER_VERSION }}
       # The same shape for nkectl: empty builds it from this checkout, a
       # version stages that cli/<version> release. The resolve step fills in
       # the commit when it builds, so -e2e.versions always names one. Named
       # for the component, as CAPI_PROVISIONED_VERSION is; the make variable
       # it feeds keeps the SITE_ prefix.
-      CLI_VERSION: ${{ inputs.cli-version || vars.SITE_E2E_CLI_VERSION }}
+      CLI_VERSION: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['cli-version']) || inputs.cli-version || vars.SITE_E2E_CLI_VERSION }}
       # The name CWE is installed under, which the deploy path decides and the
       # suite has to be told. The deploy path is exported from
       # SITE_CONTROLLER_VERSION, and CWE was renamed partway through the
@@ -266,12 +270,12 @@ jobs:
       # Components the run qualifies that are not artifacts it downloads. Empty
       # leaves the suite on its own constant, which is what a developer running
       # by hand gets; CI states them so a run records what it qualified.
-      KUBERNETES_VERSION: ${{ inputs.kubernetes-version || vars.SITE_E2E_KUBERNETES_VERSION }}
-      CNI_OVN_VERSION: ${{ inputs.cni-ovn-version || vars.SITE_E2E_CNI_OVN_VERSION }}
-      OS_IMAGE_BOOTLOADER_AMD64: ${{ inputs.os-image-bootloader-amd64 || vars.SITE_E2E_OS_IMAGE_BOOTLOADER_AMD64 }}
-      OS_IMAGE_AMD64: ${{ inputs.os-image-amd64 || vars.SITE_E2E_OS_IMAGE_AMD64 }}
-      OS_IMAGE_BOOTLOADER_ARM64: ${{ inputs.os-image-bootloader-arm64 || vars.SITE_E2E_OS_IMAGE_BOOTLOADER_ARM64 }}
-      OS_IMAGE_ARM64: ${{ inputs.os-image-arm64 || vars.SITE_E2E_OS_IMAGE_ARM64 }}
+      KUBERNETES_VERSION: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['kubernetes-version']) || inputs.kubernetes-version || vars.SITE_E2E_KUBERNETES_VERSION }}
+      CNI_OVN_VERSION: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['cni-ovn-version']) || inputs.cni-ovn-version || vars.SITE_E2E_CNI_OVN_VERSION }}
+      OS_IMAGE_BOOTLOADER_AMD64: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['os-image-bootloader-amd64']) || inputs.os-image-bootloader-amd64 || vars.SITE_E2E_OS_IMAGE_BOOTLOADER_AMD64 }}
+      OS_IMAGE_AMD64: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['os-image-amd64']) || inputs.os-image-amd64 || vars.SITE_E2E_OS_IMAGE_AMD64 }}
+      OS_IMAGE_BOOTLOADER_ARM64: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['os-image-bootloader-arm64']) || inputs.os-image-bootloader-arm64 || vars.SITE_E2E_OS_IMAGE_BOOTLOADER_ARM64 }}
+      OS_IMAGE_ARM64: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['os-image-arm64']) || inputs.os-image-arm64 || vars.SITE_E2E_OS_IMAGE_ARM64 }}
       # The account the OS images bake. Empty is what the OSS os-image releases
       # use; an image from the internal pipeline bakes a different one, and a
       # mismatch fails as a publickey rejection after the provisioning wait
@@ -283,8 +287,8 @@ jobs:
       # variable per key is easier to set correctly than a string whose
       # grammar has to be remembered, and ARCH is needed on its own anyway,
       # for SITE_ARCH.
-      ARCH: ${{ inputs.arch || vars.SITE_E2E_ARCH }}
-      GPU: ${{ inputs.gpu || vars.SITE_E2E_GPU }}
+      ARCH: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['arch']) || inputs.arch || vars.SITE_E2E_ARCH }}
+      GPU: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['gpu']) || inputs.gpu || vars.SITE_E2E_GPU }}
       # A label cannot carry a boolean, so a labelled run takes this from the
       # repository variable, as it does every other setting. Holding a Forge
       # machine is expensive and the variable is easy to leave set, so the run
@@ -304,7 +308,7 @@ jobs:
       # Defaulted rather than required: v0.1.0-rc.1 was the only published tag
       # when this lane was written, and a run that names none should still get
       # a working one rather than fail on an empty reference.
-      CAPI_PROVISIONED_VERSION: ${{ inputs.capi-provisioned-version || vars.SITE_E2E_CAPI_PROVISIONED_VERSION || 'v0.1.0-rc.1' }}
+      CAPI_PROVISIONED_VERSION: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['capi-provisioned-version']) || inputs.capi-provisioned-version || vars.SITE_E2E_CAPI_PROVISIONED_VERSION || 'v0.1.0-rc.1' }}
       # The NGC org the NVCR images are published under. A repository
       # variable, not the nvcr environment's NKE_NGC_ORG: that environment
       # gates the publish jobs, and this job has no business entering it.
@@ -841,6 +845,7 @@ jobs:
         env:
           WORKFLOW: .github/workflows/site-and-tenant-e2e.yml
           OUT: ${{ runner.temp }}/run-inputs.txt
+          IN_STREAM_JSON: ${{ inputs.stream-json }}
           IN_STAGE: ${{ inputs.stage }}
           IN_CONTROLLER_VERSION: ${{ inputs.controller-version }}
           IN_CLI_VERSION: ${{ inputs.cli-version }}
@@ -891,7 +896,17 @@ jobs:
           # The last two are set only for the six renamed away from FORGE_,
           # and empty everywhere else. They exist so a run on an old name
           # says so rather than reporting the new one it did not read.
+          # stream-json is its own row rather than a column added to every row
+          # it can override: the eleven rows it can drive (controller
+          # version, cli version, capi-provisioned version, kubernetes
+          # version, cni-ovn version, the four os-image fields, arch, gpu)
+          # still show the correct resolved value when it wins, because
+          # that's read from the same env var either way, but their "source"
+          # line below names the dispatch input or repository variable
+          # rather than stream JSON. Good enough to know what ran; not
+          # enough to blame this table for which knob set it.
           rows=(
+            "stream JSON|IN_STREAM_JSON|IN_STREAM_JSON||||"
             "stage|SITE_STAGE|IN_STAGE|VAR_STAGE|SITE_E2E_STAGE|WAS_STAGE|FORGE_E2E_STAGE"
             "controller version|SITE_CONTROLLER_VERSION|IN_CONTROLLER_VERSION|VAR_CONTROLLER_VERSION|SITE_E2E_CONTROLLER_VERSION|WAS_CONTROLLER_VERSION|FORGE_E2E_CONTROLLER_VERSION"
             "nkectl version|CLI_VERSION|IN_CLI_VERSION|VAR_CLI_VERSION|SITE_E2E_CLI_VERSION||"

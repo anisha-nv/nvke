@@ -1,15 +1,25 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Resolves qualify/qualification.yaml against qualify/versions.yaml into a
-# GitHub Actions matrix, then dispatches forge-site-controller-e2e.yml once
-# per stream and waits for each to finish.
+# Fills the placeholders in qualify/plan.json from the same SITE_E2E_*
+# repository variables forge-site-controller-e2e.yml itself falls back to,
+# flattens each combination/stream pair into the shape that workflow's
+# stream-json input takes, fans the result out as a GitHub Actions matrix,
+# then dispatches forge-site-controller-e2e.yml once per stream and waits
+# for each to finish.
+#
+# qualify/plan.json is hand-authored for now. Replacing it with the output of
+# a real `qualify plan` resolver is a change to what produces that file, not
+# to this workflow -- the plan job below only cares that it has plan.json's
+# shape (subject/version/scope/combinations[], each combination carrying
+# components[], dependencies[] and streams[], each stream carrying
+# capabilities and its own dependencies[]) with placeholders already
+# substitutable from the environment.
 #
 # This is the scheduled, unattended counterpart to qualify/run-matrix.sh,
-# which does the identical resolution but is meant to be run by hand. The
-# resolution logic in the plan job below is kept in lockstep with that
-# script; a change to one should be mirrored in the other until there is a
-# single place both read from.
+# which does the identical substitution and flattening but is meant to be
+# run by hand. The two are kept in lockstep; a change to one should be
+# mirrored in the other until there is a single place both read from.
 #
 # Needs a GitHub App installed on this repo, Actions: Read and write and
 # nothing else, with its ID and private key stored as the QUALIFY_APP_ID and
@@ -38,35 +48,60 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Resolve each stream against versions.yaml
+      - name: Fill placeholders in plan.json from repository variables
         id: resolve
         shell: bash
+        env:
+          QUALIFY_VERSION: ${{ vars.QUALIFY_VERSION }}
+          QUALIFY_KIND_VERSION: ${{ vars.QUALIFY_KIND_VERSION }}
+          QUALIFY_CLUSTERCTL_VERSION: ${{ vars.QUALIFY_CLUSTERCTL_VERSION }}
+          QUALIFY_NERDCTL_VERSION: ${{ vars.QUALIFY_NERDCTL_VERSION }}
+          SITE_E2E_CONTROLLER_VERSION: ${{ vars.SITE_E2E_CONTROLLER_VERSION }}
+          SITE_E2E_CLI_VERSION: ${{ vars.SITE_E2E_CLI_VERSION }}
+          SITE_E2E_OS_IMAGE_VERSION: ${{ vars.SITE_E2E_OS_IMAGE_VERSION }}
+          SITE_E2E_CAPI_PROVISIONED_VERSION: ${{ vars.SITE_E2E_CAPI_PROVISIONED_VERSION }}
+          SITE_E2E_CNI_OVN_VERSION: ${{ vars.SITE_E2E_CNI_OVN_VERSION }}
+          SITE_E2E_KUBERNETES_VERSION: ${{ vars.SITE_E2E_KUBERNETES_VERSION }}
+          SITE_E2E_OS_IMAGE_ARM64: ${{ vars.SITE_E2E_OS_IMAGE_ARM64 }}
+          SITE_E2E_OS_IMAGE_BOOTLOADER_ARM64: ${{ vars.SITE_E2E_OS_IMAGE_BOOTLOADER_ARM64 }}
+          SITE_E2E_OS_IMAGE_AMD64: ${{ vars.SITE_E2E_OS_IMAGE_AMD64 }}
+          SITE_E2E_OS_IMAGE_BOOTLOADER_AMD64: ${{ vars.SITE_E2E_OS_IMAGE_BOOTLOADER_AMD64 }}
         run: |
           set -Eeuo pipefail
-          DIR="qualify"
-          stream_count="$(yq '.streams | length' "${DIR}/qualification.yaml")"
-          entries="[]"
-          for ((i=0; i<stream_count; i++)); do
-            name="$(yq ".streams[$i].name" "${DIR}/qualification.yaml")"
-            arch="$(yq ".streams[$i].arch" "${DIR}/qualification.yaml")"
-            gpu="$(yq ".streams[$i].gpu" "${DIR}/qualification.yaml")"
-            kube="$(yq ".streams[$i].kube" "${DIR}/qualification.yaml")"
-            os="$(yq ".streams[$i].os" "${DIR}/qualification.yaml")"
+          resolved="$(envsubst < qualify/plan.json)"
 
-            kube_version="$(yq ".kubernetes.\"${kube}\"" "${DIR}/versions.yaml")"
-            image="$(yq ".os-images.\"${os}\".\"${arch}\".image" "${DIR}/versions.yaml")"
-            bootloader="$(yq ".os-images.\"${os}\".\"${arch}\".bootloader" "${DIR}/versions.yaml")"
+          # Each stream becomes one flat object: its own capabilities, the
+          # component versions from the combination it belongs to, and --
+          # from its own os-image dependency's artifacts -- just the one
+          # image and bootloader URL matching its own arch. This is the
+          # exact shape forge-site-controller-e2e.yml's stream-json input
+          # takes, so the qualify job below can pass a matrix entry straight
+          # through with no further reshaping.
+          matrix="$(jq -c '
+            [
+              .combinations[] as $c |
+              $c.streams[] as $s |
+              ($s.capabilities.arch) as $arch |
+              ($s.dependencies[] | select(.name=="os-image") | .artifacts) as $artifacts |
+              (reduce ($artifacts[] | select(.arch==$arch)) as $a
+                 ({}; . + {($a.name + "-" + $a.arch): $a.url})
+              ) as $images |
+              ({
+                name: $s.name,
+                arch: $arch,
+                gpu: ($s.capabilities.gpu // ""),
+                "kubernetes-version": (($s.dependencies[] | select(.name=="kube") | .version) // ""),
+                "controller-version": (($c.components[] | select(.name=="controller") | .version) // ""),
+                "cli-version": (($c.components[] | select(.name=="cli") | .version) // ""),
+                "capi-provisioned-version": (($c.components[] | select(.name=="capi-provisioned") | .version) // ""),
+                "cni-ovn-version": (($c.dependencies[] | select(.name=="nke-cni-ovn") | .version) // "")
+              } + $images)
+            ]
+          ' <<<"${resolved}")"
 
-            entry="$(jq -n \
-              --arg name "$name" --arg arch "$arch" --arg gpu "$gpu" \
-              --arg kube_version "$kube_version" --arg image "$image" --arg bootloader "$bootloader" \
-              '{name: $name, arch: $arch, gpu: $gpu, "kubernetes-version": $kube_version,
-                "os-image": $image, "os-image-bootloader": $bootloader}')"
-            entries="$(jq -c --argjson e "$entry" '. + [$e]' <<<"$entries")"
-          done
-          echo "matrix=${entries}" >> "${GITHUB_OUTPUT}"
-          echo "::notice::resolved ${stream_count} streams"
-          jq . <<<"$entries"
+          echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
+          echo "::notice::resolved $(jq 'length' <<<"${matrix}") streams"
+          jq . <<<"${matrix}"
 
   qualify:
     name: ${{ matrix.name }}
@@ -91,30 +126,23 @@ jobs:
         id: dispatch
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          STREAM_JSON: ${{ toJson(matrix) }}
         run: |
           set -Eeuo pipefail
-          args=(
-            --repo "${{ github.repository }}"
-            --ref main
-            -f stage=full
-            -f "arch=${{ matrix.arch }}"
-            -f "gpu=${{ matrix.gpu }}"
-            -f "kubernetes-version=${{ matrix['kubernetes-version'] }}"
-          )
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            args+=(-f "os-image-arm64=${{ matrix['os-image'] }}" -f "os-image-bootloader-arm64=${{ matrix['os-image-bootloader'] }}")
-          else
-            args+=(-f "os-image-amd64=${{ matrix['os-image'] }}" -f "os-image-bootloader-amd64=${{ matrix['os-image-bootloader'] }}")
-          fi
 
-          # workflow_dispatch returns nothing identifying the run it created,
-          # so the run is found the same way a person would: the newest
-          # workflow_dispatch run against this workflow after the moment this
-          # dispatched. A concurrent manual dispatch of the same workflow in
-          # this window would be misattributed; accepted for now since this
-          # job is the only thing expected to dispatch it on a schedule.
+          # workflow_dispatch returns nothing identifying the run it
+          # created, so the run is found the same way a person would: the
+          # newest workflow_dispatch run against this workflow after the
+          # moment this dispatched. A concurrent manual dispatch of the same
+          # workflow in this window would be misattributed; accepted for
+          # now since this job is the only thing expected to dispatch it on
+          # a schedule.
           before="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          gh workflow run forge-site-controller-e2e.yml "${args[@]}"
+          gh workflow run forge-site-controller-e2e.yml \
+            --repo "${{ github.repository }}" \
+            --ref main \
+            -f stage=full \
+            -f "stream-json=${STREAM_JSON}"
           sleep 15
           run_id="$(gh run list --repo "${{ github.repository }}" --workflow forge-site-controller-e2e.yml \
             --json databaseId,event,createdAt \

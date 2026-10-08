@@ -1,0 +1,58 @@
+{
+  "subject": "nke",
+  "version": "${QUALIFY_VERSION}",
+  "scope": "full",
+  "combinations": [
+    {
+      "id": "controller-${SITE_E2E_CONTROLLER_VERSION}_cli-${SITE_E2E_CLI_VERSION}_os-image-${SITE_E2E_OS_IMAGE_VERSION}_capi-provisioned-${SITE_E2E_CAPI_PROVISIONED_VERSION}",
+      "components": [
+        { "name": "controller", "version": "${SITE_E2E_CONTROLLER_VERSION}" },
+        { "name": "cli", "version": "${SITE_E2E_CLI_VERSION}" },
+        { "name": "os-image", "version": "${SITE_E2E_OS_IMAGE_VERSION}" },
+        { "name": "capi-provisioned", "version": "${SITE_E2E_CAPI_PROVISIONED_VERSION}" }
+      ],
+      "dependencies": [
+        { "name": "nke-cni-ovn", "version": "${SITE_E2E_CNI_OVN_VERSION}" },
+        { "name": "kind", "version": "${QUALIFY_KIND_VERSION}" },
+        { "name": "clusterctl", "version": "${QUALIFY_CLUSTERCTL_VERSION}" },
+        { "name": "nerdctl", "version": "${QUALIFY_NERDCTL_VERSION}" }
+      ],
+      "streams": [
+        {
+          "name": "forge-gb200-arm64-kube-1.36-ubuntu-24.04",
+          "capabilities": { "provider": "nico-forge", "arch": "arm64", "gpu": "gb200", "ubuntu": "24.04", "kube": "1.36" },
+          "dependencies": [
+            { "name": "kube", "version": "${SITE_E2E_KUBERNETES_VERSION}" },
+            {
+              "name": "os-image",
+              "version": "${SITE_E2E_OS_IMAGE_VERSION}",
+              "artifacts": [
+                { "name": "os-image", "arch": "amd64", "url": "${SITE_E2E_OS_IMAGE_AMD64}" },
+                { "name": "os-image", "arch": "arm64", "url": "${SITE_E2E_OS_IMAGE_ARM64}" },
+                { "name": "os-image-bootloader", "arch": "amd64", "url": "${SITE_E2E_OS_IMAGE_BOOTLOADER_AMD64}" },
+                { "name": "os-image-bootloader", "arch": "arm64", "url": "${SITE_E2E_OS_IMAGE_BOOTLOADER_ARM64}" }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "forge-amd64-kube-1.36-ubuntu-24.04",
+          "capabilities": { "provider": "nico-forge", "arch": "amd64", "gpu": "", "ubuntu": "24.04", "kube": "1.36" },
+          "dependencies": [
+            { "name": "kube", "version": "${SITE_E2E_KUBERNETES_VERSION}" },
+            {
+              "name": "os-image",
+              "version": "${SITE_E2E_OS_IMAGE_VERSION}",
+              "artifacts": [
+                { "name": "os-image", "arch": "amd64", "url": "${SITE_E2E_OS_IMAGE_AMD64}" },
+                { "name": "os-image", "arch": "arm64", "url": "${SITE_E2E_OS_IMAGE_ARM64}" },
+                { "name": "os-image-bootloader", "arch": "amd64", "url": "${SITE_E2E_OS_IMAGE_BOOTLOADER_AMD64}" },
+                { "name": "os-image-bootloader", "arch": "arm64", "url": "${SITE_E2E_OS_IMAGE_BOOTLOADER_ARM64}" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
