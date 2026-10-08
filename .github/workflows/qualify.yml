@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # The plan job only fills the placeholders in qualify/plan.json from the
-# same SITE_E2E_*/QUALIFY_* repository variables forge-site-controller-e2e.yml
+# same SITE_E2E_*/QUALIFY_* repository variables site-and-tenant-e2e.yml
 # itself falls back to, and outputs the substituted plan whole. Everything
 # after that -- deciding which streams exist, flattening one into the shape
-# forge-site-controller-e2e.yml's stream-json input takes, dispatching it,
+# site-and-tenant-e2e.yml's stream-json input takes, dispatching it,
 # waiting for it -- happens once per stream in the qualify job below, fanned
 # out over a GitHub Actions matrix.
 #
@@ -90,7 +90,7 @@ jobs:
       fail-fast: false
       # Each dispatch is matched back to its own run by its run-name (the
       # stream's own name, unique per dispatch), not by timing, so dispatching
-      # several at once is safe. forge-site-controller-e2e.yml's own
+      # several at once is safe. site-and-tenant-e2e.yml's own
       # concurrency group still serializes same-ref runs underneath this, so
       # raising this only affects how many of these jobs wait in parallel for
       # that, not how many Forge instances run at once.
@@ -112,7 +112,7 @@ jobs:
           # versions from the combination it belongs to, and -- from its own
           # os-image dependency's artifacts -- just the one image and
           # bootloader URL matching its own arch. This is the exact shape
-          # forge-site-controller-e2e.yml's stream-json input takes.
+          # site-and-tenant-e2e.yml's stream-json input takes.
           stream="$(jq -c --arg name "${STREAM_NAME}" '
             .combinations[] as $c |
             ($c.streams[] | select(.name==$name)) as $s |
@@ -140,7 +140,7 @@ jobs:
           echo "stream-json=${stream}" >> "${GITHUB_OUTPUT}"
           jq . <<<"${stream}"
 
-      - name: Dispatch forge-site-controller-e2e.yml for this stream
+      - name: Dispatch site-and-tenant-e2e.yml for this stream
         id: dispatch
         env:
           GH_TOKEN: ${{ github.token }}
@@ -150,18 +150,18 @@ jobs:
 
           # workflow_dispatch returns nothing identifying the run it
           # created, so the run is found by the two things that together
-          # pin it down: its run-name, which forge-site-controller-e2e.yml
+          # pin it down: its run-name, which site-and-tenant-e2e.yml
           # sets to this stream's own name (unique among whatever dispatched
           # at the same moment), and createdAt, which rules out an older run
           # of a stream by the same name from a previous night.
           before="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          gh workflow run forge-site-controller-e2e.yml \
+          gh workflow run site-and-tenant-e2e.yml \
             --repo "${{ github.repository }}" \
             --ref main \
             -f stage=full \
             -f "stream-json=${STREAM_JSON}"
           sleep 15
-          run_id="$(gh run list --repo "${{ github.repository }}" --workflow forge-site-controller-e2e.yml \
+          run_id="$(gh run list --repo "${{ github.repository }}" --workflow site-and-tenant-e2e.yml \
             --json databaseId,displayTitle,event,createdAt \
             --jq "[.[] | select(.event==\"workflow_dispatch\" and .createdAt>=\"${before}\" and .displayTitle==\"${{ matrix.name }}\")] | sort_by(.createdAt) | first | .databaseId")"
           if [ -z "${run_id}" ] || [ "${run_id}" = "null" ]; then

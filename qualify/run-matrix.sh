@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Fills the placeholders in plan.json from the same SITE_E2E_* and QUALIFY_*
-# repository variables forge-site-controller-e2e.yml itself falls back to,
+# repository variables site-and-tenant-e2e.yml itself falls back to,
 # then -- per stream, same as the qualify job in qualify.yml does -- decodes
-# just that stream into the shape forge-site-controller-e2e.yml's
+# just that stream into the shape site-and-tenant-e2e.yml's
 # stream-json input takes and dispatches it.
 #
 # Usage: qualify/run-matrix.sh [ref]
@@ -72,7 +72,7 @@ while IFS= read -r name; do
   echo "=== ${name} ==="
   jq . <<<"${stream}"
 
-  cmd=(gh workflow run forge-site-controller-e2e.yml
+  cmd=(gh workflow run site-and-tenant-e2e.yml
     --repo "${REPO}"
     --ref "${REF}"
     -f stage=full
