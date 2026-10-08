@@ -38,6 +38,9 @@ name: CLI Artifact NVCR
 #
 # workflow_dispatch still works and still builds: dist_artifact is empty there,
 # so the build step below runs instead of the download.
+#
+# A bare vX.Y.Z-beta.N tag publishes under the beta tag name only, as
+# <tag>-<os>-<arch>, with no sha- tag.
 on:
   workflow_call:
     inputs:
@@ -128,19 +131,29 @@ jobs:
           fi
           repo="nvcr.io/${NGC_ORG}/nkectl"
 
-          version="$(git describe --match 'cli/v*' --tags --always 2>/dev/null || git rev-parse --short HEAD)"
-          version="${version#cli/}"
+          # A bare vX.Y.Z-beta.N tag publishes under the beta tag name only,
+          # with no sha- alias.
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then
+            version="${GITHUB_REF_NAME}"
+            aliases=("${GITHUB_REF_NAME}")
+            primary="${GITHUB_REF_NAME}"
+          else
+            version="$(git describe --match 'cli/v*' --tags --always 2>/dev/null || git rev-parse --short HEAD)"
+            version="${version#cli/}"
 
-          aliases=("sha-${GITHUB_SHA}")
-          if [[ "${GITHUB_REF}" == refs/heads/main ]]; then
-            aliases+=("edge")
-          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            aliases+=("${GITHUB_REF_NAME#cli/}")
+            aliases=("sha-${GITHUB_SHA}")
+            primary="sha-${GITHUB_SHA}"
+            if [[ "${GITHUB_REF}" == refs/heads/main ]]; then
+              aliases+=("edge")
+            elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+              aliases+=("${GITHUB_REF_NAME#cli/}")
+            fi
           fi
 
           {
             echo "repo=${repo}"
             echo "version=${version}"
+            echo "primary=${primary}"
             echo "aliases=${aliases[*]}"
           } >> "${GITHUB_OUTPUT}"
           echo "Publishing ${repo} ${version} as: ${aliases[*]}"
@@ -216,9 +229,10 @@ jobs:
         shell: bash
         env:
           REPO: ${{ steps.meta.outputs.repo }}
+          PRIMARY: ${{ steps.meta.outputs.primary }}
         run: |
           set -euo pipefail
-          oras manifest fetch --pretty "${REPO}:sha-${GITHUB_SHA}-linux-amd64"
+          oras manifest fetch --pretty "${REPO}:${PRIMARY}-linux-amd64"
 
       # Four references for the same reason as cli-artifact.yml: no index, so
       # the platform tags are the whole of what was published. The component
@@ -229,8 +243,8 @@ jobs:
         uses: ./.github/actions/record-digest
         with:
           references: |
-            ${{ steps.meta.outputs.repo }}:sha-${{ github.sha }}-linux-amd64
-            ${{ steps.meta.outputs.repo }}:sha-${{ github.sha }}-linux-arm64
-            ${{ steps.meta.outputs.repo }}:sha-${{ github.sha }}-darwin-amd64
-            ${{ steps.meta.outputs.repo }}:sha-${{ github.sha }}-darwin-arm64
+            ${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.primary }}-linux-amd64
+            ${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.primary }}-linux-arm64
+            ${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.primary }}-darwin-amd64
+            ${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.primary }}-darwin-arm64
           component: nkectl-nvcr-${{ matrix.destination }}

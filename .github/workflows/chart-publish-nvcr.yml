@@ -27,6 +27,9 @@ name: Chart Publish NVCR
 # nvcr.io/<org>/charts/nke-controller asks NGC for a team named `charts` that
 # does not exist, and the push dies before it reaches the registry:
 
+# A bare vX.Y.Z-beta.N tag publishes the chart as X.Y.Z-beta.N with
+# appVersion vX.Y.Z-beta.N, matching the image tag image-nvcr.yml pushes.
+
 # Through controller/v0.1.1-rc.1 the chart was named cloud-workflow-engine and
 # published at nvcr.io/<NKE_NGC_ORG>/cloud-workflow-engine; through the last
 # release before this rename it was named controller-chart and published at
@@ -39,6 +42,7 @@ on:
     tags:
       - "controller/v[0-9]+.[0-9]+.[0-9]+"
       - "controller/v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+"
   workflow_dispatch: {}
 
 permissions: {}
@@ -118,9 +122,16 @@ jobs:
             exit 1
           fi
 
-          describe="$(git describe --match 'controller/v*' --tags --always 2>/dev/null || git rev-parse --short HEAD)"
-          describe="${describe#controller/}"
-          version="${describe#v}"
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then
+            # Beta tag: the chart version is the tag's X.Y.Z-beta.N; appVersion
+            # is the vX.Y.Z-beta.N tag image-nvcr.yml publishes.
+            describe="${GITHUB_REF_NAME}"
+            version="${GITHUB_REF_NAME#v}"
+          else
+            describe="$(git describe --match 'controller/v*' --tags --always 2>/dev/null || git rev-parse --short HEAD)"
+            describe="${describe#controller/}"
+            version="${describe#v}"
+          fi
           repo="nvcr.io/${ORG_TEAM}"
           image="${repo}/nke-controller"
 

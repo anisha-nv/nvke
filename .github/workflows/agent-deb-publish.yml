@@ -31,6 +31,10 @@
 # publish job then uploads both packages once so the shared index.json merge
 # cannot race with itself. The GitHub Release job and the GHCR job run in
 # parallel with S3 publish and do not touch apt intake.
+#
+# A bare vX.Y.Z-beta.N tag builds the same packages but publishes them under
+# the tag name only: the dev S3 destination and <tag> tags on NVCR.
+# No apt-intake release, GitHub Release or GHCR copy.
 
 name: Agent Deb Publish
 
@@ -39,6 +43,7 @@ on:
     tags:
       - "agent/v[0-9]+.[0-9]+.[0-9]+"
       - "agent/v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+"
   workflow_dispatch:
     inputs:
       ref:
@@ -69,7 +74,8 @@ jobs:
     # publish job (or a later re-enable) could upload into apt intake.
     if: >-
       github.repository == 'dsx-ai-factory/nke' &&
-      (startsWith(inputs.ref || github.ref_name, 'agent/v') || inputs.ref != '')
+      (startsWith(inputs.ref || github.ref_name, 'agent/v') || inputs.ref != '' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && contains(github.ref_name, '-beta.')))
     outputs:
       sha: ${{ steps.package.outputs.sha }}
     timeout-minutes: 20
@@ -87,11 +93,11 @@ jobs:
     steps:
       - name: Validate source ref
         run: |
-          if [[ ! "${SOURCE_REF}" =~ ^(agent/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?|[0-9a-f]{40})$ ]]; then
-            echo "::error::ref must be an agent release tag or a full lowercase commit SHA"
+          if [[ ! "${SOURCE_REF}" =~ ^(agent/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?|v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+|[0-9a-f]{40})$ ]]; then
+            echo "::error::ref must be an agent release tag, a beta tag or a full lowercase commit SHA"
             exit 1
           fi
-          if [[ "${SOURCE_REF}" == agent/v* && "${GITHUB_REF}" != "refs/tags/${SOURCE_REF}" ]]; then
+          if [[ ( "${SOURCE_REF}" == agent/v* || "${SOURCE_REF}" == v* ) && "${GITHUB_REF}" != "refs/tags/${SOURCE_REF}" ]]; then
             echo "::error::Release builds must run from their source tag; select it with --ref"
             exit 1
           fi
@@ -121,9 +127,19 @@ jobs:
           sudo apt-get install -y -qq fakeroot dpkg-dev
           dpkg-deb --version | head -1
 
+      # A beta tag is not an agent/v* tag, so `git describe --match 'agent/v*'`
+      # would stamp the nearest older agent release plus a distance. Stamp the
+      # beta tag instead; the Makefile strips the leading v for the deb version.
       - name: Build the package
         working-directory: agent
-        run: make deb-${{ matrix.arch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then
+            make deb-${{ matrix.arch }} VERSION="${GITHUB_REF_NAME}"
+          else
+            make deb-${{ matrix.arch }}
+          fi
 
       - name: Inspect what was produced
         id: package
@@ -280,8 +296,8 @@ jobs:
     needs: [build]
     if: >-
       github.repository == 'dsx-ai-factory/nke' &&
-      github.ref == 'refs/heads/main' &&
-      !startsWith(inputs.ref || github.ref_name, 'agent/v')
+      ((github.ref == 'refs/heads/main' && !startsWith(inputs.ref || github.ref_name, 'agent/v')) ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && contains(github.ref_name, '-beta.')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -290,15 +306,15 @@ jobs:
     env:
       APT_INTAKE_S3_URI: ${{ vars.AGENT_DEV_S3_URI }}
       APT_INTAKE_PROJECT: nke-agent
-      APT_INTAKE_RELEASE: ${{ needs.build.outputs.sha }}
+      APT_INTAKE_RELEASE: ${{ (github.event_name == 'push' && contains(github.ref_name, '-beta.')) && github.ref_name || needs.build.outputs.sha }}
       DEV_AWS_ROLE_ARN: ${{ vars.AGENT_DEV_AWS_ROLE_ARN }}
     steps:
       - name: Validate dev publication
         run: |
           : "${APT_INTAKE_S3_URI:?Set the AGENT_DEV_S3_URI repository variable}"
           : "${DEV_AWS_ROLE_ARN:?Set the AGENT_DEV_AWS_ROLE_ARN repository variable}"
-          if [[ ! "${APT_INTAKE_RELEASE}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::Dev publication requires the full built commit SHA"
+          if [[ ! "${APT_INTAKE_RELEASE}" =~ ^([0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+)$ ]]; then
+            echo "::error::Dev publication requires the full built commit SHA or a beta tag"
             exit 1
           fi
 
@@ -440,7 +456,8 @@ jobs:
     needs: [build]
     if: >-
       github.repository == 'dsx-ai-factory/nke' &&
-      startsWith(inputs.ref || github.ref_name, 'agent/v')
+      (startsWith(inputs.ref || github.ref_name, 'agent/v') ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && contains(github.ref_name, '-beta.')))
     runs-on: ubuntu-latest
     env:
       SOURCE_SHA: ${{ needs.build.outputs.sha }}
@@ -504,6 +521,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${VERSION#agent/}"
+          tag="${version}"
           shopt -s nullglob
           debs=(agent/bin/*.deb)
           if [ ${#debs[@]} -ne 2 ]; then
@@ -515,7 +533,7 @@ jobs:
             arch=$(dpkg-deb -f "$deb" Architecture)
             work="$(mktemp -d)"
             cp "$deb" "${work}/nke-agent.deb"
-            ( cd "${work}" && oras push "${REPO}:${version}-${arch}" \
+            ( cd "${work}" && oras push "${REPO}:${tag}-${arch}" \
                 --artifact-type application/vnd.nvidia.nke.agent.deb.v1 \
                 --artifact-platform "linux/${arch}" \
                 --annotation "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
@@ -527,11 +545,11 @@ jobs:
             rm -rf "${work}"
           done
 
-          oras manifest index create "${REPO}:${version}" \
+          oras manifest index create "${REPO}:${tag}" \
             --annotation "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
             --annotation "org.opencontainers.image.revision=${SOURCE_SHA}" \
             --annotation "org.opencontainers.image.version=${version}" \
-            "${version}-amd64" "${version}-arm64"
+            "${tag}-amd64" "${tag}-arm64"
 
       - name: Show published index
         env:
@@ -539,8 +557,8 @@ jobs:
           REPO: ${{ steps.meta.outputs.repo }}
         run: |
           set -euo pipefail
-          version="${VERSION#agent/}"
-          oras manifest fetch --pretty "${REPO}:${version}"
+          tag="${VERSION#agent/}"
+          oras manifest fetch --pretty "${REPO}:${tag}"
 
   # Separate from apt intake so the release job does not need the apt-intake
   # environment or its credentials -- the id-token below is the Actions OIDC

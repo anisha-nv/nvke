@@ -19,6 +19,9 @@ name: Agent Artifact NVCR
 # below share one resolved value via steps.meta.outputs.repo. An NKE-org path
 # has no team segment; compare cluster-api-provider-nico's NVCR_NKE_IMAGE.
 #
+# A vX.Y.Z-beta.N tag publishes under that tag name only, which is also the
+# version: no sha-<commit> tag, no edge.
+#
 on:
   push:
     branches:
@@ -26,6 +29,7 @@ on:
     tags:
       - "agent/v[0-9]+.[0-9]+.[0-9]+"
       - "agent/v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+"
   workflow_dispatch: {}
 
 permissions: {}
@@ -98,20 +102,27 @@ jobs:
           fi
           repo="nvcr.io/${NKE_NGC_ORG}/nke-agent"
 
-          version="$(git describe --match 'agent/v*' --tags --always 2>/dev/null || git rev-parse --short HEAD)"
-          version="${version#agent/}"
-
-          aliases=("sha-${GITHUB_SHA}")
-          if [[ "${GITHUB_REF}" == refs/heads/main ]]; then
-            aliases+=("edge")
-          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            aliases+=("${GITHUB_REF_NAME#agent/}")
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then
+            version="${GITHUB_REF_NAME}"
+            aliases=("${GITHUB_REF_NAME}")
+            primary="${GITHUB_REF_NAME}"
+          else
+            aliases=("sha-${GITHUB_SHA}")
+            primary="sha-${GITHUB_SHA}"
+            version="$(git describe --match 'agent/v*' --tags --always 2>/dev/null || git rev-parse --short HEAD)"
+            version="${version#agent/}"
+            if [[ "${GITHUB_REF}" == refs/heads/main ]]; then
+              aliases+=("edge")
+            elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+              aliases+=("${GITHUB_REF_NAME#agent/}")
+            fi
           fi
 
           {
             echo "repo=${repo}"
             echo "version=${version}"
             echo "aliases=${aliases[*]}"
+            echo "primary=${primary}"
           } >> "${GITHUB_OUTPUT}"
           echo "Publishing ${repo} ${version} as: ${aliases[*]}"
 
@@ -197,9 +208,10 @@ jobs:
         shell: bash
         env:
           REPO: ${{ steps.meta.outputs.repo }}
+          PRIMARY: ${{ steps.meta.outputs.primary }}
         run: |
           set -euo pipefail
-          oras manifest fetch --pretty "${REPO}:sha-${GITHUB_SHA}"
+          oras manifest fetch --pretty "${REPO}:${PRIMARY}"
 
       # This publisher captured no digest at all: the index is assembled from
       # the per-arch tag names rather than their digests, so nothing in the
@@ -207,5 +219,5 @@ jobs:
       - name: Record the published digest
         uses: ./.github/actions/record-digest
         with:
-          references: ${{ steps.meta.outputs.repo }}:sha-${{ github.sha }}
+          references: ${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.primary }}
           component: nke-agent-nvcr
