@@ -68,6 +68,11 @@ type bootstrapSiteOptions struct {
 	// disableMTLS stands the site up without SPIFFE, for bring-up debugging.
 	disableMTLS bool
 
+	// nicoCredentialsFile is a file of KEY=VALUE lines that becomes the
+	// nico-credentials Secret CAPNICo reads. Required when the site spec's
+	// infrastructure is nico; unused otherwise.
+	nicoCredentialsFile string
+
 	// clusterTimeout bounds the wait for CWE to finish provisioning the
 	// cluster, from the create call to every node having joined.
 	clusterTimeout time.Duration
@@ -176,6 +181,10 @@ site spec file format.`,
 		envOrDefault("NKECTL_BOOTSTRAP_DIAGNOSTICS_DIR", "cluster-diagnostics"),
 		"Directory a failed bootstrap writes cluster diagnostics to before tearing the cluster down. "+
 			"Overrides NKECTL_BOOTSTRAP_DIAGNOSTICS_DIR.")
+	cmd.Flags().StringVar(&opts.nicoCredentialsFile, "nico-credentials-file",
+		os.Getenv("NKECTL_NICO_CREDENTIALS_FILE"),
+		"File of KEY=VALUE lines holding the NICo API credentials CAPNICo reads. Required when the "+
+			"site spec's infrastructure is nico. Overrides NKECTL_NICO_CREDENTIALS_FILE.")
 	cmd.Flags().BoolVar(&opts.disableMTLS, "disable-mtls", false,
 		"Stand the site up without SPIFFE: no SPIRE, and CWE dials node agents in plaintext. "+
 			"The agents must be running with --disable-mtls too. Development only.")
@@ -244,6 +253,12 @@ func runBootstrapSite(out io.Writer, opts *bootstrapSiteOptions) (err error) {
 	if err != nil {
 		return err
 	}
+	cweCfg.NicoCredentialsFile = opts.nicoCredentialsFile
+	// The credentials are checked here, before a Kind cluster exists: a missing
+	// file otherwise surfaces minutes in, from kubectl.
+	if err := requireNicoCredentials(inv, opts.nicoCredentialsFile); err != nil {
+		return err
+	}
 
 	// The CWE API has to be reachable from this host: this command deploys it
 	// and then calls it. A host port mapping rather than the node container's
@@ -253,7 +268,7 @@ func runBootstrapSite(out io.Writer, opts *bootstrapSiteOptions) (err error) {
 		ContainerPort: cweCfg.CWEPort,
 		HostPort:      cweCfg.CWEPort,
 	})
-	if len(cweCfg.TPMEKFingerprints) > 0 {
+	if cweCfg.TPMAttestorEnabled() {
 		cfg.ExtraPortMappings = append(cfg.ExtraPortMappings, bootstrapengine.PortMapping{
 			ContainerPort: cwedeploy.SPIREServerNodePort,
 			HostPort:      cwedeploy.SPIREServerNodePort,
@@ -284,12 +299,16 @@ func runBootstrapSite(out io.Writer, opts *bootstrapSiteOptions) (err error) {
 	// A host that already serves a control plane is either a retry over a
 	// half-built site or a site spec pointed at a live cluster; provisioning
 	// over either ends badly.
-	if err := requireNoControlPlane(ctx, inv.Cluster.Nodes, opts.dialContext); err != nil {
-		return err
+	// Nothing to probe when the machines are allocated rather than listed: they
+	// do not exist yet, and have no addresses to dial.
+	if !inv.IsNico() {
+		if err := requireNoControlPlane(ctx, inv.Cluster.Nodes, opts.dialContext); err != nil {
+			return err
+		}
 	}
 	// The two images this repository builds are side-loaded, not pulled. A
 	// build that was never made fails here, before the cluster exists.
-	if err := requireLocalImages(ctx, engine, cweCfg.CWEImage, cweCfg.ProvisionedProviderImage); err != nil {
+	if err := requireLocalImages(ctx, engine, cweImages(cweCfg)...); err != nil {
 		return err
 	}
 
@@ -390,6 +409,7 @@ func runBootstrapSite(out io.Writer, opts *bootstrapSiteOptions) (err error) {
 		return err
 	}
 
+	// TODO: need to implement this for nico mode: print the allocated nodes' names and IPs.
 	fmt.Fprintf(out, "\nCluster %q is ready. Talk to it with:\n  kubectl --kubeconfig %s get nodes\n",
 		inv.ClusterName, kubeconfigPath)
 	return nil
@@ -499,11 +519,11 @@ func createSiteCluster(
 	// bootstrap cluster this command is about to delete. Returning here would
 	// tear that engine down underneath them.
 	if err := sitecluster.WaitControlPlaneJoined(
-		ctx, client, created.ID, len(inv.Cluster.Nodes), time.Until(deadline), logger,
+		ctx, client, created.ID, inv.ControlPlaneCount(), time.Until(deadline), logger,
 	); err != nil {
 		return true, err
 	}
-	logger.Info("all control plane nodes joined", "cluster", created.Name, "nodes", len(inv.Cluster.Nodes))
+	logger.Info("all control plane nodes joined", "cluster", created.Name, "nodes", inv.ControlPlaneCount())
 
 	// The kubeconfig first, so a failure in the key capture below still leaves
 	// the operator holding the admin credential of the cluster that was built.
@@ -765,7 +785,10 @@ func cweDeployConfig(inv *sitespec.SiteSpec, clusterName string, disableMTLS boo
 	if cfg.CWEImage == "" {
 		return cfg, errors.New("NKECTL_CWE_IMAGE is not set and the bootstrap manifest carries no default CWE image")
 	}
-	if cfg.ProvisionedProviderImage == "" {
+	cfg.NicoInfrastructure = inv.IsNico()
+	cfg.SPIREExternalAddress = inv.Spire.ExternalAddress
+	// CAPNICo comes from a chart, so the provisioned provider's image is not used.
+	if cfg.ProvisionedProviderImage == "" && !cfg.NicoInfrastructure {
 		return cfg, errors.New("NKECTL_CAPI_PROVISIONED_IMAGE is not set and the bootstrap manifest carries no default provisioned-provider image")
 	}
 
@@ -825,7 +848,7 @@ func deployAndWaitForCWE(
 	cweRunner cwedeploy.CommandRunner,
 	logger *slog.Logger,
 ) error {
-	for _, image := range []string{cweCfg.CWEImage, cweCfg.ProvisionedProviderImage} {
+	for _, image := range cweImages(cweCfg) {
 		if err := ensureImageAvailable(ctx, engine, cluster, image, logger); err != nil {
 			return fmt.Errorf("loading %s into bootstrap kind cluster: %w", image, err)
 		}
@@ -846,6 +869,37 @@ func deployAndWaitForCWE(
 		return fmt.Errorf("waiting for the published cwe api: %w", err)
 	}
 	logger.Info("cwe deployment healthy")
+	return nil
+}
+
+// cweImages lists the images this repository builds that the bootstrap loads
+// into the Kind cluster. The provisioned provider is among them only when it is
+// the infrastructure provider in use.
+func cweImages(cfg cwedeploy.Config) []string {
+	if cfg.NicoInfrastructure {
+		return []string{cfg.CWEImage}
+	}
+	return []string{cfg.CWEImage, cfg.ProvisionedProviderImage}
+}
+
+// requireNicoCredentials refuses a nico bootstrap that has no readable
+// credentials file. It does nothing for any other infrastructure.
+func requireNicoCredentials(inv *sitespec.SiteSpec, path string) error {
+	if !inv.IsNico() {
+		return nil
+	}
+	if path == "" {
+		return errors.New("the site spec selects infrastructure nico, which needs NICo API credentials: " +
+			"pass --nico-credentials-file or set NKECTL_NICO_CREDENTIALS_FILE to a file of KEY=VALUE lines " +
+			"(the keys are listed in CAPNICo's getting-started guide)")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("NICo credentials file: %w", err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("NICo credentials file %s is a directory", path)
+	}
 	return nil
 }
 
