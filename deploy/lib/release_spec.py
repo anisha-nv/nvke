@@ -35,7 +35,7 @@ than it claims. Chart items carry a version, other items do not. Names are
 unique. Every top-level key is required; only source.commit may be empty.
 
 Standard library only: PyYAML is not guaranteed where the stages run, which
-is why this is a regex parser and not a YAML load, like build/nke-sbom-items.py.
+is why this is a regex parser and not a YAML load, like lib/nke-deploy-items.py.
 """
 import re
 import sys

@@ -53,6 +53,8 @@ What the node needs, all present on the reference instance type:
 
 ## Before this runs
 
+A fresh cluster is required: this path installs the controller as release `nke-controller`, with database `nke-controller` and Temporal namespace `nke-controller`. Earlier revisions used release `controller`, database `cloud-workflow` and the chart's Temporal names. Helm cannot take over the old release's objects, and Postgres runs its `initdb` scripts only on an empty volume; nothing migrates the old database.
+
 `deploy/nke-deploy.sh` installs the items below and nothing else. The stages in
 `deploy/stages/` do the rest, in this order:
 
@@ -98,7 +100,7 @@ for the e2e lanes from environment variables.
 
 | value | e2e derivation | on a NICo site |
 |---|---|---|
-| trust domain | `${KIND_CLUSTER_NAME}.nke.local` | `<site-name>.nke.local` |
+| trust domain | `${KIND_CLUSTER_NAME}.nke.local` | the trust domain the site's nodes were bootstrapped with (`spire.trustDomain` in the site spec); never derived from a name |
 | management VIP | kind control-plane IP | the site controller's node IP |
 | SPIRE admin path | `/nke-service/nke-controller` | the same; it is a constant |
 | TPM attestor **server** checksum | pinned per arch in `resolve_tpm_checksum()` | the same pin for the same arch |

@@ -291,7 +291,7 @@ The rollout waits for the `csi.spiffe.io` CSIDriver, which the SPIRE release ins
 Uninstall in reverse item order, then remove Cluster API:
 
 ```bash
-helm uninstall controller -n nke-controller
+helm uninstall nke-controller -n nke-controller
 helm uninstall spire -n spire-server
 helm uninstall temporal -n temporal
 helm uninstall spire-crds -n spire-server

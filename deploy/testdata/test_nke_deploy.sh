@@ -44,8 +44,8 @@ else
   fail "item order: ${order}"
 fi
 expect "nktp from the checkout" 'helm upgrade --install nktp .*/nktp/deploy/charts/nktp ' "${out}"
-expect "controller from the checkout" 'helm upgrade --install controller .*/controller/deploy/charts/controller ' "${out}"
-expect "controller in its release.yaml namespace" 'helm upgrade --install controller .* --namespace nke-controller ' "${out}"
+expect "controller from the checkout" 'helm upgrade --install nke-controller .*/controller/deploy/charts/controller ' "${out}"
+expect "controller in its release.yaml namespace" 'helm upgrade --install nke-controller .* --namespace nke-controller ' "${out}"
 expect "postgresql from its OCI repository" 'helm upgrade --install postgres oci://registry-1.docker.io/bitnamicharts/postgresql --version 18.5.15 ' "${out}"
 expect "spire from its index repository" 'helm upgrade --install spire spire --repo https://spiffe.github.io/helm-charts-hardened/ --version 0.30.1 ' "${out}"
 reject "no oras without a manifest" '^oras ' "${out}"
@@ -59,7 +59,7 @@ for item in postgresql spire-crds temporal spire; do
 done
 expect "postgres installed from the cache" "helm upgrade --install postgres ${cache}/postgresql/postgresql-18.5.15.tgz " "${out}"
 reject "controller image entry is not treated as a chart" "oras .*nke-recipes/cwe" "${out}"
-expect "controller still from the checkout" 'helm upgrade --install controller .*/controller/deploy/charts/controller ' "${out}"
+expect "controller still from the checkout" 'helm upgrade --install nke-controller .*/controller/deploy/charts/controller ' "${out}"
 
 # A chart override wins over the manifest.
 out="$(bash "${EXECUTOR}" install --deploy-path "${NICO}" --release-manifest "${MANIFEST}" --chart-cache "${cache}" --config "${CONFIG}" --chart-override "temporal=${WORK}/temporal.tgz" --dry-run 2>&1)" || fail "override dry run exited $?"
