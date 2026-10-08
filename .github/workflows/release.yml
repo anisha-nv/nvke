@@ -353,7 +353,7 @@ jobs:
             core.info(`Published ${context.ref.replace('refs/tags/', '')} with ${rel.assets.length} assets.`);
 
   # A bare vX.Y.Z-beta.N reaches only cli-nvcr and cli-s3, which publish it
-  # under the commit SHA; cli-ghcr and the GitHub release are skipped.
+  # under the beta tag name; cli-ghcr and the GitHub release are skipped.
   #
   # The three cli channels. They used to trigger on the cli/v* tag themselves,
   # which meant four independent build-cross runs claiming to be one release,

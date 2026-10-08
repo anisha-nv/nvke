@@ -83,7 +83,11 @@ jobs:
 
           selected=""
           while read -r sha; do
-            runs="$(gh api "repos/${REPOSITORY}/actions/runs?head_sha=${sha}&event=push&per_page=100")"
+            # branch=main, because a tag push is a push too. These five also run
+            # on the component tags, and a tag is cut after the merge, so the
+            # newest run at a tagged commit is the tag's -- which would let a
+            # green controller/v* run stand in for a failed main one.
+            runs="$(gh api "repos/${REPOSITORY}/actions/runs?head_sha=${sha}&branch=main&event=push&per_page=100")"
             ok=1
             for name in "${required[@]}"; do
               # Newest run by start time, so a re-run supersedes the attempt it
@@ -110,7 +114,11 @@ jobs:
             exit 0
           fi
 
-          existing="$(git tag --points-at "${selected}" -l 'v[0-9]*.[0-9]*.[0-9]*-beta.*' | head -n1)"
+          # Anchored, because git's glob would also accept a hand-made tag like
+          # v1.2.3-beta.x, which next-tag.sh never allocates and the publishers
+          # never match -- skipping on one would silently cost a night.
+          existing="$(git tag --points-at "${selected}" \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$' | head -n1 || true)"
           if [ -n "${existing}" ]; then
             echo "${existing} already names ${selected:0:9}; nothing new to tag." \
               | tee -a "${GITHUB_STEP_SUMMARY}"
