@@ -238,13 +238,13 @@ jobs:
       # in. Every use of it downstream -- the image site-inputs stages, the
       # NKECTL_CWE_IMAGE the bootstrap runs, and the tag the SBOM deploys --
       # reads this one value, which is what keeps them the same image.
-      SITE_CONTROLLER_VERSION: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['controller-version']) || inputs.controller-version || vars.SITE_E2E_CONTROLLER_VERSION || vars.FORGE_E2E_CONTROLLER_VERSION }}
+      SITE_CONTROLLER_VERSION: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['controller-version']) || (inputs.stream-json == '' && (inputs.controller-version || vars.SITE_E2E_CONTROLLER_VERSION || vars.FORGE_E2E_CONTROLLER_VERSION)) || '' }}
       # The same shape for nkectl: empty builds it from this checkout, a
       # version stages that cli/<version> release. The resolve step fills in
       # the commit when it builds, so -e2e.versions always names one. Named
       # for the component, as CAPI_PROVISIONED_VERSION is; the make variable
       # it feeds keeps the SITE_ prefix.
-      CLI_VERSION: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['cli-version']) || inputs.cli-version || vars.SITE_E2E_CLI_VERSION }}
+      CLI_VERSION: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['cli-version']) || (inputs.stream-json == '' && (inputs.cli-version || vars.SITE_E2E_CLI_VERSION)) || '' }}
       # The name CWE is installed under, which the deploy path decides and the
       # suite has to be told. The deploy path is exported from
       # SITE_CONTROLLER_VERSION, and CWE was renamed partway through the
@@ -270,12 +270,12 @@ jobs:
       # Components the run qualifies that are not artifacts it downloads. Empty
       # leaves the suite on its own constant, which is what a developer running
       # by hand gets; CI states them so a run records what it qualified.
-      KUBERNETES_VERSION: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['kubernetes-version']) || inputs.kubernetes-version || vars.SITE_E2E_KUBERNETES_VERSION }}
-      CNI_OVN_VERSION: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['cni-ovn-version']) || inputs.cni-ovn-version || vars.SITE_E2E_CNI_OVN_VERSION }}
-      OS_IMAGE_BOOTLOADER_AMD64: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['os-image-bootloader-amd64']) || inputs.os-image-bootloader-amd64 || vars.SITE_E2E_OS_IMAGE_BOOTLOADER_AMD64 }}
-      OS_IMAGE_AMD64: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['os-image-amd64']) || inputs.os-image-amd64 || vars.SITE_E2E_OS_IMAGE_AMD64 }}
-      OS_IMAGE_BOOTLOADER_ARM64: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['os-image-bootloader-arm64']) || inputs.os-image-bootloader-arm64 || vars.SITE_E2E_OS_IMAGE_BOOTLOADER_ARM64 }}
-      OS_IMAGE_ARM64: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['os-image-arm64']) || inputs.os-image-arm64 || vars.SITE_E2E_OS_IMAGE_ARM64 }}
+      KUBERNETES_VERSION: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['kubernetes-version']) || (inputs.stream-json == '' && (inputs.kubernetes-version || vars.SITE_E2E_KUBERNETES_VERSION)) || '' }}
+      CNI_OVN_VERSION: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['cni-ovn-version']) || (inputs.stream-json == '' && (inputs.cni-ovn-version || vars.SITE_E2E_CNI_OVN_VERSION)) || '' }}
+      OS_IMAGE_BOOTLOADER_AMD64: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['os-image-bootloader-amd64']) || (inputs.stream-json == '' && (inputs.os-image-bootloader-amd64 || vars.SITE_E2E_OS_IMAGE_BOOTLOADER_AMD64)) || '' }}
+      OS_IMAGE_AMD64: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['os-image-amd64']) || (inputs.stream-json == '' && (inputs.os-image-amd64 || vars.SITE_E2E_OS_IMAGE_AMD64)) || '' }}
+      OS_IMAGE_BOOTLOADER_ARM64: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['os-image-bootloader-arm64']) || (inputs.stream-json == '' && (inputs.os-image-bootloader-arm64 || vars.SITE_E2E_OS_IMAGE_BOOTLOADER_ARM64)) || '' }}
+      OS_IMAGE_ARM64: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['os-image-arm64']) || (inputs.stream-json == '' && (inputs.os-image-arm64 || vars.SITE_E2E_OS_IMAGE_ARM64)) || '' }}
       # The account the OS images bake. Empty is what the OSS os-image releases
       # use; an image from the internal pipeline bakes a different one, and a
       # mismatch fails as a publickey rejection after the provisioning wait
@@ -287,8 +287,8 @@ jobs:
       # variable per key is easier to set correctly than a string whose
       # grammar has to be remembered, and ARCH is needed on its own anyway,
       # for SITE_ARCH.
-      ARCH: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['arch']) || inputs.arch || vars.SITE_E2E_ARCH }}
-      GPU: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['gpu']) || inputs.gpu || vars.SITE_E2E_GPU }}
+      ARCH: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['arch']) || (inputs.stream-json == '' && (inputs.arch || vars.SITE_E2E_ARCH)) || '' }}
+      GPU: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['gpu']) || (inputs.stream-json == '' && (inputs.gpu || vars.SITE_E2E_GPU)) || '' }}
       # A label cannot carry a boolean, so a labelled run takes this from the
       # repository variable, as it does every other setting. Holding a Forge
       # machine is expensive and the variable is easy to leave set, so the run
@@ -308,7 +308,7 @@ jobs:
       # Defaulted rather than required: v0.1.0-rc.1 was the only published tag
       # when this lane was written, and a run that names none should still get
       # a working one rather than fail on an empty reference.
-      CAPI_PROVISIONED_VERSION: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['capi-provisioned-version']) || inputs.capi-provisioned-version || vars.SITE_E2E_CAPI_PROVISIONED_VERSION || 'v0.1.0-rc.1' }}
+      CAPI_PROVISIONED_VERSION: ${{ (inputs.stream-json != '' && fromJson(inputs.stream-json)['capi-provisioned-version']) || (inputs.stream-json == '' && (inputs.capi-provisioned-version || vars.SITE_E2E_CAPI_PROVISIONED_VERSION || 'v0.1.0-rc.1')) || 'v0.1.0-rc.1' }}
       # The NGC org the NVCR images are published under. A repository
       # variable, not the nvcr environment's NKE_NGC_ORG: that environment
       # gates the publish jobs, and this job has no business entering it.
