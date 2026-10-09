@@ -8,7 +8,6 @@
 package controller
 
 import (
-	"maps"
 	"net"
 	"slices"
 	"strings"
@@ -117,15 +116,5 @@ func (a *ClusterAdapter) wrapSorted(nodes []db.Node) []rollout.Node {
 // the current site configuration. The result shares no slices or maps with the
 // database snapshot.
 func (a *ClusterAdapter) OIDCProviders() []controllerconfig.OIDCProvider {
-	out := make([]controllerconfig.OIDCProvider, 0, len(a.cluster.OIDCProviders))
-	for _, provider := range a.cluster.OIDCProviders {
-		out = append(out, controllerconfig.OIDCProvider{
-			Name: provider.Name, IssuerURL: provider.IssuerURL,
-			Audiences:     append([]string(nil), provider.Audiences...),
-			UsernameClaim: provider.UsernameClaim, UsernamePrefix: provider.UsernamePrefix,
-			GroupsClaim: provider.GroupsClaim, GroupsPrefix: provider.GroupsPrefix,
-			RequiredClaims: maps.Clone(provider.RequiredClaims), CABundle: provider.CABundle,
-		})
-	}
-	return out
+	return db.ClusterOIDCProvidersToConfig(a.cluster.OIDCProviders)
 }

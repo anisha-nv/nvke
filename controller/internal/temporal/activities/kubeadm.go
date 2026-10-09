@@ -19,6 +19,7 @@ import (
 	nkeproto "github.com/dsx-ai-factory/nke/agent/pkg/agent/proto"
 
 	"github.com/dsx-ai-factory/nke/controller/internal/constants"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllerconfig"
 	"github.com/dsx-ai-factory/nke/controller/internal/db"
 	"github.com/dsx-ai-factory/nke/controller/internal/kubeadmconfig"
 )
@@ -57,9 +58,21 @@ func toNodeAgentFiles(files []kubeadmconfig.File) []*nkeproto.File {
 	return out
 }
 
-func (a *Activities) buildOIDCAuthenticationConfig(ctx context.Context, clusterName string) (*kubeadmconfig.OIDCAuthenticationConfig, error) {
+// needsAuthenticationConfig reports whether a control-plane node of cluster
+// carries an AuthenticationConfiguration: the shared provider once OIDC is
+// enabled, pinned operator providers from the start. The enable-OIDC rollout's
+// rollback restores the operator-only document whenever providers are pinned,
+// so init and join must have staged it.
+func needsAuthenticationConfig(cluster db.Cluster) bool {
+	return cluster.OIDCAuthEnabled || len(cluster.OIDCProviders) > 0
+}
+
+// buildOIDCAuthenticationConfig renders the same document the enable-OIDC
+// rollout delivers: shared-only when no providers are pinned, otherwise the
+// pinned providers combined with the shared one when OIDC is enabled.
+func (a *Activities) buildOIDCAuthenticationConfig(ctx context.Context, cluster db.Cluster) (*kubeadmconfig.OIDCAuthenticationConfig, error) {
 	var caBundle []byte
-	if ref := a.cfg.NkeOIDCAuth.CABundleSecret; !ref.Empty() {
+	if ref := a.cfg.NkeOIDCAuth.CABundleSecret; cluster.OIDCAuthEnabled && !ref.Empty() {
 		var err error
 		caBundle, err = kubeadmconfig.ReadOIDCCABundle(ctx, a.k8sClient, ref)
 		if err != nil {
@@ -67,7 +80,14 @@ func (a *Activities) buildOIDCAuthenticationConfig(ctx context.Context, clusterN
 		}
 	}
 
-	return kubeadmconfig.BuildOIDCAuthenticationConfig(clusterName, a.cfg.NkeOIDCAuth, caBundle)
+	if len(cluster.OIDCProviders) == 0 {
+		return kubeadmconfig.BuildOIDCAuthenticationConfig(cluster.Name, a.cfg.NkeOIDCAuth, caBundle)
+	}
+	management := controllerconfig.ManagementOIDCAuthConfig{
+		Enabled: cluster.OIDCAuthEnabled, IssuerURL: a.cfg.NkeOIDCAuth.IssuerURL, DiscoveryURL: a.cfg.NkeOIDCAuth.DiscoveryURL,
+	}
+	return kubeadmconfig.BuildCombinedAuthenticationConfig(cluster.Name, management, caBundle,
+		db.ClusterOIDCProvidersToConfig(cluster.OIDCProviders), kubeadmconfig.OperatorJWTPolicy{ManagementJWTTrustDomain: a.trustDomain})
 }
 
 func (a *Activities) ensureKubeAPIEncryptionKey(ctx context.Context, clusterID uuid.UUID) (string, error) {

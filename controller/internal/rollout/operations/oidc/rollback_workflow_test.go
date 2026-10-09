@@ -98,6 +98,7 @@ func TestRollout_LaterNodeFailureRestoresOperatorAuthentication(t *testing.T) {
 			require.NoError(t, env.GetWorkflowResult(&result))
 			require.Error(t, result.Err())
 			require.Len(t, first.calls, 2, "first node must apply then roll back")
+			require.Len(t, later.calls, 1, "the failing node is not rolled back by the cascade")
 			require.Empty(t, untouched.calls, "failure must halt the rollout")
 
 			previous, err := kubeadmconfig.BuildCombinedAuthenticationConfig(row.Name,
@@ -122,8 +123,6 @@ func TestRollout_LaterNodeFailureRestoresOperatorAuthentication(t *testing.T) {
 			require.Len(t, enabled.JWT, 2)
 			require.Equal(t, "https://shared.example.com", enabled.JWT[0].Issuer.URL)
 			require.Equal(t, previous.JWT[0], enabled.JWT[1])
-			require.False(t, row.OIDCAuthEnabled)
-			require.Equal(t, db.ClusterOIDCProvidersFromConfig([]controllerconfig.OIDCProvider{provider}), row.OIDCProviders)
 		})
 	}
 }

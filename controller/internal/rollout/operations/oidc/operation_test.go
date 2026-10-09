@@ -344,3 +344,16 @@ func TestRollback_RejectsInvalidPreviousConfigBeforeDial(t *testing.T) {
 	require.ErrorContains(t, err, "invalid previous authentication config")
 	require.Empty(t, c.calls, "invalid rollback state must fail before mutating the node")
 }
+
+func TestBuildRollbackPatchRequest_RemovesFilesPreviousDoesNotStage(t *testing.T) {
+	artifact, err := parsePayload(validArtifact(t))
+	require.NoError(t, err)
+	previous := artifact
+	artifact.Files = append(artifact.Files, fileArtifact{Path: "/etc/kubernetes/oidc/shared-ca.crt", Content: []byte("ca"), Mode: 0o600, Owner: "root:root"})
+	artifact.Previous = &previous
+	req, err := buildRollbackPatchRequest(artifact)
+	require.NoError(t, err)
+	require.Len(t, req.GetFiles(), 1, "only the previous document is restored")
+	require.Equal(t, previous.AuthConfigPath, req.GetFlagOps()[0].GetSet().GetValue())
+	require.Equal(t, []string{"/etc/kubernetes/oidc/shared-ca.crt"}, req.GetRemoveFiles())
+}

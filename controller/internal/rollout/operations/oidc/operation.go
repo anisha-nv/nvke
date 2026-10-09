@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"google.golang.org/grpc/codes"
@@ -56,6 +57,13 @@ type EnableOIDCOperation struct {
 	// RPCs (gRPC reflection) before any node is touched — the reusable capability
 	// gate in place of an agent version floor.
 	methodChecker nodeagent.MethodSupportChecker
+}
+
+// operatorProviderSnapshot is the optional capability of a rollout.Cluster that
+// exposes the providers pinned on the cluster row. The controller adapter
+// implements it; a cluster without it is treated as having none.
+type operatorProviderSnapshot interface {
+	OIDCProviders() []controllerconfig.OIDCProvider
 }
 
 var (
@@ -162,8 +170,7 @@ type fileArtifact struct {
 type authConfigArtifact struct {
 	Files          []fileArtifact `json:"files"`
 	AuthConfigPath string         `json:"authConfigPath"`
-	// Previous carries the operator-only configuration for cascade rollback.
-	// Older payloads omit it and retain the original disable behavior.
+	// Previous stores the pinned operator configuration for rollback.
 	Previous *authConfigArtifact `json:"previous,omitempty"`
 }
 
@@ -187,31 +194,33 @@ func (op *EnableOIDCOperation) BuildApplyToNodePayload(ctx context.Context, clus
 		}
 	}
 
-	cfg, err := kubeadmconfig.BuildOIDCAuthenticationConfig(cluster.Name(), *op.oidcConfig, caBundle)
-	if err != nil {
-		return nil, fmt.Errorf("build OIDC authentication config for cluster %s: %w", cluster.Name(), err)
+	var providers []controllerconfig.OIDCProvider
+	if snapshot, ok := cluster.(operatorProviderSnapshot); ok {
+		providers = snapshot.OIDCProviders()
 	}
+	var cfg *kubeadmconfig.OIDCAuthenticationConfig
 	var previous *authConfigArtifact
-	if snapshot, ok := cluster.(interface {
-		OIDCProviders() []controllerconfig.OIDCProvider
-	}); ok {
-		providers := snapshot.OIDCProviders()
-		if len(providers) > 0 {
-			operatorConfig, buildErr := kubeadmconfig.BuildCombinedAuthenticationConfig(cluster.Name(),
-				controllerconfig.ManagementOIDCAuthConfig{}, nil, providers, op.operatorJWTPolicy)
-			if buildErr != nil {
-				return nil, fmt.Errorf("build previous authentication config for cluster %s: %w", cluster.Name(), buildErr)
-			}
-			previous, err = renderAuthConfigArtifact(operatorConfig, cluster.KubernetesVersion())
-			if err != nil {
-				return nil, fmt.Errorf("render previous authentication config for cluster %s: %w", cluster.Name(), err)
-			}
-			cfg, err = kubeadmconfig.BuildCombinedAuthenticationConfig(cluster.Name(), controllerconfig.ManagementOIDCAuthConfig{
-				Enabled: true, IssuerURL: op.oidcConfig.IssuerURL, DiscoveryURL: op.oidcConfig.DiscoveryURL,
-			}, caBundle, providers, op.operatorJWTPolicy)
-			if err != nil {
-				return nil, fmt.Errorf("build combined authentication config for cluster %s: %w", cluster.Name(), err)
-			}
+	var err error
+	if len(providers) == 0 {
+		cfg, err = kubeadmconfig.BuildOIDCAuthenticationConfig(cluster.Name(), *op.oidcConfig, caBundle)
+		if err != nil {
+			return nil, fmt.Errorf("build OIDC authentication config for cluster %s: %w", cluster.Name(), err)
+		}
+	} else {
+		operatorConfig, buildErr := kubeadmconfig.BuildCombinedAuthenticationConfig(cluster.Name(),
+			controllerconfig.ManagementOIDCAuthConfig{}, nil, providers, op.operatorJWTPolicy)
+		if buildErr != nil {
+			return nil, fmt.Errorf("build previous authentication config for cluster %s: %w", cluster.Name(), buildErr)
+		}
+		previous, err = renderAuthConfigArtifact(operatorConfig, cluster.KubernetesVersion())
+		if err != nil {
+			return nil, fmt.Errorf("render previous authentication config for cluster %s: %w", cluster.Name(), err)
+		}
+		cfg, err = kubeadmconfig.BuildCombinedAuthenticationConfig(cluster.Name(), controllerconfig.ManagementOIDCAuthConfig{
+			Enabled: true, IssuerURL: op.oidcConfig.IssuerURL, DiscoveryURL: op.oidcConfig.DiscoveryURL,
+		}, caBundle, providers, op.operatorJWTPolicy)
+		if err != nil {
+			return nil, fmt.Errorf("build combined authentication config for cluster %s: %w", cluster.Name(), err)
 		}
 	}
 	artifact, err := renderAuthConfigArtifact(cfg, cluster.KubernetesVersion())
@@ -414,10 +423,22 @@ func filePaths(files []fileArtifact) []string {
 // buildRollbackPatchRequest keeps the authentication flag and mount when the
 // cluster already trusted operator providers before enabling the shared one.
 func buildRollbackPatchRequest(a authConfigArtifact) (*nkeproto.PatchAPIServerManifestRequest, error) {
-	if a.Previous != nil {
-		return buildEnablePatchRequest(*a.Previous)
+	if a.Previous == nil {
+		return buildDisablePatchRequest(a)
 	}
-	return buildDisablePatchRequest(a)
+	req, err := buildEnablePatchRequest(*a.Previous)
+	if err != nil {
+		return nil, err
+	}
+	// Files the forward apply staged that the previous document does not use
+	// must not linger; today both stage one file at the same path.
+	kept := filePaths(a.Previous.Files)
+	for _, path := range filePaths(a.Files) {
+		if !slices.Contains(kept, path) {
+			req.RemoveFiles = append(req.RemoveFiles, path)
+		}
+	}
+	return req, nil
 }
 
 // buildDisablePatchRequest renders the inverse request: strip the

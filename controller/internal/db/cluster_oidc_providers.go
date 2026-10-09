@@ -51,6 +51,27 @@ func ClusterOIDCProvidersFromConfig(providers []controllerconfig.OIDCProvider) [
 	return out
 }
 
+// ClusterOIDCProvidersToConfig converts a stored snapshot back into the shape
+// the authentication-config builders take. The result shares no slice or map
+// with providers.
+func ClusterOIDCProvidersToConfig(providers []ClusterOIDCProvider) []controllerconfig.OIDCProvider {
+	out := make([]controllerconfig.OIDCProvider, 0, len(providers))
+	for _, provider := range providers {
+		out = append(out, controllerconfig.OIDCProvider{
+			Name:           provider.Name,
+			IssuerURL:      provider.IssuerURL,
+			Audiences:      append([]string(nil), provider.Audiences...),
+			UsernameClaim:  provider.UsernameClaim,
+			UsernamePrefix: provider.UsernamePrefix,
+			GroupsClaim:    provider.GroupsClaim,
+			GroupsPrefix:   provider.GroupsPrefix,
+			RequiredClaims: maps.Clone(provider.RequiredClaims),
+			CABundle:       provider.CABundle,
+		})
+	}
+	return out
+}
+
 func (q *queriesImpl) PinClusterOIDCProviders(ctx context.Context, clusterID uuid.UUID, providers []ClusterOIDCProvider) ([]ClusterOIDCProvider, error) {
 	// Empty, not nil: nil is stored as NULL, which means not pinned.
 	if providers == nil {
