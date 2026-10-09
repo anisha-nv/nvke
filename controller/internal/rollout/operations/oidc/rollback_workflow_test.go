@@ -45,12 +45,18 @@ func (a *recordingAgent) PatchAPIServerManifest(_ context.Context, req *nkeproto
 	return &nkeproto.PatchAPIServerManifestResponse{Outcome: a.outcome, ErrorMessage: "injected later-node failure"}, nil
 }
 
-func TestRollout_LaterNodeFailureRestoresOperatorAuthentication(t *testing.T) {
-	for _, outcome := range []nkeproto.PatchAPIServerManifestResponse_Outcome{
-		nkeproto.PatchAPIServerManifestResponse_OUTCOME_FAILED_RESTORED,
-		nkeproto.PatchAPIServerManifestResponse_OUTCOME_FAILED_NOT_RESTORED,
+func TestRollout_LaterNodeFailureRestoresAuthentication(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		outcome   nkeproto.PatchAPIServerManifestResponse_Outcome
+		providers bool
+	}{
+		{name: "operator failed restored", outcome: nkeproto.PatchAPIServerManifestResponse_OUTCOME_FAILED_RESTORED, providers: true},
+		{name: "operator failed not restored", outcome: nkeproto.PatchAPIServerManifestResponse_OUTCOME_FAILED_NOT_RESTORED, providers: true},
+		{name: "anonymous failed restored", outcome: nkeproto.PatchAPIServerManifestResponse_OUTCOME_FAILED_RESTORED},
+		{name: "anonymous failed not restored", outcome: nkeproto.PatchAPIServerManifestResponse_OUTCOME_FAILED_NOT_RESTORED},
 	} {
-		t.Run(outcome.String(), func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			policy := kubeadmconfig.OperatorJWTPolicy{ManagementJWTTrustDomain: "jwt.example.com"}
 			provider := controllerconfig.OIDCProvider{
 				Name: "workforce", IssuerURL: "https://workforce.example.com", Audiences: []string{"tenant"},
@@ -59,7 +65,9 @@ func TestRollout_LaterNodeFailureRestoresOperatorAuthentication(t *testing.T) {
 			}
 			row := db.Cluster{
 				ID: uuid.New(), Name: "tenant", KubernetesVersion: "v1.34.2", OIDCAuthEnabled: false,
-				OIDCProviders: db.ClusterOIDCProvidersFromConfig([]controllerconfig.OIDCProvider{provider}),
+			}
+			if tt.providers {
+				row.OIDCProviders = db.ClusterOIDCProvidersFromConfig([]controllerconfig.OIDCProvider{provider})
 			}
 			nodes := []db.Node{
 				{ID: uuid.New(), Name: "cp-0", ControlPlane: true},
@@ -68,7 +76,7 @@ func TestRollout_LaterNodeFailureRestoresOperatorAuthentication(t *testing.T) {
 			}
 			cluster := adapter.NewCluster(row, nodes, nodes, "50051")
 			first := &recordingAgent{outcome: nkeproto.PatchAPIServerManifestResponse_OUTCOME_APPLIED}
-			later := &recordingAgent{outcome: outcome}
+			later := &recordingAgent{outcome: tt.outcome}
 			untouched := &recordingAgent{outcome: nkeproto.PatchAPIServerManifestResponse_OUTCOME_APPLIED}
 			agents := map[string]*recordingAgent{"cp-0": first, "cp-1": later, "cp-2": untouched}
 			op := oidc.NewEnableOIDCOperation(
@@ -101,13 +109,17 @@ func TestRollout_LaterNodeFailureRestoresOperatorAuthentication(t *testing.T) {
 			require.Len(t, later.calls, 1, "the failing node is not rolled back by the cascade")
 			require.Empty(t, untouched.calls, "failure must halt the rollout")
 
-			previous, err := kubeadmconfig.BuildCombinedAuthenticationConfig(row.Name,
-				controllerconfig.ManagementOIDCAuthConfig{}, nil, []controllerconfig.OIDCProvider{provider}, policy)
-			require.NoError(t, err)
+			previous := kubeadmconfig.BuildAnonymousAuthenticationConfig(row.KubernetesVersion)
+			if tt.providers {
+				var err error
+				previous, err = kubeadmconfig.BuildCombinedAuthenticationConfig(row.Name,
+					controllerconfig.ManagementOIDCAuthConfig{}, nil, []controllerconfig.OIDCProvider{provider}, policy)
+				require.NoError(t, err)
+			}
 			file, err := kubeadmconfig.GenerateAPIServerAuthenticationConfig(previous, row.KubernetesVersion)
 			require.NoError(t, err)
 			restored := first.calls[1]
-			require.Len(t, restored.GetFiles(), 1, "rollback must restore the operator auth file")
+			require.Len(t, restored.GetFiles(), 1, "rollback must restore the bootstrap auth file")
 			require.Equal(t, file.Content, restored.GetFiles()[0].GetContent())
 			require.Equal(t, file.Path, restored.GetFiles()[0].GetPath())
 			require.Equal(t, file.Mode, restored.GetFiles()[0].GetMode())
@@ -120,9 +132,11 @@ func TestRollout_LaterNodeFailureRestoresOperatorAuthentication(t *testing.T) {
 
 			var enabled kubeadmconfig.OIDCAuthenticationConfig
 			require.NoError(t, yaml.Unmarshal(first.calls[0].GetFiles()[0].GetContent(), &enabled))
-			require.Len(t, enabled.JWT, 2)
+			require.Len(t, enabled.JWT, len(row.OIDCProviders)+1)
 			require.Equal(t, "https://shared.example.com", enabled.JWT[0].Issuer.URL)
-			require.Equal(t, previous.JWT[0], enabled.JWT[1])
+			if tt.providers {
+				require.Equal(t, previous.JWT[0], enabled.JWT[1])
+			}
 		})
 	}
 }

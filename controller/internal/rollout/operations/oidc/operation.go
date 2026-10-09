@@ -170,7 +170,7 @@ type fileArtifact struct {
 type authConfigArtifact struct {
 	Files          []fileArtifact `json:"files"`
 	AuthConfigPath string         `json:"authConfigPath"`
-	// Previous stores the pinned operator configuration for rollback.
+	// Previous stores the bootstrap authentication configuration for rollback.
 	Previous *authConfigArtifact `json:"previous,omitempty"`
 }
 
@@ -205,6 +205,12 @@ func (op *EnableOIDCOperation) BuildApplyToNodePayload(ctx context.Context, clus
 		cfg, err = kubeadmconfig.BuildOIDCAuthenticationConfig(cluster.Name(), *op.oidcConfig, caBundle)
 		if err != nil {
 			return nil, fmt.Errorf("build OIDC authentication config for cluster %s: %w", cluster.Name(), err)
+		}
+		if anonymous := kubeadmconfig.BuildAnonymousAuthenticationConfig(cluster.KubernetesVersion()); anonymous != nil {
+			previous, err = renderAuthConfigArtifact(anonymous, cluster.KubernetesVersion())
+			if err != nil {
+				return nil, fmt.Errorf("render previous authentication config for cluster %s: %w", cluster.Name(), err)
+			}
 		}
 	} else {
 		operatorConfig, buildErr := kubeadmconfig.BuildCombinedAuthenticationConfig(cluster.Name(),
@@ -310,7 +316,7 @@ func (op *EnableOIDCOperation) ApplyToNode(ctx context.Context, node rollout.Nod
 }
 
 // Rollback implements rollout.RollbackHandler: on cascade it restores the
-// operator-only authentication config, or disables OIDC when none existed.
+// previous authentication config, or disables OIDC when none existed.
 // The framework runs rollbacks best-effort in reverse order, so it returns the
 // error for logging rather than halting the cascade.
 func (op *EnableOIDCOperation) Rollback(ctx context.Context, node rollout.Node, payload rollout.ApplyToNodePayload) error {
@@ -421,7 +427,7 @@ func filePaths(files []fileArtifact) []string {
 }
 
 // buildRollbackPatchRequest keeps the authentication flag and mount when the
-// cluster already trusted operator providers before enabling the shared one.
+// cluster already had an authentication configuration before enablement.
 func buildRollbackPatchRequest(a authConfigArtifact) (*nkeproto.PatchAPIServerManifestRequest, error) {
 	if a.Previous == nil {
 		return buildDisablePatchRequest(a)
