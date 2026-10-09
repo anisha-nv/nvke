@@ -240,30 +240,12 @@ func TestCreateNodePoolServerErrors(t *testing.T) {
 		status int
 		body   string
 		want   []string
-		// fields are appended to the default worker spec.
-		fields string
-		// wantSent holds fields the request body must carry, so a row that names
-		// a request shape proves the CLI sent it.
-		wantSent map[string]any
 	}{
 		{
 			name:   "bad request",
 			status: 400,
 			body:   `{"message": "desiredNodeCount must be positive"}`,
 			want:   []string{"400", "desiredNodeCount must be positive"},
-		},
-		{
-			// Rules the controller owns, such as no taints on a control-plane
-			// pool, are not repeated in the CLI and reach the user verbatim.
-			name:   "taints on a control-plane pool",
-			status: 400,
-			body:   `{"message": "nodeTaints are not allowed on a control-plane pool"}`,
-			want:   []string{"400", "nodeTaints are not allowed on a control-plane pool"},
-			fields: "controlPlane: true\nnodeTaints:\n  - key: dedicated\n    effect: NoSchedule\n",
-			wantSent: map[string]any{
-				"controlPlane": true,
-				"nodeTaints":   []any{map[string]any{"key": "dedicated", "effect": "NoSchedule"}},
-			},
 		},
 		{
 			name:   "cluster deleting",
@@ -279,23 +261,12 @@ func TestCreateNodePoolServerErrors(t *testing.T) {
 			fake.failCreateWith(tc.status, tc.body)
 
 			spec := fmt.Sprintf(
-				"clusterID: %s\nname: gpu-workers\nnodeNamePrefix: gpu\ndesiredNodeCount: 1\n%s", clusterID, tc.fields,
+				"clusterID: %s\nname: gpu-workers\nnodeNamePrefix: gpu\ndesiredNodeCount: 1\n", clusterID,
 			)
 
 			out, err := run(t, NewCreateCmd(clientFn), "-f", writeSpec(t, "pool.yaml", spec))
 			if err == nil {
 				t.Fatalf("expected an error, got output %q", out)
-			}
-			if len(tc.wantSent) > 0 {
-				bodies := fake.createBodies()
-				if len(bodies) != 1 {
-					t.Fatalf("create bodies = %v, want 1", bodies)
-				}
-				for field, want := range tc.wantSent {
-					if !reflect.DeepEqual(bodies[0][field], want) {
-						t.Errorf("sent %s = %v, want %v", field, bodies[0][field], want)
-					}
-				}
 			}
 			for _, want := range tc.want {
 				if !strings.Contains(err.Error(), want) {
@@ -303,6 +274,48 @@ func TestCreateNodePoolServerErrors(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCreateNodePoolSendsATaintOnAControlPlanePool verifies that a control-plane
+// pool carrying a taint is sent as written, and that the controller's rejection
+// reaches the user unchanged. The rule itself belongs to the controller and is
+// not repeated in the CLI.
+func TestCreateNodePoolSendsATaintOnAControlPlanePool(t *testing.T) {
+	fake, clientFn := newFakeCWE(t, seed{clusterName: "alpha", name: "existing", desiredNodeCount: 1})
+	clusterID := fake.clusterIDFor(t, "alpha")
+	fake.failCreateWith(400, `{"message": "nodeTaints are not allowed on a control-plane pool"}`)
+
+	spec := fmt.Sprintf(`clusterID: %s
+name: cp-pool
+nodeNamePrefix: cp
+desiredNodeCount: 1
+controlPlane: true
+nodeTaints:
+  - key: dedicated
+    effect: NoSchedule
+`, clusterID)
+
+	out, err := run(t, NewCreateCmd(clientFn), "-f", writeSpec(t, "pool.yaml", spec))
+	if err == nil {
+		t.Fatalf("expected an error, got output %q", out)
+	}
+	for _, want := range []string{"400", "nodeTaints are not allowed on a control-plane pool"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to contain %q", err, want)
+		}
+	}
+
+	bodies := fake.createBodies()
+	if len(bodies) != 1 {
+		t.Fatalf("create bodies = %v, want 1", bodies)
+	}
+	if bodies[0]["controlPlane"] != true {
+		t.Errorf("controlPlane = %v, want true", bodies[0]["controlPlane"])
+	}
+	wantTaints := []any{map[string]any{"key": "dedicated", "effect": "NoSchedule"}}
+	if !reflect.DeepEqual(bodies[0]["nodeTaints"], wantTaints) {
+		t.Errorf("nodeTaints = %v, want %v", bodies[0]["nodeTaints"], wantTaints)
 	}
 }
 
