@@ -16,12 +16,22 @@ import (
 // (verifies PatchAPIServerManifest support before any node is touched), the
 // management-cluster client (reads the issuer CA bundle), and the site OIDC
 // config.
-func RegisterDefaults(reg *rollout.Registry, dialer nodeagent.Dialer, checker nodeagent.MethodSupportChecker, k8sClient client.Client, oidc config.NkeOIDCAuth) {
+func RegisterDefaults(
+	reg *rollout.Registry,
+	dialer nodeagent.Dialer,
+	checker nodeagent.MethodSupportChecker,
+	k8sClient client.Client,
+	oidc config.NkeOIDCAuth,
+	opts ...Option,
+) {
 	oidcConfig := oidc
-	reg.RegisterOperation(rollout.Compile(NewEnableOIDCOperation(
+	options := make([]Option, 0, 4+len(opts))
+	options = append(options,
 		WithDialer(dialer),
 		WithMethodSupportChecker(checker),
 		WithClient(k8sClient),
 		WithOIDCConfig(&oidcConfig),
-	)))
+	)
+	options = append(options, opts...)
+	reg.RegisterOperation(rollout.Compile(NewEnableOIDCOperation(options...)))
 }

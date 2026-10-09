@@ -5,6 +5,7 @@ package oidc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -328,4 +329,18 @@ func TestBuildPatchRequests_MultipleFiles(t *testing.T) {
 	assert.ElementsMatch(t,
 		[]string{"/etc/kubernetes/oidc/auth-config.yaml", "/etc/kubernetes/oidc/ca.crt"},
 		disable.GetRemoveFiles(), "both files removed on disable")
+}
+
+func TestRollback_RejectsInvalidPreviousConfigBeforeDial(t *testing.T) {
+	artifact, err := parsePayload(validArtifact(t))
+	require.NoError(t, err)
+	artifact.Previous = &authConfigArtifact{AuthConfigPath: artifact.AuthConfigPath}
+	payload, err := json.Marshal(artifact)
+	require.NoError(t, err)
+	c := &fakeClient{}
+	op := NewEnableOIDCOperation()
+	op.nodeAgentClientDialer = dialerFor(c)
+	err = op.Rollback(context.Background(), cpNode(), payload)
+	require.ErrorContains(t, err, "invalid previous authentication config")
+	require.Empty(t, c.calls, "invalid rollback state must fail before mutating the node")
 }

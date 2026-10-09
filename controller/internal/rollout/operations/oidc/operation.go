@@ -25,6 +25,7 @@ import (
 	nkeproto "github.com/dsx-ai-factory/nke/agent/pkg/agent/proto"
 
 	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/controllerconfig"
 	"github.com/dsx-ai-factory/nke/controller/internal/kubeadmconfig"
 	"github.com/dsx-ai-factory/nke/controller/internal/rollout"
 	"github.com/dsx-ai-factory/nke/controller/internal/rollout/nodeagent"
@@ -50,6 +51,7 @@ type EnableOIDCOperation struct {
 	nodeAgentClientDialer nodeAgentClientDialer
 	k8sClient             client.Client
 	oidcConfig            *config.NkeOIDCAuth
+	operatorJWTPolicy     kubeadmconfig.OperatorJWTPolicy
 	// methodChecker verifies each control-plane agent implements the OIDC
 	// RPCs (gRPC reflection) before any node is touched — the reusable capability
 	// gate in place of an agent version floor.
@@ -160,6 +162,9 @@ type fileArtifact struct {
 type authConfigArtifact struct {
 	Files          []fileArtifact `json:"files"`
 	AuthConfigPath string         `json:"authConfigPath"`
+	// Previous carries the operator-only configuration for cascade rollback.
+	// Older payloads omit it and retain the original disable behavior.
+	Previous *authConfigArtifact `json:"previous,omitempty"`
 }
 
 // BuildApplyToNodePayload implements rollout.ApplyToNodePayloadBuilder. It renders
@@ -186,23 +191,52 @@ func (op *EnableOIDCOperation) BuildApplyToNodePayload(ctx context.Context, clus
 	if err != nil {
 		return nil, fmt.Errorf("build OIDC authentication config for cluster %s: %w", cluster.Name(), err)
 	}
-	file, err := kubeadmconfig.GenerateAPIServerAuthenticationConfig(cfg, cluster.KubernetesVersion())
+	var previous *authConfigArtifact
+	if snapshot, ok := cluster.(interface {
+		OIDCProviders() []controllerconfig.OIDCProvider
+	}); ok {
+		providers := snapshot.OIDCProviders()
+		if len(providers) > 0 {
+			operatorConfig, buildErr := kubeadmconfig.BuildCombinedAuthenticationConfig(cluster.Name(),
+				controllerconfig.ManagementOIDCAuthConfig{}, nil, providers, op.operatorJWTPolicy)
+			if buildErr != nil {
+				return nil, fmt.Errorf("build previous authentication config for cluster %s: %w", cluster.Name(), buildErr)
+			}
+			previous, err = renderAuthConfigArtifact(operatorConfig, cluster.KubernetesVersion())
+			if err != nil {
+				return nil, fmt.Errorf("render previous authentication config for cluster %s: %w", cluster.Name(), err)
+			}
+			cfg, err = kubeadmconfig.BuildCombinedAuthenticationConfig(cluster.Name(), controllerconfig.ManagementOIDCAuthConfig{
+				Enabled: true, IssuerURL: op.oidcConfig.IssuerURL, DiscoveryURL: op.oidcConfig.DiscoveryURL,
+			}, caBundle, providers, op.operatorJWTPolicy)
+			if err != nil {
+				return nil, fmt.Errorf("build combined authentication config for cluster %s: %w", cluster.Name(), err)
+			}
+		}
+	}
+	artifact, err := renderAuthConfigArtifact(cfg, cluster.KubernetesVersion())
 	if err != nil {
 		return nil, fmt.Errorf("render OIDC authentication config for cluster %s: %w", cluster.Name(), err)
 	}
-	out, err := json.Marshal(authConfigArtifact{
-		Files: []fileArtifact{{
-			Path:    file.Path,
-			Content: file.Content,
-			Mode:    file.Mode,
-			Owner:   file.Owner,
-		}},
-		AuthConfigPath: file.Path,
-	})
+	artifact.Previous = previous
+	out, err := json.Marshal(artifact)
 	if err != nil {
 		return nil, fmt.Errorf("marshal OIDC auth-config artifact: %w", err)
 	}
 	return rollout.ApplyToNodePayload(out), nil
+}
+
+// renderAuthConfigArtifact renders the file, path and permissions together so
+// apply and rollback use the same staging and manifest patch code.
+func renderAuthConfigArtifact(cfg *kubeadmconfig.OIDCAuthenticationConfig, kubernetesVersion string) (*authConfigArtifact, error) {
+	file, err := kubeadmconfig.GenerateAPIServerAuthenticationConfig(cfg, kubernetesVersion)
+	if err != nil {
+		return nil, err
+	}
+	return &authConfigArtifact{
+		Files:          []fileArtifact{{Path: file.Path, Content: file.Content, Mode: file.Mode, Owner: file.Owner}},
+		AuthConfigPath: file.Path,
+	}, nil
 }
 
 // ApplyToNode implements rollout.Operation: it dials the target control-plane
@@ -266,9 +300,10 @@ func (op *EnableOIDCOperation) ApplyToNode(ctx context.Context, node rollout.Nod
 	}
 }
 
-// Rollback implements rollout.RollbackHandler: on cascade it disables OIDC on a
-// previously-applied node. The framework runs rollbacks best-effort in reverse
-// order, so it returns the error for logging rather than halting the cascade.
+// Rollback implements rollout.RollbackHandler: on cascade it restores the
+// operator-only authentication config, or disables OIDC when none existed.
+// The framework runs rollbacks best-effort in reverse order, so it returns the
+// error for logging rather than halting the cascade.
 func (op *EnableOIDCOperation) Rollback(ctx context.Context, node rollout.Node, payload rollout.ApplyToNodePayload) error {
 	if node == nil {
 		return errors.New("node is nil")
@@ -277,23 +312,23 @@ func (op *EnableOIDCOperation) Rollback(ctx context.Context, node rollout.Node, 
 	if err != nil {
 		return err
 	}
-	disableReq, err := buildDisablePatchRequest(artifact)
+	rollbackReq, err := buildRollbackPatchRequest(artifact)
 	if err != nil {
-		return fmt.Errorf("build disable patch request for node %s: %w", node.Name(), err)
+		return fmt.Errorf("build rollback patch request for node %s: %w", node.Name(), err)
 	}
 	client, cleanup, err := op.dialNode(ctx, node)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	resp, err := client.PatchAPIServerManifest(ctx, disableReq)
+	resp, err := client.PatchAPIServerManifest(ctx, rollbackReq)
 	if err != nil {
-		return fmt.Errorf("disable OIDC on node %s: %w", node.Name(), err)
+		return fmt.Errorf("roll back OIDC on node %s: %w", node.Name(), err)
 	}
 	// Business outcomes ride on the response with a nil gRPC error (the RPC's
 	// two-lane contract), so a FAILED_* outcome must surface as an error even
 	// though the call itself succeeded. Mirrors the forward path's handling.
-	return outcomeError("disable", node.Name(), resp)
+	return outcomeError("roll back", node.Name(), resp)
 }
 
 // dialNode resolves the dialer and opens an agent connection for node,
@@ -376,6 +411,15 @@ func filePaths(files []fileArtifact) []string {
 	return out
 }
 
+// buildRollbackPatchRequest keeps the authentication flag and mount when the
+// cluster already trusted operator providers before enabling the shared one.
+func buildRollbackPatchRequest(a authConfigArtifact) (*nkeproto.PatchAPIServerManifestRequest, error) {
+	if a.Previous != nil {
+		return buildEnablePatchRequest(*a.Previous)
+	}
+	return buildDisablePatchRequest(a)
+}
+
 // buildDisablePatchRequest renders the inverse request: strip the
 // --authentication-config flag, delete the auth-config volume + mount (a
 // strategic-merge $patch: delete keyed by name/mountPath), and remove the staged
@@ -434,20 +478,35 @@ func parsePayload(payload rollout.ApplyToNodePayload) (authConfigArtifact, error
 	if err := json.Unmarshal(payload, &out); err != nil {
 		return authConfigArtifact{}, fmt.Errorf("unmarshal OIDC auth-config artifact: %w", err)
 	}
+	if err := validateArtifact(out); err != nil {
+		return authConfigArtifact{}, err
+	}
+	if out.Previous != nil {
+		if out.Previous.Previous != nil {
+			return authConfigArtifact{}, errors.New("OIDC auth-config artifact has nested previous configurations")
+		}
+		if err := validateArtifact(*out.Previous); err != nil {
+			return authConfigArtifact{}, fmt.Errorf("invalid previous authentication config: %w", err)
+		}
+	}
+	return out, nil
+}
+
+func validateArtifact(out authConfigArtifact) error {
 	if len(out.Files) == 0 || out.AuthConfigPath == "" {
-		return authConfigArtifact{}, errors.New("OIDC auth-config artifact is missing files or auth-config path")
+		return errors.New("OIDC auth-config artifact is missing files or auth-config path")
 	}
 	authConfigStaged := false
 	for _, f := range out.Files {
 		if f.Path == "" || len(f.Content) == 0 {
-			return authConfigArtifact{}, errors.New("OIDC auth-config artifact has a file with no path or content")
+			return errors.New("OIDC auth-config artifact has a file with no path or content")
 		}
 		if f.Path == out.AuthConfigPath {
 			authConfigStaged = true
 		}
 	}
 	if !authConfigStaged {
-		return authConfigArtifact{}, fmt.Errorf("OIDC auth-config artifact authConfigPath %q is not among the staged files", out.AuthConfigPath)
+		return fmt.Errorf("OIDC auth-config artifact authConfigPath %q is not among the staged files", out.AuthConfigPath)
 	}
-	return out, nil
+	return nil
 }

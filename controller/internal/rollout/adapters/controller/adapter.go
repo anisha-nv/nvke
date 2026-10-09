@@ -8,12 +8,14 @@
 package controller
 
 import (
+	"maps"
 	"net"
 	"slices"
 	"strings"
 
 	"github.com/google/uuid"
 
+	"github.com/dsx-ai-factory/nke/controller/internal/controllerconfig"
 	"github.com/dsx-ai-factory/nke/controller/internal/db"
 	"github.com/dsx-ai-factory/nke/controller/internal/rollout"
 )
@@ -108,5 +110,22 @@ func (a *ClusterAdapter) wrapSorted(nodes []db.Node) []rollout.Node {
 	slices.SortFunc(out, func(x, y rollout.Node) int {
 		return strings.Compare(x.Name(), y.Name())
 	})
+	return out
+}
+
+// OIDCProviders returns the cluster's pinned operator providers, independent of
+// the current site configuration. The result shares no slices or maps with the
+// database snapshot.
+func (a *ClusterAdapter) OIDCProviders() []controllerconfig.OIDCProvider {
+	out := make([]controllerconfig.OIDCProvider, 0, len(a.cluster.OIDCProviders))
+	for _, provider := range a.cluster.OIDCProviders {
+		out = append(out, controllerconfig.OIDCProvider{
+			Name: provider.Name, IssuerURL: provider.IssuerURL,
+			Audiences:     append([]string(nil), provider.Audiences...),
+			UsernameClaim: provider.UsernameClaim, UsernamePrefix: provider.UsernamePrefix,
+			GroupsClaim: provider.GroupsClaim, GroupsPrefix: provider.GroupsPrefix,
+			RequiredClaims: maps.Clone(provider.RequiredClaims), CABundle: provider.CABundle,
+		})
+	}
 	return out
 }

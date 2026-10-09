@@ -32,6 +32,7 @@ import (
 	"github.com/dsx-ai-factory/nke/controller/internal/config"
 	"github.com/dsx-ai-factory/nke/controller/internal/db"
 	"github.com/dsx-ai-factory/nke/controller/internal/kube"
+	"github.com/dsx-ai-factory/nke/controller/internal/kubeadmconfig"
 	"github.com/dsx-ai-factory/nke/controller/internal/rollout"
 	rolloutcontroller "github.com/dsx-ai-factory/nke/controller/internal/rollout/adapters/controller"
 	rolloutkubevip "github.com/dsx-ai-factory/nke/controller/internal/rollout/guards/kubevip"
@@ -213,7 +214,8 @@ func NewWorker(
 	preflights.RegisterDefaults(rolloutRegistry, rolloutDialer)
 	rolloutkubevip.RegisterDefaults(rolloutRegistry, rolloutDialer)
 	rolloutetcd.RegisterDefaults(rolloutRegistry, rolloutDialer, k8sClient, cfg.PodNamespace)
-	rolloutoidc.RegisterDefaults(rolloutRegistry, rolloutDialer, rolloutMethodChecker, k8sClient, cfg.NkeOIDCAuth)
+	rolloutoidc.RegisterDefaults(rolloutRegistry, rolloutDialer, rolloutMethodChecker, k8sClient, cfg.NkeOIDCAuth,
+		rolloutoidc.WithOperatorJWTPolicy(kubeadmconfig.OperatorJWTPolicy{ManagementJWTTrustDomain: trustDomain}))
 	rollouttemporal.NewActivities(rolloutLoader, rolloutRegistry).Register(w)
 	rollouttemporal.NewClusterLoaderActivity(rolloutLoader, cfg.NodeAgent.Port).Register(w)
 

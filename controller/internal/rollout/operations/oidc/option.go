@@ -9,6 +9,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/dsx-ai-factory/nke/controller/internal/config"
+	"github.com/dsx-ai-factory/nke/controller/internal/kubeadmconfig"
 	"github.com/dsx-ai-factory/nke/controller/internal/rollout"
 	"github.com/dsx-ai-factory/nke/controller/internal/rollout/nodeagent"
 )
@@ -48,4 +49,10 @@ func WithOIDCConfig(oidc *config.NkeOIDCAuth) Option {
 // fails loudly.
 func WithMethodSupportChecker(checker nodeagent.MethodSupportChecker) Option {
 	return func(op *EnableOIDCOperation) { op.methodChecker = checker }
+}
+
+// WithOperatorJWTPolicy supplies the identity rules used to render pinned
+// operator providers for both enablement and rollback.
+func WithOperatorJWTPolicy(policy kubeadmconfig.OperatorJWTPolicy) Option {
+	return func(op *EnableOIDCOperation) { op.operatorJWTPolicy = policy }
 }
