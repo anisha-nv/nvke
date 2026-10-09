@@ -349,6 +349,26 @@ pull request and regenerating generated artifacts. They are plain markdown;
 agents other than Claude Code should read them as documents when performing
 those tasks.
 
+## Cursor Cloud specific instructions
+
+Cloud Agents use [.cursor/environment.json](.cursor/environment.json): `install`
+runs `make build` from the repository root; `start` brings up PostgreSQL,
+Temporal (`localhost:7233`), Docker (when available), and a lightweight k3s API
+(`KUBECONFIG=/etc/rancher/k3s/k3s.yaml`) for the controller worker.
+
+After boot, run the CWE locally from `controller/`:
+
+```bash
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+make -C controller run-local
+```
+
+Swagger is at http://localhost:8080/api/docs/ with authentication off on this
+path. Docker Hub image pulls often fail in restricted egress; use
+`public.ecr.aws/docker/library/…` mirrors or the bundled k3s/PostgreSQL paths in
+`.cursor/start.sh`. Flox is optional when the image already provides Go, Temporal,
+and kind/k3s on `PATH`.
+
 ## See also
 
 - [docs/architecture.md](docs/architecture.md) — the design to understand before
