@@ -131,7 +131,8 @@ func TestCreateNodePoolFromJSON(t *testing.T) {
 	clusterID := fake.clusterIDFor(t, "alpha")
 
 	spec := fmt.Sprintf(
-		`{"clusterID": %q, "name": "json-pool", "nodeNamePrefix": "gpu", "desiredNodeCount": 3}`, clusterID,
+		`{"clusterID": %q, "name": "json-pool", "nodeNamePrefix": "gpu", "desiredNodeCount": 3, "controlPlane": true, `+
+			`"nodeTaints": [{"key": "dedicated", "effect": "NoSchedule"}]}`, clusterID,
 	)
 
 	out, err := run(t, NewCreateCmd(clientFn), "-f", writeSpec(t, "pool.json", spec))
@@ -141,8 +142,16 @@ func TestCreateNodePoolFromJSON(t *testing.T) {
 	if !strings.Contains(out, `Node pool "json-pool" created`) {
 		t.Errorf("output = %q", out)
 	}
-	if bodies := fake.createBodies(); len(bodies) != 1 || bodies[0]["desiredNodeCount"] != float64(3) {
-		t.Errorf("create bodies = %v", fake.createBodies())
+	bodies := fake.createBodies()
+	if len(bodies) != 1 || bodies[0]["desiredNodeCount"] != float64(3) {
+		t.Fatalf("create bodies = %v", bodies)
+	}
+	if bodies[0]["controlPlane"] != true {
+		t.Errorf("controlPlane = %v, want true", bodies[0]["controlPlane"])
+	}
+	wantTaints := []any{map[string]any{"key": "dedicated", "effect": "NoSchedule"}}
+	if !reflect.DeepEqual(bodies[0]["nodeTaints"], wantTaints) {
+		t.Errorf("nodeTaints = %v, want %v", bodies[0]["nodeTaints"], wantTaints)
 	}
 }
 
@@ -274,48 +283,6 @@ func TestCreateNodePoolServerErrors(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// TestCreateNodePoolSendsATaintOnAControlPlanePool verifies that a control-plane
-// pool carrying a taint is sent as written, and that the controller's rejection
-// reaches the user unchanged. The rule itself belongs to the controller and is
-// not repeated in the CLI.
-func TestCreateNodePoolSendsATaintOnAControlPlanePool(t *testing.T) {
-	fake, clientFn := newFakeCWE(t, seed{clusterName: "alpha", name: "existing", desiredNodeCount: 1})
-	clusterID := fake.clusterIDFor(t, "alpha")
-	fake.failCreateWith(400, `{"message": "nodeTaints are not allowed on a control-plane pool"}`)
-
-	spec := fmt.Sprintf(`clusterID: %s
-name: cp-pool
-nodeNamePrefix: cp
-desiredNodeCount: 1
-controlPlane: true
-nodeTaints:
-  - key: dedicated
-    effect: NoSchedule
-`, clusterID)
-
-	out, err := run(t, NewCreateCmd(clientFn), "-f", writeSpec(t, "pool.yaml", spec))
-	if err == nil {
-		t.Fatalf("expected an error, got output %q", out)
-	}
-	for _, want := range []string{"400", "nodeTaints are not allowed on a control-plane pool"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error = %v, want it to contain %q", err, want)
-		}
-	}
-
-	bodies := fake.createBodies()
-	if len(bodies) != 1 {
-		t.Fatalf("create bodies = %v, want 1", bodies)
-	}
-	if bodies[0]["controlPlane"] != true {
-		t.Errorf("controlPlane = %v, want true", bodies[0]["controlPlane"])
-	}
-	wantTaints := []any{map[string]any{"key": "dedicated", "effect": "NoSchedule"}}
-	if !reflect.DeepEqual(bodies[0]["nodeTaints"], wantTaints) {
-		t.Errorf("nodeTaints = %v, want %v", bodies[0]["nodeTaints"], wantTaints)
 	}
 }
 
