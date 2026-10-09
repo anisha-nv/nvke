@@ -240,8 +240,8 @@ func TestCreateNodePoolServerErrors(t *testing.T) {
 		status int
 		body   string
 		want   []string
-		// spec, when set, replaces the default worker spec; %s is the cluster ID.
-		spec string
+		// fields are appended to the default worker spec.
+		fields string
 		// wantSent holds fields the request body must carry, so a row that names
 		// a request shape proves the CLI sent it.
 		wantSent map[string]any
@@ -259,15 +259,7 @@ func TestCreateNodePoolServerErrors(t *testing.T) {
 			status: 400,
 			body:   `{"message": "nodeTaints are not allowed on a control-plane pool"}`,
 			want:   []string{"400", "nodeTaints are not allowed on a control-plane pool"},
-			spec: `clusterID: %s
-name: cp-pool
-nodeNamePrefix: cp
-desiredNodeCount: 1
-controlPlane: true
-nodeTaints:
-  - key: dedicated
-    effect: NoSchedule
-`,
+			fields: "controlPlane: true\nnodeTaints:\n  - key: dedicated\n    effect: NoSchedule\n",
 			wantSent: map[string]any{
 				"controlPlane": true,
 				"nodeTaints":   []any{map[string]any{"key": "dedicated", "effect": "NoSchedule"}},
@@ -286,11 +278,9 @@ nodeTaints:
 			clusterID := fake.clusterIDFor(t, "alpha")
 			fake.failCreateWith(tc.status, tc.body)
 
-			specFormat := tc.spec
-			if specFormat == "" {
-				specFormat = "clusterID: %s\nname: gpu-workers\nnodeNamePrefix: gpu\ndesiredNodeCount: 1\n"
-			}
-			spec := fmt.Sprintf(specFormat, clusterID)
+			spec := fmt.Sprintf(
+				"clusterID: %s\nname: gpu-workers\nnodeNamePrefix: gpu\ndesiredNodeCount: 1\n%s", clusterID, tc.fields,
+			)
 
 			out, err := run(t, NewCreateCmd(clientFn), "-f", writeSpec(t, "pool.yaml", spec))
 			if err == nil {
