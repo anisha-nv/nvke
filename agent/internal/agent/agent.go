@@ -208,6 +208,16 @@ type NodeAgentServer struct {
 	kubeletConfigAtomicWrite func(string, []byte, os.FileMode) error
 	kubeVipFetchASN          func(context.Context, string) (uint32, error)
 	staticPodMutationMu      sync.Mutex // serializes agent-owned static-pod manifest transactions
+
+	// etcdHealthTimeout bounds how long the etcd manifest and defragmentation
+	// RPCs wait for the local member to report healthy after a restart. Zero
+	// means the production default. A defragmenting member is unresponsive for
+	// the duration of the rewrite, so this is sized for the backend file, not
+	// for a plain restart.
+	etcdHealthTimeout time.Duration
+	// etcdHealthPollInterval is the gap between local etcd health probes during
+	// that wait. Zero means the production default.
+	etcdHealthPollInterval time.Duration
 }
 
 // Real implementations
