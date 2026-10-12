@@ -123,17 +123,17 @@ func main() {
 
 	// Before the SPIFFE wait and the migrations: a bad configuration should cost a
 	// restart, not a migrated schema.
+	loadedOIDC, err := loadOIDCConfig(&cfg)
+	if err != nil {
+		logger.Error("Failed to load nke-controller-config", "error", err)
+		os.Exit(1)
+	}
 	var fleetOIDC *controllerconfig.OIDCConfig
 	if cfg.ControllerConfigPath == "" {
 		logger.Info("CONTROLLER_CONFIG_PATH is unset; running without nke-controller-config")
 	} else {
-		controllerCfg, err := controllerconfig.Load(cfg.ControllerConfigPath)
-		if err != nil {
-			logger.Error("Failed to load nke-controller-config", "error", err)
-			os.Exit(1)
-		}
-		logger.Info("Loaded nke-controller-config", "path", cfg.ControllerConfigPath, "oidcProviders", len(controllerCfg.OIDC.Providers))
-		fleetOIDC = &controllerCfg.OIDC
+		fleetOIDC = &loadedOIDC
+		logger.Info("Loaded nke-controller-config", "path", cfg.ControllerConfigPath, "oidcProviders", len(fleetOIDC.Providers))
 	}
 
 	authenticator, err := auth.Setup(ctx, auth.Options{
@@ -658,6 +658,30 @@ func main() {
 		logger.Error("Service error occurred", "error", err)
 		os.Exit(1)
 	}
+}
+
+// loadOIDCConfig reads the mounted config once at startup. Its management OIDC
+// settings replace the legacy environment values, including false and empty
+// fields. Without a mounted file, the environment settings remain in effect.
+func loadOIDCConfig(cfg *config.Config) (controllerconfig.OIDCConfig, error) {
+	if cfg.ControllerConfigPath == "" {
+		return controllerconfig.OIDCConfig{}, nil
+	}
+	controllerCfg, err := controllerconfig.Load(cfg.ControllerConfigPath)
+	if err != nil {
+		return controllerconfig.OIDCConfig{}, err
+	}
+
+	management := controllerCfg.OIDC.ManagementOIDCAuth
+	cfg.NvkeOIDCAuth.Enabled = management.Enabled
+	cfg.NvkeOIDCAuth.IssuerURL = management.IssuerURL
+	cfg.NvkeOIDCAuth.DiscoveryURL = management.DiscoveryURL
+	cfg.NvkeOIDCAuth.CABundleSecret = config.OIDCCABundleSecretRef{
+		Namespace: management.CABundleSecretRef.Namespace,
+		Name:      management.CABundleSecretRef.Name,
+		Key:       management.CABundleSecretRef.Key,
+	}
+	return controllerCfg.OIDC, nil
 }
 
 // registerTemporalNamespaceWithRetry retries namespace registration for a
