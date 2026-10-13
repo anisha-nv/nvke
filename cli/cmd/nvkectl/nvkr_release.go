@@ -15,7 +15,8 @@ import (
 
 // newInspectCmd groups internal commands: hidden from the top-level help,
 // text output, and no registry or cluster access. deploy/check-site.sh
-// reads the site spec and the release description through them; the
+// reads the site spec and the release description through them, and
+// deploy/nvke-deploy.sh reads deploy paths through "inspect deploy-path"; the
 // verb-noun shape is the one every nvkectl command has.
 func newInspectCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -24,10 +25,11 @@ func newInspectCmd() *cobra.Command {
 		Hidden: true,
 		Long: `Internal commands. These subcommands read a file nvkectl consumes and
 print one view of it as plain text. deploy/check-site.sh reads the site
-spec and the release description through them; operators are not expected
+spec and the release description through them, and deploy/nvke-deploy.sh
+reads deploy paths through "inspect deploy-path"; operators are not expected
 to. Nothing here touches a registry or a cluster.`,
 	}
-	cmd.AddCommand(newInspectNVKRReleaseCmd(), newInspectSiteSpecCmd())
+	cmd.AddCommand(newInspectNVKRReleaseCmd(), newInspectDeployPathCmd(), newInspectSiteSpecCmd())
 	return cmd
 }
 
