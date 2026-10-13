@@ -4,6 +4,8 @@
 
 A Helm chart to deploy the NVKE controller service
 
+With `machineconfiguration.enabled=false`, NKE Controller continues to run configuration profile hooks. Enable the standalone Machine Configuration Controller only after its catalog and lifecycle handoffs are deployed.
+
 ## Values
 
 | Key | Type | Default | Description |
@@ -51,6 +53,7 @@ A Helm chart to deploy the NVKE controller service
 | ingress.tls | list | `[]` |  |
 | kubeadm.imageRepository | string | `"registry.k8s.io"` | OCI registry kubeadm uses for control-plane component images. |
 | livenessProbe | string | `nil` |  |
+| machineconfiguration.enabled | bool | `false` | When enabled, NKE Controller expects the Machine Configuration Controller to be deployed. |
 | metrics.listenAddress | string | `"0.0.0.0:9090"` | listenAddress controls which interface the metrics server binds. Set to 0.0.0.0:<port> when a NetworkPolicy is in place to restrict access. |
 | metrics.networkPolicy.additionalNamespaces | list | `[]` | additionalNamespaces allows extra namespaces to scrape the metrics port. |
 | metrics.networkPolicy.enabled | bool | `true` | enabled controls whether a NetworkPolicy is created to restrict metrics port access to the Prometheus and Alloy scraper namespaces. |
@@ -98,7 +101,7 @@ A Helm chart to deploy the NVKE controller service
 | profiles.image.enabled | bool | `false` | Copy `/profiles` from a content image into profiles.path |
 | profiles.image.repository | string | `"nvcr.io/j7sbcjl3qgta/cwe-profiles"` | Repository, including registry, for the fleet profiles content image (not the nke-controller image above). Override to pull it from a different registry (e.g. a private mirror); pair any change with a matching `imagePullSecrets` entry. |
 | profiles.image.tag | string | `""` | Tag for the profiles content image (used when digest is empty) |
-| profiles.path | string | `""` | Directory mounted and read as profilesDir |
+| profiles.path | string | `""` | Directory mounted and read as profilesDir. Keep config profile YAMLs here for Kubernetes Node labels when machineconfiguration.enabled is true. |
 | profiles.runbooksPath | string | `""` | Directory read as runbooksDir for config-profile hook scripts. Empty uses the runbooks/ directory under path. |
 | readinessProbe | string | `nil` |  |
 | releaseCRDs.install | bool | `true` | Install the MachineImage, ClusterRelease and NodePoolRelease CRDs with the chart. |

@@ -44,7 +44,7 @@ func JoinNode(ctx workflow.Context, input JoinNodeInput) error {
 	// Bound the join to a single attempt so a failure fails this workflow run;
 	// the workflow-level RetryPolicy set by the control-plane controller owns the
 	// retry budget (retry X times, then rotate to the next control-plane node).
-	if err := joinProvisionedNode(ctx, input.NodeID, nodeCtx, labels, true); err != nil {
+	if err := joinProvisionedNode(ctx, input.NodeID, nodeCtx, labels, true, nodeCtx.MachineConfigurationEnabled); err != nil {
 		// Best effort to update the node conditions to indicate the join failed
 		if err := updateNodeProvisioningMessage(ctx, input.NodeID, fmt.Sprintf("Workflow failed: %s", err)); err != nil {
 			logger.Error("failed to update node conditions", "error", err)

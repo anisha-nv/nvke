@@ -61,6 +61,7 @@ var stayEnv = map[string]string{
 	"DGXC_TENANT_PASSWORD":    credential,
 
 	"POD_NAMESPACE": downwardAPI,
+	"MACHINE_CONFIGURATION_CONTROLLER_ENABLED": "the chart-controlled MCC handoff flag is set directly on the container",
 	// The chart's default is a fieldRef to status.hostIP; a literal
 	// spiffe.spire.serverAddress is the override.
 	"SPIRE_SERVER_ADDRESS":   downwardAPI,

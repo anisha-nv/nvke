@@ -318,6 +318,10 @@ resources: {}
 # -- Comma-separated API provider blocks accepted by mutating cluster and node-pool requests. The chart defaults the deployed controller to Nico only; set to "nico,infra" only for deployments that should accept generic CAPI-backed provider payloads.
 supportedInfraProviders: "nico"
 
+# -- When enabled, NKE Controller expects the Machine Configuration Controller to be deployed.
+machineconfiguration:
+  enabled: false
+
 # -- Additional environment variables to inject into the controller container. A
 # variable nke-controller-config carries is refused; set its chart value instead.
 env: []
@@ -566,6 +570,7 @@ profiles:
   # When image.enabled is true, an initContainer copies /profiles from the
   # profiles content image into an emptyDir mounted at this path.
   # -- Directory mounted and read as profilesDir
+  # Keep config profile YAMLs here for Kubernetes Node labels when machineconfiguration.enabled is true.
   path: ""
   # -- Directory read as runbooksDir for config-profile hook scripts. Empty
   # uses the runbooks/ directory under path.

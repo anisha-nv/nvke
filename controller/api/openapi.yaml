@@ -163,10 +163,9 @@ tags:
 
       **OS profiles (`osProfile`).** The OS and first-boot configuration for
       every node come from an OS profile the Operator supplies to the management
-      plane, optionally together with a config profile for the node's role.
-      Control-plane and node pool requests select them by name in
-      `nico.osProfile` and `nico.configProfile`. Changing `osProfile` on a node pool or on the control
-      plane triggers a rollout of the affected nodes to the new profile.
+      plane. `nico.osProfile` selects the OS image. Changing `osProfile` on a
+      node pool or on the control plane triggers a rollout of the affected
+      nodes to the new profile.
   - name: Node pools
     description: |
       A group of worker nodes sharing an instance type, OS profile and
@@ -2473,6 +2472,7 @@ components:
           x-go-type-skip-optional-pointer: true
         configProfile:
           type: string
+          deprecated: true
           description: Config profile name for the pool's nodes. Optional; when omitted the nodes run no config profile hooks or labels.
           x-go-type-skip-optional-pointer: true
         diskSelectionStrategy:
@@ -2508,6 +2508,7 @@ components:
           x-go-name: OSProfile
         configProfile:
           type: string
+          deprecated: true
           description: |
             Config profile name for the pool's nodes. An empty string clears it; a pool
             may have no config profile.
@@ -2541,6 +2542,7 @@ components:
           x-go-type-skip-optional-pointer: true
         configProfile:
           type: string
+          deprecated: true
           description: Config profile name for the pool's nodes. Optional; when omitted the nodes run no config profile hooks or labels.
           x-go-type-skip-optional-pointer: true
         diskSelectionStrategy:
@@ -2663,6 +2665,7 @@ components:
             - $ref: "#/components/schemas/DiskSelectionStrategyCreate"
         configProfile:
           type: string
+          deprecated: true
           description: Config profile name for the control-plane nodes.
           x-go-type-skip-optional-pointer: true
         sshKeyGroupIDs:
@@ -2709,6 +2712,7 @@ components:
           x-go-type-skip-optional-pointer: true
         configProfile:
           type: string
+          deprecated: true
           description: Config profile name for the control-plane nodes. Optional; when omitted the nodes run no config profile hooks or labels.
           x-go-type-skip-optional-pointer: true
         sshKeyGroupIDs:
@@ -2753,6 +2757,7 @@ components:
           x-go-name: OSProfile
         configProfile:
           type: string
+          deprecated: true
           description: Config profile name for the control-plane nodes.
         sshKeyGroupIDs:
           type: array

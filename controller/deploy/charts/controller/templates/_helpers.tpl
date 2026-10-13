@@ -134,6 +134,9 @@ at another file, or at none.
 {{- if eq $name "CONTROLLER_CONFIG_PATH" }}
 {{- fail "env sets CONTROLLER_CONFIG_PATH, which the chart sets to the mounted nke-controller-config file" }}
 {{- end }}
+{{- if eq $name "MACHINE_CONFIGURATION_CONTROLLER_ENABLED" }}
+{{- fail "env sets MACHINE_CONFIGURATION_CONTROLLER_ENABLED, which machineconfiguration.enabled controls" }}
+{{- end }}
 {{- if hasKey $carried $name }}
 {{- fail (printf "env sets %s, which nke-controller-config carries as %s; set it through its chart value instead" $name (get $carried $name)) }}
 {{- end }}

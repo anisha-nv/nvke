@@ -757,3 +757,35 @@ func TestNicoControlPlaneConfigProfileIsOptional(t *testing.T) {
 		require.NoError(t, validateMergedForgeControlPlaneSpec(spec))
 	})
 }
+
+func TestUnit_NicoControlPlaneConfigProfileValidation(t *testing.T) {
+	type parameters struct {
+		profileName string
+		wantError   bool
+	}
+	for name, params := range map[string]parameters{
+		"valid catalog key":   {profileName: "valid.profile-1"},
+		"optional empty name": {},
+		"space in key":        {profileName: "bad profile", wantError: true},
+	} {
+		t.Run("create "+name, func(t *testing.T) {
+			err := validateCreateForgeControlPlaneConfigFields(&api.CreateClusterControlPlaneConfig{
+				Nico: &api.NicoControlPlaneProviderCreate{
+					ConfigProfile: params.profileName, OSProfile: "ubuntu", InstanceTypePreference: []uuid.UUID{uuid.New()},
+				},
+			})
+			if params.wantError {
+				require.ErrorContains(t, err, "configProfile")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+
+	bad := "bad profile"
+	service := &clusterService{}
+	err := service.applyClusterControlPlaneConfigUpdate(context.Background(), nil, &db.Cluster{}, &api.UpdateClusterControlPlaneConfig{
+		Nico: &api.NicoControlPlaneProviderUpdate{ConfigProfile: &bad},
+	})
+	require.ErrorContains(t, err, "configProfile")
+}

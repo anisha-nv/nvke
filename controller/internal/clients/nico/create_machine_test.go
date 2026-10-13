@@ -50,6 +50,54 @@ func TestClient_CreateMachine_MissingRelease(t *testing.T) {
 	assert.Contains(t, err.Error(), `NodePoolRelease "test-os" is not installed`)
 }
 
+func TestUnit_CreateMachineProfileSelection(t *testing.T) {
+	type parameters struct {
+		enabled     bool
+		profileName string
+		wantMCC     bool
+	}
+	tests := map[string]parameters{
+		"disabled keeps NICo config profile in CWE": {profileName: "worker-profile"},
+		"enabled delegates NICo config profile":     {enabled: true, profileName: "worker-profile", wantMCC: true},
+		"disabled creates Machine without profile":  {},
+		"enabled delegates empty profile":           {enabled: true, wantMCC: true},
+	}
+	for name, params := range tests {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			nodeSet := db.NodeSet{KubernetesVersion: "1.32.1"}
+			nodeSet.SetNico(db.NicoNodePoolProvider{OSProfile: "test-os", ConfigProfile: params.profileName, DiskSelectionStrategy: db.DiskSelectionStrategySmallest})
+			nodePool := db.NodePool{}
+			nodePool.SetNico(db.NicoNodePoolProvider{
+				InstanceTypeID: uuid.MustParse("70000000-0000-0000-0000-000000000005"),
+				VpcPrefixIDs:   []uuid.UUID{uuid.MustParse("70000000-0000-0000-0000-000000000007")},
+			})
+			cluster := db.Cluster{Name: "cluster-a", CniPlugin: db.CNICalico}
+			cluster.SetNicoProvider(db.NicoClusterProvider{VpcID: uuid.MustParse("70000000-0000-0000-0000-000000000006")})
+			k8sClient := newMachineCreateClient(t, testNodePoolRelease("test-os", "#!ipxe\n", "#cloud-config\n")...)
+			deps := testMachineCreateDeps(k8sClient)
+			deps.Config.MachineConfigurationControllerEnabled = params.enabled
+
+			node := db.Node{Name: "worker-0", Nico: &db.NicoNodeProvider{}}
+			require.NoError(t, New().CreateMachine(ctx, deps, node, nodeSet, nodePool, cluster))
+			if params.enabled && params.profileName == "" {
+				require.NoError(t, New().CreateMachine(ctx, deps, node, nodeSet, nodePool, cluster))
+			}
+			machine := &clusterv1.Machine{}
+			require.NoError(t, k8sClient.Get(ctx, ctrlclient.ObjectKey{Namespace: constants.NamespaceNVKESystem, Name: "worker-0"}, machine))
+			require.Equal(t, params.wantMCC, managedByMCC(machine))
+			if params.wantMCC {
+				require.Equal(t, params.profileName, machine.Annotations[configProfileAnnotation])
+				require.Contains(t, machine.Annotations, configProfileAnnotation)
+				require.NotContains(t, machine.Labels, configProfileAnnotation)
+			} else {
+				require.Empty(t, machine.Spec.ReadinessGates)
+				require.NotContains(t, machine.Annotations, configProfileAnnotation)
+			}
+		})
+	}
+}
+
 // A control-plane node reads a ClusterRelease and a worker a NodePoolRelease,
 // with no fallback between them, so a release of the right name but the wrong
 // kind is not found at all.

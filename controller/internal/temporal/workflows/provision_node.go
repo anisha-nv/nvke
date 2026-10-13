@@ -79,7 +79,7 @@ func ProvisionNode(ctx workflow.Context, input ProvisionNodeInput) error {
 	}
 	recordPhase("capi_create", infraProvisionStart, workflow.Now(ctx))
 
-	if err := provisionNode(ctx, input, labels); err != nil {
+	if err := provisionNode(ctx, input, labels, nodeCtx.MachineConfigurationEnabled); err != nil {
 		// Best effort to update the node conditions to indicate the provisioning workflow failed
 		if err := updateNodeProvisioningMessage(ctx, input.NodeID, fmt.Sprintf("Workflow failed: %s", err)); err != nil {
 			logger.Error("failed to update node conditions", "error", err)
@@ -102,7 +102,7 @@ func ProvisionNode(ctx workflow.Context, input ProvisionNodeInput) error {
 
 	// Workers auto-join inline and retry the join indefinitely (boundJoinAttempt
 	// false); only the control-plane JoinNode workflow bounds the attempt.
-	if err := joinProvisionedNode(ctx, input.NodeID, nodeCtx, labels, false); err != nil {
+	if err := joinProvisionedNode(ctx, input.NodeID, nodeCtx, labels, false, nodeCtx.MachineConfigurationEnabled); err != nil {
 		// Best effort to update the node conditions to indicate the join failed
 		if err := updateNodeProvisioningMessage(ctx, input.NodeID, fmt.Sprintf("Workflow failed: %s", err)); err != nil {
 			logger.Error("failed to update node conditions", "error", err)
@@ -186,7 +186,7 @@ func getNodeProvisioningContext(ctx workflow.Context, nodeID uuid.UUID) (activit
 	return nodeCtx, nil
 }
 
-func provisionNode(ctx workflow.Context, input ProvisionNodeInput, labels nodeMetricLabels) error {
+func provisionNode(ctx workflow.Context, input ProvisionNodeInput, labels nodeMetricLabels, machineConfigurationEnabled bool) error {
 	recordPhase := func(phase string, start, end time.Time) {
 		if !workflow.IsReplaying(ctx) {
 			metrics.RecordProvisionPhase(labels.ClusterName, labels.NodeType, phase, end.Sub(start))
@@ -208,15 +208,18 @@ func provisionNode(ctx workflow.Context, input ProvisionNodeInput, labels nodeMe
 		return fmt.Errorf("failed to wait for node preflight to succeed: %w", err)
 	}
 
-	configProfile, err := getConfigProfile(ctx, input.NodeID)
-	if err != nil {
-		endHostPrep()
-		return fmt.Errorf("failed to get config profile: %w", err)
-	}
-
-	if err := runHooks(ctx, input.NodeID, BeforeJoinNode, configProfile); err != nil {
-		endHostPrep()
-		return fmt.Errorf("failed to run beforeJoinNode hooks: %w", err)
+	configProfile := activities.ConfigProfile{}
+	if !machineConfigurationEnabled {
+		var err error
+		configProfile, err = getConfigProfile(ctx, input.NodeID)
+		if err != nil {
+			endHostPrep()
+			return fmt.Errorf("failed to get config profile: %w", err)
+		}
+		if err := runHooks(ctx, input.NodeID, BeforeJoinNode, configProfile); err != nil {
+			endHostPrep()
+			return fmt.Errorf("failed to run beforeJoinNode hooks: %w", err)
+		}
 	}
 
 	if err := configureCNIPrerequisites(ctx, input.NodeID); err != nil {
@@ -225,7 +228,9 @@ func provisionNode(ctx workflow.Context, input ProvisionNodeInput, labels nodeMe
 	}
 	endHostPrep()
 
-	if configProfile.PreJoinNodeReboot {
+	// MCC owns profile-requested reboots when enabled. CWE retains the legacy
+	// reboot only while it owns profile hooks.
+	if !machineConfigurationEnabled && configProfile.PreJoinNodeReboot {
 		rebootStart := workflow.Now(ctx)
 		if err := rebootNodeWaitForUptimeChildWorkflow(ctx, input.NodeID, input.RebootNodeWaitForUptimeTimeout); err != nil {
 			recordPhase("reboot", rebootStart, workflow.Now(ctx))
@@ -246,17 +251,23 @@ func provisionNode(ctx workflow.Context, input ProvisionNodeInput, labels nodeMe
 // called inline by ProvisionNode for auto-join nodes (workers) and by the
 // JoinNode workflow for control-plane nodes the control-plane controller joins
 // one at a time.
-func joinProvisionedNode(ctx workflow.Context, nodeID uuid.UUID, nodeCtx activities.NodeProvisioningContext, labels nodeMetricLabels, boundJoinAttempt bool) error {
+func joinProvisionedNode(ctx workflow.Context, nodeID uuid.UUID, nodeCtx activities.NodeProvisioningContext, labels nodeMetricLabels, boundJoinAttempt bool, machineConfigurationEnabled bool) error {
 	recordPhase := func(phase string, start, end time.Time) {
 		if !workflow.IsReplaying(ctx) {
 			metrics.RecordProvisionPhase(labels.ClusterName, labels.NodeType, phase, end.Sub(start))
 		}
 	}
 
-	hasConfigProfile := nodeCtx.ConfigProfile != ""
-	configProfile, err := getConfigProfile(ctx, nodeID)
-	if err != nil {
-		return fmt.Errorf("failed to get config profile: %w", err)
+	// CWE still applies profile labels to the Kubernetes Node when MCC runs
+	// profile hooks. The empty profile has no labels to apply.
+	addConfigProfileNodeLabels := nodeCtx.ConfigProfile != ""
+	configProfile := activities.ConfigProfile{}
+	if !machineConfigurationEnabled {
+		var err error
+		configProfile, err = getConfigProfile(ctx, nodeID)
+		if err != nil {
+			return fmt.Errorf("failed to get config profile: %w", err)
+		}
 	}
 
 	if nodeCtx.ManagedByNodePool {
@@ -298,14 +309,16 @@ func joinProvisionedNode(ctx workflow.Context, nodeID uuid.UUID, nodeCtx activit
 	postJoinStart := workflow.Now(ctx)
 	endPostJoin := func() { recordPhase("post_join", postJoinStart, workflow.Now(ctx)) }
 
-	if err := labelNode(ctx, nodeID, hasConfigProfile); err != nil {
+	if err := labelNode(ctx, nodeID, addConfigProfileNodeLabels); err != nil {
 		endPostJoin()
 		return fmt.Errorf("failed to label node: %w", err)
 	}
 
-	if err := runHooks(ctx, nodeID, AfterJoinNode, configProfile); err != nil {
-		endPostJoin()
-		return fmt.Errorf("failed to run afterJoinNode hooks: %w", err)
+	if !machineConfigurationEnabled {
+		if err := runHooks(ctx, nodeID, AfterJoinNode, configProfile); err != nil {
+			endPostJoin()
+			return fmt.Errorf("failed to run afterJoinNode hooks: %w", err)
+		}
 	}
 
 	// If the node is the initial control plane node, we don't need to configure KubeVip, because the cluster creation process does it.

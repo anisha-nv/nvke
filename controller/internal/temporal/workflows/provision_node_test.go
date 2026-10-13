@@ -37,6 +37,95 @@ func provisionCAPINodeTestWorkflow(ctx workflow.Context, nodeID uuid.UUID) error
 	return provisionCAPINode(ctx, nodeID)
 }
 
+func provisionNodeRebootTestWorkflow(ctx workflow.Context, nodeID uuid.UUID, machineConfigurationEnabled bool) error {
+	return provisionNode(ctx, ProvisionNodeInput{NodeID: nodeID}, nodeMetricLabels{}, machineConfigurationEnabled)
+}
+
+func TestUnit_ProvisionNodeProfileRebootOwnership(t *testing.T) {
+	type parameters struct {
+		machineConfigurationEnabled bool
+		wantCWEReboot               bool
+	}
+	for name, params := range map[string]parameters{
+		"MCC enabled skips CWE profile reboot": {machineConfigurationEnabled: true},
+		"MCC disabled retains CWE reboot":      {wantCWEReboot: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			nodeID := uuid.New()
+			env := (&testsuite.WorkflowTestSuite{}).NewTestWorkflowEnvironment()
+			env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: 5 * time.Second})
+			env.RegisterWorkflow(provisionNodeRebootTestWorkflow)
+			var a *activities.Activities
+			env.OnActivity(a.WaitForCAPIMachineReady, mock.Anything, mock.Anything).Return("", nil).Once()
+			env.OnActivity(a.NodePreflight, mock.Anything, mock.Anything).Return(nil).Once()
+			if !params.machineConfigurationEnabled {
+				env.OnActivity(a.GetNodeConfigProfile, mock.Anything, mock.Anything).
+					Return(activities.ConfigProfile{PreJoinNodeReboot: true}, nil).Once()
+			}
+			env.OnActivity(a.GetClusterForNode, mock.Anything, nodeID).Return(db.Cluster{}, nil).Once()
+			rebootCalled := false
+			if params.wantCWEReboot {
+				env.OnWorkflow(RebootNodeWaitForUptime, mock.Anything, mock.Anything).
+					Return(nil).
+					Run(func(mock.Arguments) { rebootCalled = true }).Once()
+			}
+			env.OnActivity(a.UpdateNodeConditions, mock.Anything, mock.Anything).Return(nil).Once()
+
+			env.ExecuteWorkflow(provisionNodeRebootTestWorkflow, nodeID, params.machineConfigurationEnabled)
+			require.True(t, env.IsWorkflowCompleted())
+			require.NoError(t, env.GetWorkflowError())
+			require.Equal(t, params.wantCWEReboot, rebootCalled)
+			env.AssertExpectations(t)
+		})
+	}
+}
+
+func joinProvisionedNodeProfileLabelsTestWorkflow(ctx workflow.Context, nodeID uuid.UUID, profileName string) error {
+	return joinProvisionedNode(ctx, nodeID, activities.NodeProvisioningContext{ConfigProfile: profileName}, nodeMetricLabels{}, false, true)
+}
+
+func TestUnit_JoinProvisionedNodeProfileLabelsWithMachineConfigurationEnabled(t *testing.T) {
+	type parameters struct {
+		profileName string
+		wantLabels  bool
+	}
+	for name, params := range map[string]parameters{
+		"selected profile still applies Node labels": {profileName: "worker-profile", wantLabels: true},
+		"empty profile does not apply Node labels":   {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			nodeID := uuid.New()
+			node := db.Node{ID: nodeID, Name: "worker-0", Nico: &db.NicoNodeProvider{}, Conditions: db.NodeConditions{Joined: db.NewCondition(true, "Joined")}}
+			cluster := db.Cluster{ProviderType: db.ProviderTypeNico, Nico: &db.NicoClusterProvider{}}
+			env := (&testsuite.WorkflowTestSuite{}).NewTestWorkflowEnvironment()
+			env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: 5 * time.Second})
+			env.RegisterWorkflow(joinProvisionedNodeProfileLabelsTestWorkflow)
+			var a *activities.Activities
+			env.OnActivity(a.GetNode, mock.Anything, nodeID).Return(node, nil).Twice()
+			env.OnActivity(a.GetClusterForNode, mock.Anything, nodeID).Return(cluster, nil).Once()
+			labelCalled := false
+			if params.wantLabels {
+				env.OnActivity(a.LabelNode, mock.Anything, mock.Anything).
+					Return(activities.LabelNodeResult{}, nil).
+					Run(func(args mock.Arguments) {
+						labelCalled = true
+						input := args.Get(1).(activities.LabelNodeInput)
+						require.True(t, input.AddConfigProfileLabels)
+					}).Once()
+			}
+			env.OnActivity(a.ConfigureKubeVip, mock.Anything, mock.Anything).Return(activities.ConfigureKubeVipResult{}, nil).Once()
+			env.OnActivity(a.TaintNode, mock.Anything, mock.Anything).Return(activities.TaintNodeResult{}, nil).Once()
+			env.OnActivity(a.UpdateNodeConditions, mock.Anything, mock.Anything).Return(nil).Once()
+
+			env.ExecuteWorkflow(joinProvisionedNodeProfileLabelsTestWorkflow, nodeID, params.profileName)
+			require.True(t, env.IsWorkflowCompleted())
+			require.NoError(t, env.GetWorkflowError())
+			require.Equal(t, params.wantLabels, labelCalled)
+			env.AssertExpectations(t)
+		})
+	}
+}
+
 // setupLabelNodeEnv builds a focused test env that registers the real DB
 // activities labelNode needs and a capturing mock for LabelNode.
 func setupLabelNodeEnv(t *testing.T, database db.DB, profilesDir string) (

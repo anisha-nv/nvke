@@ -169,6 +169,7 @@ func ApplyMachine(ctx context.Context, k8sClient client.Client, fieldManagerName
 	case err != nil:
 		return fmt.Errorf("failed to get existing CAPI machine %s: %w", machine.Name, err)
 	default:
+		machine.Spec.ReadinessGates = existing.Spec.ReadinessGates
 		machine.Spec.FailureDomain = existing.Spec.FailureDomain
 	}
 

@@ -21,6 +21,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 
 	"github.com/dsx-ai-factory/nvke/controller/internal/config"
 	"github.com/dsx-ai-factory/nvke/controller/internal/db"
@@ -115,6 +116,43 @@ func TestTeardownNodeHooksRunWhenClusterProvisioned(t *testing.T) {
 		"infrastructure deletion must complete before Kubernetes node deletion")
 	require.Less(t, kubeNodeDeletionIndex, afterHookIndex,
 		"Longhorn cleanup must run after Kubernetes node deletion")
+}
+
+func TestUnit_TeardownNodeRunsProfileHooksWhenMCCDisabled(t *testing.T) {
+	mccEnabled := false
+	database, res := setupTestDB(t, seedOpts{clusterProvisioned: true, cpNodeJoined: true})
+	env, a := setupWorkflowEnv(t, database, res.profilesDir, workflowEnvOpts{machineConfigurationEnabled: &mccEnabled})
+	env.OnActivity(a.ExecuteClusterRunbook, mock.Anything, mock.MatchedBy(func(input activities.ExecuteClusterRunbookInput) bool {
+		return input.RunbookName == beforeRemoveNodeRunbook
+	})).Return(activities.ExecuteClusterRunbookResult{}, nil).Once()
+	env.OnActivity(a.ExecuteClusterRunbook, mock.Anything, mock.MatchedBy(func(input activities.ExecuteClusterRunbookInput) bool {
+		return input.RunbookName == afterRemoveNodeRunbook
+	})).Return(activities.ExecuteClusterRunbookResult{}, nil).Once()
+
+	env.ExecuteWorkflow(TeardownNode, TeardownNodeInput{NodeID: res.nodeID, AllowCPNode: true})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	env.AssertExpectations(t)
+}
+
+func TestUnit_TeardownNodeSkipsProfileHooksWhenMCCEnabled(t *testing.T) {
+	mccEnabled := true
+	database, res := setupTestDB(t, seedOpts{clusterProvisioned: true, cpNodeJoined: true})
+	env, _ := setupWorkflowEnv(t, database, res.profilesDir, workflowEnvOpts{machineConfigurationEnabled: &mccEnabled})
+	profileLookups := 0
+	env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, _ converter.EncodedValues) {
+		if info.ActivityType.Name == "GetNodeConfigProfile" {
+			profileLookups++
+		}
+	})
+
+	env.ExecuteWorkflow(TeardownNode, TeardownNodeInput{NodeID: res.nodeID, AllowCPNode: true})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	require.Zero(t, profileLookups)
+	env.AssertExpectations(t)
 }
 
 func TestTeardownNodeHooksRunWhenNotProvisionedButCPJoined(t *testing.T) {
@@ -874,14 +912,15 @@ func setupTestDB(t *testing.T, opts seedOpts) (db.DB, seedResult) {
 }
 
 type workflowEnvOpts struct {
-	failDrainActivity         bool
-	failGracefulShutdownStart bool
-	deleteKubeNodeErr         error
-	kubeadmResetErr           error
-	infraDeletionErr          error
-	omitClusterRunbookMock    bool
-	omitKubeadmResetMock      bool
-	omitDeleteCAPIMachineMock bool
+	machineConfigurationEnabled *bool
+	failDrainActivity           bool
+	failGracefulShutdownStart   bool
+	deleteKubeNodeErr           error
+	kubeadmResetErr             error
+	infraDeletionErr            error
+	omitClusterRunbookMock      bool
+	omitKubeadmResetMock        bool
+	omitDeleteCAPIMachineMock   bool
 }
 
 func setupWorkflowEnv(t *testing.T, database db.DB, profilesDir string, opts workflowEnvOpts) (*testsuite.TestWorkflowEnvironment, *activities.Activities) {
@@ -894,6 +933,14 @@ func setupWorkflowEnv(t *testing.T, database db.DB, profilesDir string, opts wor
 	})
 
 	a := activities.NewActivities(config.Config{ProfilesDir: profilesDir}, database, nil, nil, "", nil, "")
+	if opts.machineConfigurationEnabled == nil {
+		env.OnGetVersion("machine-profile-path-teardown", workflow.DefaultVersion, 1).Return(workflow.DefaultVersion)
+	} else {
+		env.OnGetVersion("machine-profile-path-teardown", workflow.DefaultVersion, 1).Return(workflow.Version(1))
+		env.OnActivity(a.GetNodeProvisioningContext, mock.Anything, mock.Anything).Return(activities.NodeProvisioningContext{
+			MachineConfigurationEnabled: *opts.machineConfigurationEnabled,
+		}, nil).Once()
+	}
 
 	// Register real DB activities
 	env.RegisterActivity(a.GetNodePoolForNode)

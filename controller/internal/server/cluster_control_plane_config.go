@@ -216,6 +216,9 @@ func validateCreateForgeControlPlaneConfigFields(c *api.CreateClusterControlPlan
 	if c.Nico.OSProfile == "" {
 		return fmt.Errorf("controlPlaneConfig.nico.osProfile is required for a nico cluster control plane")
 	}
+	if err := validateNicoConfigProfile(c.Nico.ConfigProfile, "controlPlaneConfig.nico.configProfile"); err != nil {
+		return err
+	}
 	return nil
 }
 

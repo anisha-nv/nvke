@@ -237,6 +237,8 @@ spec:
               value: {{ printf "postgres://%s:%s@%s/%s?sslmode=%s" .Values.appDb.postgresUser (default "placeholder" .Values.appDb.postgresPassword) .Values.appDb.url .Values.appDb.dbName (default "disable" .Values.appDb.sslMode) | quote }}
             {{- end }}
             # Not in nke-controller-config: its default comes from the downward API.
+            - name: MACHINE_CONFIGURATION_CONTROLLER_ENABLED
+              value: {{ .Values.machineconfiguration.enabled | quote }}
             - name: SPIRE_SERVER_ADDRESS
               {{- if .Values.spiffe.spire.serverAddress }}
               value: {{ .Values.spiffe.spire.serverAddress | quote }}

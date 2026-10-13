@@ -397,6 +397,11 @@ func (s *clusterService) ValidateCreateClusterRequestFields(req *api.CreateClust
 	}
 
 	for _, nodePool := range nodePools {
+		if nodePool.Nico != nil {
+			if err := validateNicoConfigProfile(nodePool.Nico.ConfigProfile, "nico.configProfile"); err != nil {
+				return fmt.Errorf("invalid node pool %q: %w", nodePool.Name, err)
+			}
+		}
 		if err := naming.ValidateNodeNamePrefix(req.Name, nodePool.NodeNamePrefix); err != nil {
 			return fmt.Errorf("invalid node pool %q: %w", nodePool.Name, err)
 		}
@@ -757,6 +762,11 @@ func (s *clusterService) applyControlPlaneConfigUpdateWithCIDRCheck(
 func (s *clusterService) applyClusterControlPlaneConfigUpdate(ctx context.Context, tx db.Tx, cluster *db.Cluster, req *api.UpdateClusterControlPlaneConfig) error {
 	if req == nil {
 		req = &api.UpdateClusterControlPlaneConfig{}
+	}
+	if req.Nico != nil && req.Nico.ConfigProfile != nil {
+		if err := validateNicoConfigProfile(*req.Nico.ConfigProfile, "controlPlaneConfig.nico.configProfile"); err != nil {
+			return newBadRequestErrorf("%s", err)
+		}
 	}
 	if req.Nico != nil {
 		if err := s.providers.require(config.InfraProviderNico); err != nil {

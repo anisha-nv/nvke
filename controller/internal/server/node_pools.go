@@ -11,6 +11,7 @@ import (
 	"maps"
 
 	"github.com/google/uuid"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/dsx-ai-factory/nvke/controller/api"
 	"github.com/dsx-ai-factory/nvke/controller/internal/capi"
@@ -290,6 +291,9 @@ func validateCreateNicoNodePoolRequest(cluster db.Cluster, req *api.CreateNodePo
 	if req.Nico.OSProfile == "" {
 		return fmt.Errorf("nico.osProfile is required when creating a nico node pool")
 	}
+	if err := validateNicoConfigProfile(req.Nico.ConfigProfile, "nico.configProfile"); err != nil {
+		return err
+	}
 
 	var nodePool db.NodePool
 	nodePool.SetNico(db.NicoNodePoolProvider{
@@ -302,6 +306,18 @@ func validateCreateNicoNodePoolRequest(cluster db.Cluster, req *api.CreateNodePo
 		return err
 	}
 	return validator.ValidateNodePoolPayload(nodePool)
+}
+
+// validateNicoConfigProfile accepts the empty optional profile and otherwise
+// requires a filename the catalog can mount as a ConfigMap key.
+func validateNicoConfigProfile(name, field string) error {
+	if name == "" {
+		return nil
+	}
+	if problems := validation.IsConfigMapKey(name + ".yaml"); len(problems) != 0 {
+		return fmt.Errorf("%s %q must form a valid config profile ConfigMap key: %v", field, name, problems)
+	}
+	return nil
 }
 
 func (s *nodePoolService) GetNodePool(ctx context.Context, req api.GetNodePoolRequestObject) (api.GetNodePoolResponseObject, error) {
@@ -701,6 +717,11 @@ func validateUpdateNicoNodePoolRequest(_ db.Cluster, req *api.UpdateNodePoolRequ
 	if req.Nico != nil {
 		if req.Nico.OSProfile != nil && *req.Nico.OSProfile == "" {
 			return fmt.Errorf("nico.osProfile cannot be cleared for a nico node pool")
+		}
+		if req.Nico.ConfigProfile != nil {
+			if err := validateNicoConfigProfile(*req.Nico.ConfigProfile, "nico.configProfile"); err != nil {
+				return err
+			}
 		}
 	}
 

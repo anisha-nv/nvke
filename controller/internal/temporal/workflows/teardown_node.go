@@ -75,7 +75,17 @@ func TeardownNode(ctx workflow.Context, input TeardownNodeInput) error {
 	terminateStatus := fmt.Sprintf("%s=%s", constants.LabelKeyNodeLabelTerminateStatus, constants.LabelValueTerminateStatusInProgress)
 	tryApplyNodeTerminatingLabels(ctx, input, terminateStatus)
 
-	if err := teardownNode(ctx, input, labels); err != nil {
+	// Older histories did not read this flag and must keep their recorded
+	// legacy hook sequence during replay.
+	machineConfigurationEnabled := false
+	if workflow.GetVersion(ctx, "machine-profile-path-teardown", workflow.DefaultVersion, 1) != workflow.DefaultVersion {
+		nodeCtx, err := getNodeProvisioningContext(ctx, input.NodeID)
+		if err != nil {
+			return fmt.Errorf("get Machine configuration setting: %w", err)
+		}
+		machineConfigurationEnabled = nodeCtx.MachineConfigurationEnabled
+	}
+	if err := teardownNode(ctx, input, labels, machineConfigurationEnabled); err != nil {
 		// Best effort to update the node conditions to indicate the teardown workflow failed
 		if err := updateNodeDeletingMessage(ctx, input.NodeID, fmt.Sprintf("Workflow failed: %s", err)); err != nil {
 			logger.Error("failed to update node conditions", "error", err)
@@ -102,7 +112,7 @@ func TeardownNode(ctx workflow.Context, input TeardownNodeInput) error {
 	return nil
 }
 
-func teardownNode(ctx workflow.Context, input TeardownNodeInput, labels nodeMetricLabels) error {
+func teardownNode(ctx workflow.Context, input TeardownNodeInput, labels nodeMetricLabels, machineConfigurationEnabled bool) error {
 	var a *activities.Activities
 
 	logger := workflow.GetLogger(ctx)
@@ -131,7 +141,7 @@ func teardownNode(ctx workflow.Context, input TeardownNodeInput, labels nodeMetr
 	}
 
 	clusterRemoveStart := workflow.Now(ctx)
-	needsKubeCleanup, err := prepareNodeForInfrastructureDeletion(ctx, input)
+	needsKubeCleanup, err := prepareNodeForInfrastructureDeletion(ctx, input, machineConfigurationEnabled)
 	if err != nil {
 		recordPhase("cluster_remove", clusterRemoveStart, workflow.Now(ctx))
 		return fmt.Errorf("failed to run cluster cleanup phase: %w", err)
@@ -149,8 +159,10 @@ func teardownNode(ctx workflow.Context, input TeardownNodeInput, labels nodeMetr
 		if err := deleteKubeNode(ctx, input); err != nil {
 			return fmt.Errorf("failed to complete cluster cleanup phase: failed to delete kube node: %w", err)
 		}
-		if err := runTeardownHooks(ctx, input, AfterRemoveNode); err != nil {
-			return fmt.Errorf("failed to complete cluster cleanup phase: failed to run afterRemoveNode hooks: %w", err)
+		if !machineConfigurationEnabled {
+			if err := runTeardownHooks(ctx, input, AfterRemoveNode); err != nil {
+				return fmt.Errorf("failed to complete cluster cleanup phase: failed to run afterRemoveNode hooks: %w", err)
+			}
 		}
 	}
 
@@ -167,6 +179,7 @@ func teardownNode(ctx workflow.Context, input TeardownNodeInput, labels nodeMetr
 func prepareNodeForInfrastructureDeletion(
 	ctx workflow.Context,
 	input TeardownNodeInput,
+	machineConfigurationEnabled bool,
 ) (bool, error) {
 	if input.SkipRemoveFromCluster {
 		return false, resetNodeForClusterTeardown(ctx, input)
@@ -188,8 +201,10 @@ func prepareNodeForInfrastructureDeletion(
 		return false, resetNodeForClusterTeardown(ctx, input)
 	}
 
-	if err := runTeardownHooks(ctx, input, BeforeRemoveNode); err != nil {
-		return false, fmt.Errorf("failed to run beforeRemoveNode hooks: %w", err)
+	if !machineConfigurationEnabled {
+		if err := runTeardownHooks(ctx, input, BeforeRemoveNode); err != nil {
+			return false, fmt.Errorf("failed to run beforeRemoveNode hooks: %w", err)
+		}
 	}
 
 	var node db.Node

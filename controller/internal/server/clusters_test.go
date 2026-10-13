@@ -2197,6 +2197,30 @@ func TestValidateCreateClusterRequestFields_RejectsTaintsOnControlPlanePool(t *t
 	require.EqualError(t, err, `invalid node pool "cp": nodeTaints are not allowed on a control-plane pool`)
 }
 
+func TestValidateCreateClusterRequestFields_NicoConfigProfile(t *testing.T) {
+	type parameters struct {
+		profileName string
+		wantError   bool
+	}
+	for name, params := range map[string]parameters{
+		"valid catalog key":   {profileName: "valid.profile-1"},
+		"optional empty name": {},
+		"space in key":        {profileName: "bad profile", wantError: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc := server.NewClusterService(discardLogger(), nil, nil, config.TeleportConfig{}, false, []string{config.InfraProviderNico}, false)
+			req := baseNicoClusterCreateRequest()
+			(*req.NodePools)[0].Nico.ConfigProfile = params.profileName
+			err := svc.ValidateCreateClusterRequestFields(req)
+			if params.wantError {
+				require.ErrorContains(t, err, "configProfile")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestValidateCreateClusterRequestFields_RequiresExactlyOneProvider(t *testing.T) {
 	svc := server.NewClusterService(discardLogger(), nil, nil, config.TeleportConfig{}, false, nil, false)
 

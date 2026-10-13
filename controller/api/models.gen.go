@@ -651,6 +651,7 @@ type NicoClusterProvider struct {
 // the fields that direction cannot set.
 type NicoControlPlaneProvider struct {
 	// ConfigProfile Config profile name for the control-plane nodes.
+	// Deprecated:
 	ConfigProfile string `json:"configProfile,omitempty"`
 
 	// DiskSelectionStrategy Always smallest for control-plane nodes. Not configurable through the API.
@@ -676,6 +677,7 @@ type NicoControlPlaneProvider struct {
 // configProfile is optional, and exactly one of subnetIDs and vpcPrefixIDs.
 type NicoControlPlaneProviderCreate struct {
 	// ConfigProfile Config profile name for the control-plane nodes. Optional; when omitted the nodes run no config profile hooks or labels.
+	// Deprecated:
 	ConfigProfile string `json:"configProfile,omitempty"`
 
 	// InstanceTypePreference Ordered list of acceptable NICo instance types; index 0 is the highest priority.
@@ -698,6 +700,7 @@ type NicoControlPlaneProviderCreate struct {
 // it, and an empty value clears it. Clearing a required field is rejected.
 type NicoControlPlaneProviderUpdate struct {
 	// ConfigProfile Config profile name for the control-plane nodes.
+	// Deprecated:
 	ConfigProfile *string `json:"configProfile,omitempty"`
 
 	// InstanceTypePreference Ordered list of acceptable NICo instance types; index 0 is the highest priority.
@@ -720,6 +723,7 @@ type NicoControlPlaneProviderUpdate struct {
 // configProfile is optional, and exactly one of subnetIDs and vpcPrefixIDs.
 type NicoNodePoolProvider struct {
 	// ConfigProfile Config profile name for the pool's nodes. Optional; when omitted the nodes run no config profile hooks or labels.
+	// Deprecated:
 	ConfigProfile string `json:"configProfile,omitempty"`
 
 	// DiskSelectionStrategy Which disk the OS is installed on. Default smallest.
@@ -753,6 +757,7 @@ type NicoNodePoolProvider struct {
 type NicoNodePoolProviderUpdate struct {
 	// ConfigProfile Config profile name for the pool's nodes. An empty string clears it; a pool
 	// may have no config profile.
+	// Deprecated:
 	ConfigProfile *string `json:"configProfile,omitempty"`
 
 	// DiskSelectionStrategy Which disk the OS is installed on. Default smallest.
@@ -784,6 +789,7 @@ type NicoNodeProvider struct {
 // NicoNodeSetProvider NICo settings in a node set (read-only snapshot).
 type NicoNodeSetProvider struct {
 	// ConfigProfile Config profile name for the pool's nodes. Optional; when omitted the nodes run no config profile hooks or labels.
+	// Deprecated:
 	ConfigProfile string `json:"configProfile,omitempty"`
 
 	// DiskSelectionStrategy Which disk the OS is installed on. Default smallest.

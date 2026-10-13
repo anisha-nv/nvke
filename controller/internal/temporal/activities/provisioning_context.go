@@ -16,9 +16,10 @@ import (
 )
 
 type NodeProvisioningContext struct {
-	NodeID            uuid.UUID
-	ConfigProfile     string
-	ManagedByNodePool bool // True when the node is managed by a node pool (has a non-nil node pool ID).
+	NodeID                      uuid.UUID
+	ConfigProfile               string
+	ManagedByNodePool           bool // True when the node is managed by a node pool (has a non-nil node pool ID).
+	MachineConfigurationEnabled bool
 }
 
 func (a *Activities) GetNodeProvisioningContext(ctx context.Context, nodeID uuid.UUID) (NodeProvisioningContext, error) {
@@ -46,9 +47,10 @@ func (a *Activities) GetNodeProvisioningContext(ctx context.Context, nodeID uuid
 	}
 
 	return NodeProvisioningContext{
-		NodeID:            node.ID,
-		ConfigProfile:     configProfile,
-		ManagedByNodePool: node.IsManagedByNodePool(),
+		NodeID:                      node.ID,
+		ConfigProfile:               configProfile,
+		ManagedByNodePool:           node.IsManagedByNodePool(),
+		MachineConfigurationEnabled: a.cfg.MachineConfigurationControllerEnabled,
 	}, nil
 }
 

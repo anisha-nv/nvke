@@ -334,3 +334,32 @@ func TestValidateUpdateForgeNodePoolRequest_RejectsClearedOSProfile(t *testing.T
 		})
 	}
 }
+
+func TestUnit_ValidateNicoNodePoolConfigProfile(t *testing.T) {
+	type parameters struct {
+		profileName string
+		wantError   bool
+	}
+	tests := map[string]parameters{
+		"valid catalog key":   {profileName: "valid.profile-1"},
+		"optional empty name": {},
+		"space in key":        {profileName: "bad profile", wantError: true},
+		"path separator":      {profileName: "../bad-profile", wantError: true},
+	}
+	for name, params := range tests {
+		t.Run(name, func(t *testing.T) {
+			createErr := validateCreateNicoNodePoolRequest(forgeCluster(), &api.CreateNodePoolRequest{Nico: &api.NicoNodePoolProvider{
+				ConfigProfile: params.profileName, OSProfile: "ubuntu", InstanceTypeID: uuid.New(), SubnetIDs: []uuid.UUID{uuid.New()},
+			}})
+			profileName := params.profileName
+			updateErr := validateUpdateNicoNodePoolRequest(forgeCluster(), &api.UpdateNodePoolRequest{Nico: &api.NicoNodePoolProviderUpdate{ConfigProfile: &profileName}})
+			if params.wantError {
+				require.ErrorContains(t, createErr, "configProfile")
+				require.ErrorContains(t, updateErr, "configProfile")
+				return
+			}
+			require.NoError(t, createErr)
+			require.NoError(t, updateErr)
+		})
+	}
+}

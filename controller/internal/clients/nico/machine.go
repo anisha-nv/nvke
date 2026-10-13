@@ -10,6 +10,7 @@ import (
 	"text/template"
 
 	"github.com/google/uuid"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -17,6 +18,7 @@ import (
 	nicov1 "github.com/dsx-ai-factory/cluster-api-provider-nico/api/v1alpha1"
 
 	"github.com/dsx-ai-factory/nvke/controller/internal/clients/shared"
+	"github.com/dsx-ai-factory/nvke/controller/internal/config"
 	"github.com/dsx-ai-factory/nvke/controller/internal/constants"
 	"github.com/dsx-ai-factory/nvke/controller/internal/db"
 )
@@ -112,7 +114,11 @@ func (*Client) renderInfraMachine(ipxeScriptTemplate, namespace string, node db.
 // NICo-equivalent of a SPIRE join token: this path never calls
 // deps.CreateSpireJoinToken.
 func (c *Client) CreateMachine(ctx context.Context, deps shared.MachineCreateDeps, node db.Node, nodeSet db.NodeSet, nodePool db.NodePool, cluster db.Cluster) error {
-	nodePool, err := deps.SeedControlPlaneInstanceType(ctx, node, nodePool)
+	nicoNodeSet, err := nodeSet.NicoProvider()
+	if err != nil {
+		return err
+	}
+	nodePool, err = deps.SeedControlPlaneInstanceType(ctx, node, nodePool)
 	if err != nil {
 		return err
 	}
@@ -157,11 +163,64 @@ func (c *Client) CreateMachine(ctx context.Context, deps shared.MachineCreateDep
 	if err != nil {
 		return err
 	}
+	if err := validateAndSetMachineProfileSelection(ctx, deps.K8sClient, machine, deps.Config, nicoNodeSet.ConfigProfile); err != nil {
+		return err
+	}
 	if err := shared.ApplyMachine(ctx, deps.K8sClient, deps.FieldManagerName, machine); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// validateAndSetMachineProfileSelection prepares the built Machine for either
+// a first apply or a retry. An existing Machine keeps its original profile
+// selection; a new one uses the current setting and requested NICo profile.
+func validateAndSetMachineProfileSelection(ctx context.Context, k8sClient client.Client, machine *clusterv1.Machine, cfg config.Config, requestedName string) error {
+	existing := &clusterv1.Machine{}
+	err := k8sClient.Get(ctx, client.ObjectKeyFromObject(machine), existing)
+	if apierrors.IsNotFound(err) {
+		// On retry, preserve the existing profile annotation: shared.ApplyMachine
+		// preserves readiness gates, but does not copy profile annotations.
+		if !cfg.MachineConfigurationControllerEnabled {
+			return nil
+		}
+		machine.Annotations[configProfileAnnotation] = requestedName
+		machine.Spec.ReadinessGates = []clusterv1.MachineReadinessGate{{ConditionType: configReadyGate}}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("get existing Machine %s: %w", machine.Name, err)
+	}
+
+	if managedByMCC(existing) {
+		name, ok := existing.Annotations[configProfileAnnotation]
+		if !ok {
+			return fmt.Errorf("machine %s has ConfigReady readiness gate without a configuration profile annotation", machine.Name)
+		}
+		if name != requestedName {
+			return fmt.Errorf("machine %s profile %q conflicts with requested profile %q", machine.Name, name, requestedName)
+		}
+	}
+	if name, ok := existing.Annotations[configProfileAnnotation]; ok {
+		machine.Annotations[configProfileAnnotation] = name
+	}
+	return nil
+}
+
+const (
+	configProfileAnnotation = "nke.nvidia.com/config-profile"
+	configReadyGate         = "nke.nvidia.com/ConfigReady"
+)
+
+// managedByMCC treats a profile annotation without the readiness gate as legacy.
+func managedByMCC(machine *clusterv1.Machine) bool {
+	for _, gate := range machine.Spec.ReadinessGates {
+		if gate.ConditionType == configReadyGate {
+			return true
+		}
+	}
+	return false
 }
 
 func buildMachine(
