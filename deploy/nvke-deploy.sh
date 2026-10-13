@@ -20,9 +20,6 @@
 # import from a local Run's OCI layouts; this script applies it the same way.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ITEMS_PY="${SCRIPT_DIR}/lib/nvke-deploy-items.py"
-RENDER_PY="${SCRIPT_DIR}/lib/render-template.py"
 
 DRY_RUN=""
 KUBECONFIG_PATH=""
@@ -54,16 +51,17 @@ usage() {
   cat >&2 <<'USAGE'
 usage: nvke-deploy.sh install --deploy-path DIR [options] [-- helm args]
 
-  With --sitespec or --release, the deploy path is first rendered for the
-  site and against the release (nvkectl does the rendering) into a private
-  scratch directory under NVKE_STATE_DIR (default $XDG_STATE_HOME/nvke),
-  installed from there, and the scratch directory is removed when the
-  install ends, so no rendered credential is left behind.
+  nvkectl reads the deploy path and renders template items; NVKECTL names
+  it, else PATH. With --sitespec or --release, the deploy path is first
+  rendered for the site and against the release into a private scratch
+  directory under NVKE_STATE_DIR (default $XDG_STATE_HOME/nvke), installed
+  from there, and the scratch directory is removed when the install ends,
+  so no rendered credential is left behind.
 
   --deploy-path DIR   the deploy path to install: a directory holding
                       nvke-deploy.yaml and one directory per item, e.g.
                       deploy/nico or controller/deploy/capd-e2e
-  --sitespec FILE     render for this site first (needs nvkectl: NVKECTL or PATH)
+  --sitespec FILE     render for this site first
   --release FILE      render against this NVKR release description first;
                       with --sitespec, which names the architecture
   --nvkr-run-dir DIR  with --release, for a Run that was not published (a
@@ -147,7 +145,8 @@ render_template_item() {
 Its .yaml.tmpl files render against that context; see
 docs/site-bootstrap/deploy-repository.md for the field names."
   out="$(mktemp -d "${TMPDIR:-/tmp}/nvke-deploy.XXXXXX")"
-  python3 "${RENDER_PY}" "${CONFIG}" "${dir}" "${out}" >/dev/null
+  "${NVKECTL}" render template-item --config "${CONFIG}" --item "${dir}" --out "${out}" >/dev/null ||
+    die "item ${item}: cannot render its templates"
   apply_manifest_item "${out}"
   rm -rf "${out}"
 }
@@ -156,8 +155,9 @@ docs/site-bootstrap/deploy-repository.md for the field names."
 # does not own. helm --wait cannot do this: it waits on workloads, and a
 # Certificate is not one, so it would return before the CA is issued.
 wait_for_requires() {
-  local phase="$1" specs="$2" spec kind name namespace condition
-  for spec in ${specs}; do
+  local phase="$1" spec kind name namespace condition specs=()
+  [[ -z "$2" ]] || IFS=$'\x1e' read -ra specs <<<"$2"
+  for spec in ${specs[@]+"${specs[@]}"}; do
     IFS=: read -r kind name namespace condition <<<"${spec}"
     if [[ -z "${DRY_RUN}" ]] && ! kubectl ${KUBECONFIG_PATH:+--kubeconfig "${KUBECONFIG_PATH}"} \
         -n "${namespace}" get "${kind}" "${name}" >/dev/null 2>&1; then
@@ -228,13 +228,13 @@ install_helm_item() {
 
   # Captured before it is read, not read from a process substitution: the exit
   # status of a process substitution is never checked, so a parser failure
-  # would leave every field empty and surface as a bad helm invocation.
+  # would leave every field empty and surface as a bad helm invocation. The
+  # record's fields are separated by US, its lists by RS.
   local fields chart_name version repository path release namespace values requires setfile
-  if ! fields="$(python3 "${ITEMS_PY}" release "${dir}/release.yaml")"; then
+  if ! fields="$("${NVKECTL}" inspect deploy-path "${DEPLOY_PATH}" --item "${item}")"; then
     die "item ${item}: cannot parse ${dir}/release.yaml"
   fi
-  IFS=$'\x1f' read -r _ chart_name version repository path release namespace values requires _ _ _ setfile \
-    <<<"${fields}"
+  IFS=$'\x1f' read -r chart_name version repository path release namespace values requires setfile <<<"${fields}"
 
   # A path inside the deploy path first: a chart directory from the checkout,
   # or the archive a render put under charts/. A rendered deploy path writes a
@@ -257,8 +257,9 @@ install_helm_item() {
 
   # The item's own values first, then whatever the run supplies for it. Helm
   # merges -f in order, so the caller's file wins on any key it names.
-  local values_args=() file
-  for file in ${values//,/ }; do
+  local values_args=() file files=()
+  [[ -z "${values}" ]] || IFS=$'\x1e' read -ra files <<<"${values}"
+  for file in ${files[@]+"${files[@]}"}; do
     values_args+=(--values "${dir}/${file}")
   done
   while IFS= read -r file; do
@@ -268,8 +269,9 @@ install_helm_item() {
   done < <(values_for "${item}")
   # chart.setFile entries are files the operator holds; helm reads them here,
   # so the deploy path carries a path, not the content.
-  local entry
-  for entry in ${setfile//,/ }; do
+  local entry entries=()
+  [[ -z "${setfile}" ]] || IFS=$'\x1e' read -ra entries <<<"${setfile}"
+  for entry in ${entries[@]+"${entries[@]}"}; do
     [[ -f "${entry#*=}" ]] || die "item ${item}: setFile ${entry%%=*}: no such file: ${entry#*=}"
     values_args+=(--set-file "${entry}")
   done
@@ -322,7 +324,6 @@ import_images() {
 # state directory (never a shared temp directory, which the render refuses)
 # that is removed when this script exits.
 render_deploy_path() {
-  command -v "${NVKECTL}" >/dev/null 2>&1 || die "nvkectl is needed to render; set NVKECTL or put it on PATH"
   local args=(render deploy-path --deploy-path "${DEPLOY_PATH}" --ephemeral)
   [[ -z "${SITESPEC}" ]] || args+=(--sitespec "${SITESPEC}")
   [[ -z "${RELEASE}" ]] || args+=(--release "${RELEASE}")
@@ -345,7 +346,7 @@ install() {
   # Same shape as the release read in install_helm_item: a failed parser must
   # stop the install, not leave it with no items to apply.
   local items name type
-  if ! items="$(python3 "${ITEMS_PY}" items "${DEPLOY_PATH}/nvke-deploy.yaml")"; then
+  if ! items="$("${NVKECTL}" inspect deploy-path "${DEPLOY_PATH}")"; then
     die "cannot parse ${DEPLOY_PATH}/nvke-deploy.yaml"
   fi
   import_images
@@ -387,6 +388,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -z "${RUN_DIR}" || -n "${RELEASE}" ]] || die "--nvkr-run-dir holds a release's artifacts; pass --release"
+command -v "${NVKECTL}" >/dev/null 2>&1 || die "nvkectl reads the deploy path; set NVKECTL or put it on PATH (make -C cli build)"
 [[ -z "${RELEASE}" || -n "${SITESPEC}" ]] || die "--release needs --sitespec: the site spec names the architecture"
 if [[ -n "${SITESPEC}${RELEASE}" ]]; then
   [[ -n "${DEPLOY_PATH}" ]] || die "--deploy-path is required"

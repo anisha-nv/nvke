@@ -24,7 +24,7 @@ func newRenderCmd() *cobra.Command {
 		Short:  "Write a resolved copy of an input, ready to apply",
 		Hidden: true,
 	}
-	cmd.AddCommand(newRenderDeployPathCmd())
+	cmd.AddCommand(newRenderDeployPathCmd(), newRenderTemplateItemCmd())
 	return cmd
 }
 

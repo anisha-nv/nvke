@@ -4,7 +4,7 @@
 #
 # Tests for nvke-deploy.sh against deploy/nico, committed and rendered for a
 # site, in --dry-run: the item order, where each chart comes from, and the
-# refusals, and check-site.sh against stub tools. Needs python3 and nvkectl: NVKECTL names the binary, else the
+# refusals, and check-site.sh against stub tools. Needs nvkectl: NVKECTL names the binary, else the
 # one on PATH; make -C deploy test builds it.
 #
 # Usage: ./test_nvke_deploy.sh
@@ -99,7 +99,7 @@ expect "spire reads the CA from the operator's files" "helm upgrade --install sp
 ! grep -q 'BEGIN' "${rendered}/spire/site-values.yaml" && pass "the CA is not copied into the spire values" || fail "spire site values hold PEM"
 expect "the rendered Secret is applied as a manifest" "^kubectl apply --server-side -f ${rendered}/nvke-base-config/20-nico-credentials.yaml" "${out}"
 expect "the namespaces manifest is applied too" "^kubectl apply --server-side -f ${rendered}/nvke-base-config/00-namespaces.yaml" "${out}"
-reject "no python template render for a rendered path" 'render-template' "${out}"
+reject "no template render for a rendered path" 'render template-item' "${out}"
 expect "postgresql still comes from its public repository" 'helm upgrade --install postgres oci://registry-1.docker.io/bitnamicharts/postgresql --version 18.5.15 ' "${out}"
 expect "a committed chart path is absolute in the rendered tree, so it resolves from anywhere" "helm upgrade --install nktp ${REPO}/nktp/deploy/charts/nktp " "${out}"
 expect "the controller chart too" "helm upgrade --install nke-controller ${REPO}/controller/deploy/charts/controller " "${out}"
@@ -236,7 +236,7 @@ find "${state}" -maxdepth 0 -perm 0700 | grep -q . && pass "the state directory 
 out="$(NVKE_STATE_DIR="${state}" bash "${EXECUTOR}" install --deploy-path "${NICO}" --sitespec "${WORK}/site/sitespec.yaml" --release "${HERE}/nvkr-release/bad-schema.json" --dry-run 2>&1)" && fail "failed render exited 0"
 [[ -z "$(ls -A "${renders}" 2>/dev/null)" ]] && pass "a failed render leaves no scratch behind" || fail "scratch left after a failed render: $(ls -A "${renders}")"
 out="$(NVKECTL=/nonexistent/nvkectl bash "${EXECUTOR}" install --deploy-path "${NICO}" --sitespec "${WORK}/site/sitespec.yaml" --dry-run 2>&1)" && fail "render without nvkectl exited 0"
-expect "a render without nvkectl is named" 'nvkectl is needed to render' "${out}"
+expect "a missing nvkectl is named" 'nvkectl reads the deploy path' "${out}"
 out="$(bash "${EXECUTOR}" install --deploy-path "${NICO}" --release "${WORK}/local.json" --dry-run 2>&1)" && fail "release without sitespec exited 0"
 expect "a release without the site spec is refused" 'release needs --sitespec' "${out}"
 

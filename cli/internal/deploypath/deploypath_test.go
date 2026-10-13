@@ -466,21 +466,6 @@ func TestRender_SiteSpecRefusals(t *testing.T) {
 	if _, statErr := os.Stat(inside); statErr == nil {
 		t.Error("nested out was created")
 	}
-	// A CA path with whitespace is refused: the deploy path reader cannot carry it.
-	caSpec := filledSiteSpec(t, true, nil)
-	caDir := filepath.Join(t.TempDir(), "ca dir")
-	if err := os.MkdirAll(caDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range []string{"ca.crt", "ca.key"} {
-		if err := os.WriteFile(filepath.Join(caDir, f), []byte("x\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	caSpec.Spire.CACertFile, caSpec.Spire.CAKeyFile = filepath.Join(caDir, "ca.crt"), filepath.Join(caDir, "ca.key")
-	if _, err := Render(context.Background(), RenderOptions{AllowTempOut: true, DeployPath: nico, Site: caSpec, Out: filepath.Join(t.TempDir(), "r")}); err == nil || !strings.Contains(err.Error(), "spire.caCertFile: the path") || !strings.Contains(err.Error(), "holds whitespace") {
-		t.Errorf("CA path with a space: %v", err)
-	}
 	// A secret the templates cannot carry is refused by field.
 	for name, content := range map[string]string{"quote": "tok\"en", "newline": "abc\ndef", "backslash": "a\\b"} {
 		spec := filledSiteSpec(t, false, nil)
@@ -564,28 +549,6 @@ func TestRender_SiteSpecRefusals(t *testing.T) {
 		if _, err := Items(dotted); err == nil || !strings.Contains(err.Error(), "names are tokens") {
 			t.Errorf("item name %q: %v", name, err)
 		}
-	}
-	// A checkout under a path with whitespace cannot be carried by the reader.
-	// The committed chart paths climb two levels, so the space sits above that.
-	spaced := filepath.Join(t.TempDir(), "sp ace", "repo", "deploy", "nico")
-	if err := copyTree(nico, spaced); err != nil {
-		t.Fatal(err)
-	}
-	_, err = Render(context.Background(), RenderOptions{AllowTempOut: true, DeployPath: spaced, Site: filledSiteSpec(t, false, nil), Out: filepath.Join(t.TempDir(), "r")})
-	if err == nil || !strings.Contains(err.Error(), "holds whitespace") {
-		t.Errorf("deploy path with a space: %v", err)
-	}
-	// An item type the executor does not dispatch is refused when read.
-	typed := filepath.Join(t.TempDir(), "nico")
-	if err := copyTree(nico, typed); err != nil {
-		t.Fatal(err)
-	}
-	typedList, _ := os.ReadFile(filepath.Join(typed, "nvke-deploy.yaml"))
-	if err := os.WriteFile(filepath.Join(typed, "nvke-deploy.yaml"), []byte(strings.Replace(string(typedList), "type: helm}", "type: foo.bar}", 1)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Items(typed); err == nil || !strings.Contains(err.Error(), "unknown type") {
-		t.Errorf("unknown item type: %v", err)
 	}
 	// nktpValuesFile without an nktp item is a problem, not a silent skip.
 	spec = filledSiteSpec(t, false, nil)

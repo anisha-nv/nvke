@@ -472,8 +472,7 @@ func oidcDomains(overlay, vip string) ([]string, error) {
 }
 
 // secretPath returns the absolute path of a file the site spec names for
-// the install to read. A missing file, or a path the deploy path reader
-// cannot carry, is a problem naming the field.
+// the install to read. A missing file is a problem naming the field.
 func secretPath(r *renderer, what, path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -482,10 +481,6 @@ func secretPath(r *renderer, what, path string) string {
 	}
 	if _, err := os.Stat(abs); err != nil {
 		r.problem("site spec: %s: %v", what, err)
-		return ""
-	}
-	if strings.ContainsFunc(abs, unicode.IsSpace) {
-		r.problem("site spec: %s: the path %q holds whitespace, which the deploy path reader cannot carry; move the file to a path without spaces", what, abs)
 		return ""
 	}
 	return abs

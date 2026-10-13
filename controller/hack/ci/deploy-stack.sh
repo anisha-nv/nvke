@@ -313,8 +313,8 @@ if [[ "${DEPLOY_TARGET}" == capnico-e2e ]]; then
   nico_endpoint="${NICO_ENDPOINT:-http://${NICO_SIM_ENDPOINT_HOST:-${KIND_GATEWAY_IP}}:18080}"
   : "${nico_endpoint:?NICO_ENDPOINT or NICO_SIM_ENDPOINT_HOST is required: the kind gateway could not be read}"
 
-  # The BootstrapConfig the template item renders against. JSON because
-  # deploy/lib/render-template.py takes JSON -- PyYAML is not guaranteed here.
+  # The BootstrapConfig the template item renders against, as the JSON
+  # nvkectl render template-item takes.
   BOOTSTRAP_CONFIG="${VALUES_DIR}/bootstrap-config.json"
   NICO_ENDPOINT="${nico_endpoint}" \
   NICO_ORG_ID="${NICO_ORG_ID:-novxwn552ssc}" \

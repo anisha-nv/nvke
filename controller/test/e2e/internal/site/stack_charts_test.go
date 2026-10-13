@@ -25,7 +25,8 @@ import (
 // these catch a value the charts do not read, which on a live site fails
 // silently or an hour in.
 //
-// They need bash, python3 and helm, and a clone DeployPathRef resolves in.
+// They need bash, helm, nvkectl (NVKECTL_BIN, else PATH) and a clone
+// DeployPathRef resolves in.
 // The SPIRE chart is fetched from its repository and is skipped offline.
 
 // deployPath exports the pinned deploy path, or skips.
@@ -34,11 +35,13 @@ func deployPath(t *testing.T) string {
 	if testing.Short() {
 		t.Skip("renders charts with helm")
 	}
-	for _, tool := range []string{"git", "bash", "python3", "helm"} {
+	for _, tool := range []string{"git", "bash", "helm"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s is not installed", tool)
 		}
 	}
+	// The executor reads the deploy path through nvkectl.
+	t.Setenv("NVKECTL", nvkectlBinary(t))
 	top, err := exec.CommandContext(context.Background(), "git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		t.Skipf("not in a git clone: %v", err)
@@ -53,6 +56,23 @@ func deployPath(t *testing.T) string {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir
+}
+
+// nvkectlBinary resolves the nvkectl the executor and the template render run:
+// NVKECTL_BIN, as CI sets it, else PATH; or skips.
+func nvkectlBinary(t *testing.T) string {
+	t.Helper()
+	if bin := os.Getenv("NVKECTL_BIN"); bin != "" {
+		if _, err := os.Stat(bin); err != nil {
+			t.Skipf("NVKECTL_BIN: %v", err)
+		}
+		return bin
+	}
+	bin, err := exec.LookPath("nvkectl")
+	if err != nil {
+		t.Skip("no nvkectl: set NVKECTL_BIN or put it on PATH (make -C cli build)")
+	}
+	return bin
 }
 
 // databasePassword is what renderValues gives Stack, and wantDBSecret is how a
@@ -172,7 +192,7 @@ func TestSBOMAgainstDeployPath(t *testing.T) {
 	t.Setenv(controller.EnvNamespace, name)
 	t.Setenv(controller.EnvService, name)
 	values := renderValues(t, assets)
-	dryRun, err := runTool(t, "bash", filepath.Join(assets, "deploy", "nvke-deploy.sh"), "install",
+	dryRun, err := runTool(t, "bash", filepath.Join(assets, "deploy", "nvke-deploy.sh"), "apply",
 		"--deploy-path", filepath.Join(assets, "deploy", "nico"),
 		"--config", filepath.Join(values, "bootstrap-config.json"),
 		"--values-for", "controller="+filepath.Join(values, "controller.yaml"),
@@ -358,9 +378,9 @@ func TestSBOMAgainstDeployPath(t *testing.T) {
 
 	t.Run("credential templates", func(t *testing.T) {
 		out := t.TempDir()
-		if _, err := runTool(t, "python3", filepath.Join(assets, "deploy", "lib", "render-template.py"),
-			filepath.Join(values, "bootstrap-config.json"),
-			filepath.Join(assets, "deploy", "nico", "nvke-base-config"), out); err != nil {
+		if _, err := runTool(t, os.Getenv("NVKECTL"), "render", "template-item",
+			"--config", filepath.Join(values, "bootstrap-config.json"),
+			"--item", filepath.Join(assets, "deploy", "nico", "nvke-base-config"), "--out", out); err != nil {
 			t.Fatal(err)
 		}
 		rendered := map[string]string{}

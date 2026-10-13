@@ -34,8 +34,7 @@ the release by digest, so this path renders no pull secret.
 
 What the node needs, all present on the reference instance type:
 
-- `helm`, `kubectl`, `git`, `python3` (the executor's item parser and template
-  renderer are Python), plus `clusterctl` for the prerequisites
+- `helm`, `kubectl`, `git`, plus `clusterctl` for the prerequisites
 - to install for a site: `nvkectl` (`make -C cli build` writes
   `cli/bin/nvkectl`; `NVKECTL` names it, else PATH). `deploy/check-site.sh --sitespec
   sitespec.yaml --kubeconfig site.kubeconfig` reports what is still missing;

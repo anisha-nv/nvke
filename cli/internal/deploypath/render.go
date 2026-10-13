@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"unicode"
 
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/content"
@@ -261,11 +260,6 @@ func (r *renderer) absoluteChartPaths() {
 		path := rel.Chart.Path
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(r.opts.DeployPath, path)
-		}
-		// The deploy path reader takes one unquoted token per value.
-		if strings.ContainsFunc(path, unicode.IsSpace) {
-			r.problem("%s: the chart path %q holds whitespace, which the deploy path reader cannot carry; render from a path without spaces", item.Name, path)
-			continue
 		}
 		if path == rel.Chart.Path {
 			continue

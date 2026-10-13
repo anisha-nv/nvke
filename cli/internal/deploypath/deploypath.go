@@ -4,10 +4,9 @@
 // Package deploypath reads a deploy path: a directory holding nvke-deploy.yaml
 // and one directory per item, as documented in
 // docs/site-bootstrap/deploy-repository.md. It parses the item list and an
-// item's release.yaml, and writes release.yaml back in the same grammar the
-// shell-side reader (deploy/lib/nvke-deploy-items.py) accepts: one `key: value`
-// per line under chart: and release:, `- key=path` under chart.setFile:,
-// `- file` under values:, and one flow mapping per line under requires:.
+// item's release.yaml, and writes release.yaml back in the plain grammar the
+// committed files use. deploy/nvke-deploy.sh reads a deploy path through
+// "nvkectl inspect deploy-path", so this package is the only parser.
 package deploypath
 
 import (
