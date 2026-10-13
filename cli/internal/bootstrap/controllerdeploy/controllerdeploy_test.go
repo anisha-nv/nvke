@@ -17,8 +17,11 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/dsx-ai-factory/nvke/cli/internal/bootstrap/manifest"
 	"github.com/dsx-ai-factory/nvke/cli/internal/envalias"
+	"github.com/dsx-ai-factory/nvke/cli/internal/redact"
 )
 
 // fakeCall records one CommandRunner.Run invocation.
@@ -47,6 +50,10 @@ type fakeRunner struct {
 	// valuesFiles holds, per release, the contents of the --values file its
 	// helm install was pointed at. See captureValues.
 	valuesFiles map[string]string
+
+	// allValues holds, per release, the contents of every --values file, in the
+	// order they were passed. The credentials are in the later ones.
+	allValues map[string][]string
 }
 
 type fakeOutput struct {
@@ -139,11 +146,39 @@ func (f *fakeRunner) captureValues(name string, args []string) {
 			}
 			if f.valuesFiles == nil {
 				f.valuesFiles = map[string]string{}
+				f.allValues = map[string][]string{}
 			}
-			f.valuesFiles[release] = string(body)
-			return
+			if _, seen := f.valuesFiles[release]; !seen {
+				f.valuesFiles[release] = string(body)
+			}
+			f.allValues[release] = append(f.allValues[release], string(body))
 		}
 	}
+}
+
+// secretValue returns the value at path in the --values files release was
+// installed with, or "" when none sets it.
+func (f *fakeRunner) secretValue(t *testing.T, release string, path ...string) string {
+	t.Helper()
+	for _, body := range f.allValues[release] {
+		var doc map[string]any
+		if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
+			t.Fatalf("a %s values file is not YAML: %v", release, err)
+		}
+		var cur any = doc
+		for _, key := range path {
+			m, ok := cur.(map[string]any)
+			if !ok {
+				cur = nil
+				break
+			}
+			cur = m[key]
+		}
+		if v, ok := cur.(string); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 func (f *fakeRunner) Run(_ context.Context, name string, args ...string) (string, error) {
@@ -401,8 +436,8 @@ func TestDeploy_InstallsPostgresFromTheEmbeddedChart(t *testing.T) {
 	if got := runner.valuesFiles[postgresReleaseName]; got != string(want) {
 		t.Errorf("postgres --values file = %q, want the embedded %s", got, postgresValuesFile)
 	}
-	if !strings.Contains(postgres, "auth.password=test-password") {
-		t.Errorf("postgres call = %q, want the password supplied per run", postgres)
+	if got := runner.secretValue(t, postgresReleaseName, "auth", "password"); got != "test-password" {
+		t.Errorf("postgres auth.password in its values files = %q, want the password supplied per run", got)
 	}
 }
 
@@ -437,16 +472,18 @@ func TestDeploy_InstallsPostgresTemporalSPIREThenCWEInOrder(t *testing.T) {
 	if !strings.Contains(postgres, "upgrade --install postgres "+chartArgOf(t, postgres, postgresReleaseName)) {
 		t.Errorf("postgres call = %q, want the postgres release/chart", postgres)
 	}
-	if !strings.Contains(postgres, "auth.password=test-password") {
-		t.Errorf("postgres call = %q, want the postgres password set", postgres)
+	if got := runner.secretValue(t, postgresReleaseName, "auth", "password"); got != "test-password" {
+		t.Errorf("postgres auth.password in its values files = %q, want the postgres password set", got)
 	}
 
 	if !strings.Contains(temporal, "upgrade --install temporal temporal --repo https://go.temporal.io/helm-charts") ||
 		!hasArgs(temporal, "--version", "0.74.0") {
 		t.Errorf("temporal call = %q, want the temporal release/chart/repo/version", temporal)
 	}
-	if !strings.Contains(temporal, "server.config.persistence.default.sql.password=test-password") {
-		t.Errorf("temporal call = %q, want the shared postgres password set on both persistence stores", temporal)
+	for _, store := range []string{"default", "visibility"} {
+		if got := runner.secretValue(t, temporalReleaseName, "server", "config", "persistence", store, "sql", "password"); got != "test-password" {
+			t.Errorf("temporal %s store password in its values files = %q, want the shared postgres password", store, got)
+		}
 	}
 
 	if !strings.Contains(spireCRDs, "upgrade --install spire-crds spire-crds") ||
@@ -1213,5 +1250,194 @@ func TestHelmRetriesChartDownloadServerErrors(t *testing.T) {
 				t.Errorf("helm made %d attempts, want %d", len(runner.calls), tc.wantCalls)
 			}
 		})
+	}
+}
+
+// fakeValue stands in for the generated password. It is deliberately plain.
+const fakeValue = "aaaa-bbbb-cccc"
+
+// failingHelmRunner fails the failAt-th helm call, with output that echoes the
+// password as helm can, and records the rest.
+type failingHelmRunner struct {
+	*fakeRunner
+	failAt int
+	helms  int
+}
+
+func (r *failingHelmRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	out, err := r.fakeRunner.Run(ctx, name, args...)
+	if name != "helm" {
+		return out, err
+	}
+	r.helms++
+	if r.helms-1 == r.failAt {
+		return "Error: INSTALLATION FAILED: " + fakeValue + " rejected", errors.New("exit status 1")
+	}
+	return out, err
+}
+
+// TestDeploy_PasswordsAreNotArguments checks where the generated password goes:
+// into a values file for each of the three releases that receive it, and into no
+// command-line argument, where it would show in `ps` and in the command an
+// error prints.
+func TestDeploy_PasswordsAreNotArguments(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.PostgresPassword = fakeValue
+	runner := &fakeRunner{}
+
+	if err := New(runner, nil).Deploy(context.Background(), "/tmp/kubeconfig", cfg); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+
+	for _, call := range runner.calls {
+		for _, arg := range call.args {
+			if strings.Contains(arg, fakeValue) {
+				t.Errorf("%s argument %q holds the password", call.name, arg)
+			}
+		}
+	}
+	for release, path := range map[string][]string{
+		postgresReleaseName: {"auth", "password"},
+		cweReleaseName:      {"appDb", "postgresPassword"},
+	} {
+		if got := runner.secretValue(t, release, path...); got != fakeValue {
+			t.Errorf("%s %v in its values files = %q, want the generated password", release, path, got)
+		}
+	}
+	for _, store := range []string{"default", "visibility"} {
+		if got := runner.secretValue(t, temporalReleaseName, "server", "config", "persistence", store, "sql", "password"); got != fakeValue {
+			t.Errorf("temporal %s store password in its values files = %q, want the generated password", store, got)
+		}
+	}
+}
+
+// TestDeploy_ControllerReadsItsDatabaseURLFromASecret guards the flag that keeps
+// the password out of the controller's pod spec, and so out of the diagnostics
+// dump: the chart then builds the URL into a Secret and the pod refers to it.
+func TestDeploy_ControllerReadsItsDatabaseURLFromASecret(t *testing.T) {
+	runner := &fakeRunner{}
+	if err := New(runner, nil).Deploy(context.Background(), "/tmp/kubeconfig", testConfig(t)); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	var controller string
+	for _, call := range helmCalls(runner) {
+		if strings.Contains(call, "upgrade --install "+cweReleaseName+" ") {
+			controller = call
+		}
+	}
+	if !hasArgs(controller, "--set", "secrets.createDbSecret=true") {
+		t.Errorf("controller call = %q, want --set secrets.createDbSecret=true", controller)
+	}
+}
+
+// TestDeploy_FailedInstallPrintsNoPassword fails each of the three releases that
+// receive the generated password, with helm output that echoes it, and checks
+// the error, which reaches the terminal, does not hold it.
+func TestDeploy_FailedInstallPrintsNoPassword(t *testing.T) {
+	for _, tc := range []struct {
+		release string
+		failAt  int // index of the helm call that fails
+	}{
+		{"postgres", 0},
+		{"temporal", 1},
+		{"controller", 4},
+	} {
+		t.Run(tc.release, func(t *testing.T) {
+			cfg := testConfig(t)
+			cfg.PostgresPassword = fakeValue
+			runner := &failingHelmRunner{fakeRunner: &fakeRunner{}, failAt: tc.failAt}
+
+			err := New(runner, nil).Deploy(context.Background(), "/tmp/kubeconfig", cfg)
+			if err == nil {
+				t.Fatal("expected the install to fail")
+			}
+			if strings.Contains(err.Error(), fakeValue) {
+				t.Errorf("the error holds the password:\n%s", err)
+			}
+			if !strings.Contains(err.Error(), "--namespace") {
+				t.Errorf("the failed command should stay readable:\n%s", err)
+			}
+			if !strings.Contains(err.Error(), redact.Placeholder) {
+				t.Errorf("helm's output echoed the password, so the error should show it masked:\n%s", err)
+			}
+		})
+	}
+}
+
+// dumpingRunner makes `kubectl cluster-info dump` write files that hold a
+// credential, as the controller's pod spec would, so a test can check that
+// DumpDiagnostics scrubs what the cluster gave it.
+type dumpingRunner struct {
+	*fakeRunner
+}
+
+func (r *dumpingRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	out, err := r.fakeRunner.Run(ctx, name, args...)
+	for i, a := range args {
+		if a != "--output-directory" || i+1 >= len(args) {
+			continue
+		}
+		sub := filepath.Join(args[i+1], "nke-controller")
+		if mkErr := os.MkdirAll(sub, 0o750); mkErr != nil {
+			return out, mkErr
+		}
+		pod := `{"env":[{"name":"DATABASE_URL","value":"postgres://u:` + fakeValue + `@h/db"}],"keep":"host=db"}`
+		other := `{"env":[{"name":"DATABASE_URL","value":"postgres://u:not-registered@h/db"}]}`
+		for file, body := range map[string]string{"pods.json": pod, "other.json": other} {
+			if wErr := os.WriteFile(filepath.Join(sub, file), []byte(body), 0o600); wErr != nil {
+				return out, wErr
+			}
+		}
+	}
+	return out, err
+}
+
+// TestDumpDiagnostics_ScrubsCredentials guards the scrub that runs after the
+// dump. The files CI uploads are what it protects: with the call removed, every
+// other test still passes.
+func TestDumpDiagnostics_ScrubsCredentials(t *testing.T) {
+	redact.RegisterSecret(fakeValue)
+	dir := filepath.Join(t.TempDir(), "cluster-diagnostics")
+
+	New(&dumpingRunner{fakeRunner: &fakeRunner{}}, nil).DumpDiagnostics(context.Background(), "/tmp/kubeconfig", dir)
+
+	for file, mustNotHold := range map[string]string{
+		"pods.json":  fakeValue,        // a registered password, in a URL
+		"other.json": "not-registered", // any password in a database URL
+	} {
+		body, err := os.ReadFile(filepath.Join(dir, "nke-controller", file))
+		if err != nil {
+			t.Fatalf("%s: %v", file, err)
+		}
+		if strings.Contains(string(body), mustNotHold) {
+			t.Errorf("%s still holds %q after the dump:\n%s", file, mustNotHold, body)
+		}
+		if !strings.Contains(string(body), "@h/db") {
+			t.Errorf("%s lost more than the password:\n%s", file, body)
+		}
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "nke-controller", "pods.json"))
+	if err != nil || !strings.Contains(string(body), `"keep":"host=db"`) {
+		t.Errorf("an unrelated field did not survive: %q, %v", body, err)
+	}
+}
+
+// The credentials are in values files, so no argument should carry one. If a
+// future change puts one back, in any argument shape, the command an error prints
+// must still not show it.
+func TestHelm_MasksARegisteredCredentialInAnArgument(t *testing.T) {
+	redact.RegisterSecret(fakeValue)
+	runner := &failingHelmRunner{fakeRunner: &fakeRunner{}, failAt: 0}
+
+	_, err := New(runner, nil).helm(context.Background(), "/tmp/kubeconfig",
+		"upgrade", "--install", "demo", "chart", "--set", "a=1,db.pw="+fakeValue, "--set-json=x="+fakeValue)
+	if err == nil {
+		t.Fatal("expected helm to fail")
+	}
+	if strings.Contains(err.Error(), fakeValue) {
+		t.Errorf("the error holds the credential:\n%s", err)
+	}
+	if !strings.Contains(err.Error(), "--install demo chart") {
+		t.Errorf("the rest of the command should stay readable:\n%s", err)
 	}
 }

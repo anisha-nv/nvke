@@ -36,8 +36,11 @@ import (
 	"text/template"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/dsx-ai-factory/nvke/cli/internal/bootstrap/manifest"
 	"github.com/dsx-ai-factory/nvke/cli/internal/envalias"
+	"github.com/dsx-ai-factory/nvke/cli/internal/redact"
 	"github.com/dsx-ai-factory/nvke/controller/deploy/charts"
 )
 
@@ -401,6 +404,7 @@ func (e *Engine) Deploy(ctx context.Context, kubeconfigPath string, cfg Config) 
 			return fmt.Errorf("controllerdeploy: generating postgres password: %w", err)
 		}
 	}
+	redact.RegisterSecret(password)
 
 	helmTimeout := cfg.HelmTimeout
 	if helmTimeout <= 0 {
@@ -425,13 +429,20 @@ func (e *Engine) Deploy(ctx context.Context, kubeconfigPath string, cfg Config) 
 		return err
 	}
 	defer postgresCleanup()
+	postgresSecrets, postgresSecretsCleanup, err := writeSecretValues(map[string]any{
+		"auth": map[string]any{"password": password},
+	})
+	if err != nil {
+		return err
+	}
+	defer postgresSecretsCleanup()
 
 	e.log.Info("installing postgres", "namespace", postgresNamespace, "chart", postgresChartPath)
 	if _, err := e.helm(ctx, kubeconfigPath,
 		"upgrade", "--install", postgresReleaseName, postgresChartPath,
 		"--namespace", postgresNamespace, "--create-namespace",
 		"--values", postgresValues,
-		"--set-string", "auth.password="+password,
+		"--values", postgresSecrets,
 		"--wait", "--timeout", helmTimeout.String(),
 	); err != nil {
 		return fmt.Errorf("controllerdeploy: installing postgres: %w", err)
@@ -442,6 +453,26 @@ func (e *Engine) Deploy(ctx context.Context, kubeconfigPath string, cfg Config) 
 		return err
 	}
 	defer cleanup()
+	persistence := map[string]any{
+		"default": map[string]any{
+			"sql": map[string]any{"password": password},
+		},
+		"visibility": map[string]any{
+			"sql": map[string]any{"password": password},
+		},
+	}
+
+	temporalSecrets, temporalSecretsCleanup, err := writeSecretValues(map[string]any{
+		"server": map[string]any{
+			"config": map[string]any{
+				"persistence": persistence,
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	defer temporalSecretsCleanup()
 
 	// Chart identities come from the embedded bootstrap manifest, so what the
 	// bootstrap installs is pinned in one place. Each chart is passed via
@@ -468,8 +499,7 @@ func (e *Engine) Deploy(ctx context.Context, kubeconfigPath string, cfg Config) 
 	temporalArgs = append(temporalArgs,
 		"--namespace", temporalNamespace, "--create-namespace",
 		"--values", temporalValues,
-		"--set-string", "server.config.persistence.default.sql.password="+password,
-		"--set-string", "server.config.persistence.visibility.sql.password="+password,
+		"--values", temporalSecrets,
 		"--version", temporalChart.Version,
 		"--wait", "--timeout", helmTimeout.String(),
 	)
@@ -532,6 +562,13 @@ func (e *Engine) Deploy(ctx context.Context, kubeconfigPath string, cfg Config) 
 		return err
 	}
 	defer cleanup()
+	cweSecrets, cweSecretsCleanup, err := writeSecretValues(map[string]any{
+		"appDb": map[string]any{"postgresPassword": password},
+	})
+	if err != nil {
+		return err
+	}
+	defer cweSecretsCleanup()
 
 	// tag and digest are always set, empty when unused: the chart reads an
 	// empty tag as "use appVersion" and an empty digest as "pull by tag".
@@ -542,7 +579,11 @@ func (e *Engine) Deploy(ctx context.Context, kubeconfigPath string, cfg Config) 
 		"upgrade", "--install", cweReleaseName, chartPath,
 		"--namespace", cweNamespace, "--create-namespace",
 		"--values", cweValues,
-		"--set-string", "appDb.postgresPassword=" + password,
+		"--values", cweSecrets,
+		// The chart then builds the database URL into a Secret and the pod reads
+		// it by reference. Without it the password sits in the pod spec, where
+		// `kubectl describe` and the diagnostics dump show it.
+		"--set", "secrets.createDbSecret=true",
 		"--set-string", "image.repository=" + imageRepo,
 		"--set-string", "image.tag=" + imageTag,
 		"--set-string", "image.digest=" + imageDigest,
@@ -666,19 +707,23 @@ func (e *Engine) WaitReady(ctx context.Context, kubeconfigPath string, timeout t
 // helm runs the helm CLI with kubeconfigPath and args.
 func (e *Engine) helm(ctx context.Context, kubeconfigPath string, args ...string) (string, error) {
 	fullArgs := append([]string{"--kubeconfig", kubeconfigPath}, args...)
+	// The credentials are in values files, not arguments. Masking the registered
+	// ones anyway keeps a future argument that carries one out of the error.
+	shown := redact.Text(strings.Join(args, " "))
 	for attempt := 1; ; attempt++ {
 		out, err := e.Runner.Run(ctx, "helm", fullArgs...)
+		out = redact.Text(out)
 		if err == nil {
 			return out, nil
 		}
 		// GitHub's release downloads answer 5xx now and then; nothing was installed yet, so the same command is safe to repeat.
 		if attempt == helmFetchAttempts || !chartFetchServerError.MatchString(out) {
-			return out, fmt.Errorf("helm %s: %w\n%s", strings.Join(args, " "), err, out)
+			return out, fmt.Errorf("helm %s: %w\n%s", shown, err, out)
 		}
 		e.log.Warn("helm chart download failed, retrying", "attempt", attempt, "err", err)
 		select {
 		case <-ctx.Done():
-			return out, fmt.Errorf("helm %s: %w\n%s", strings.Join(args, " "), ctx.Err(), out)
+			return out, fmt.Errorf("helm %s: %w\n%s", shown, ctx.Err(), out)
 		case <-time.After(helmFetchRetryInterval):
 		}
 	}
@@ -733,6 +778,19 @@ func writeTempFile(pattern string, body []byte) (path string, cleanup func(), er
 		return "", func() {}, fmt.Errorf("controllerdeploy: closing %s: %w", tmpName, err)
 	}
 	return tmpName, cleanup, nil
+}
+
+// writeSecretValues writes values, which hold credentials, to a values file for
+// helm's --values and returns its path plus a cleanup func the caller should
+// defer immediately. A credential goes in a file, not on the command line,
+// where it would show in `ps` and in the command an error prints. The file is
+// created 0600, and an error from here names the path, never the contents.
+func writeSecretValues(values map[string]any) (path string, cleanup func(), err error) {
+	body, err := yaml.Marshal(values)
+	if err != nil {
+		return "", func() {}, fmt.Errorf("controllerdeploy: rendering a values file: %w", err)
+	}
+	return writeTempFile("nvkectl-secret-values-*.yaml", body)
 }
 
 // splitImageRef splits "repo:tag", "repo@sha256:..." or "repo:tag@sha256:..."
@@ -1061,5 +1119,15 @@ func (e *Engine) DumpDiagnostics(ctx context.Context, kubeconfigPath, dir string
 	}
 	if err := os.WriteFile(filepath.Join(dir, "helm-releases.txt"), []byte(out), 0o600); err != nil {
 		e.log.Warn("could not write a diagnostics file", "file", "helm-releases.txt", "err", err)
+	}
+
+	e.redactDiagnostics(dir)
+}
+
+// redactDiagnostics masks credentials in everything DumpDiagnostics wrote. The
+// controller's pod spec carries the database URL, so the dump holds the password.
+func (e *Engine) redactDiagnostics(dir string) {
+	for _, path := range redact.Tree(dir) {
+		e.log.Warn("could not scrub part of the diagnostics; check it before sharing", "path", path)
 	}
 }
