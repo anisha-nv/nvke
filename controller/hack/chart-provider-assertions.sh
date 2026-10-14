@@ -9,7 +9,7 @@
 set -euo pipefail
 
 CHART="${CHART:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/deploy/charts/controller"}"
-[[ -d "${CHART}" ]] || { echo "chart not found at ${CHART}" >&2; exit 2; }
+[[ -d "${CHART}" || ( -f "${CHART}" && "${CHART}" == *.tgz ) ]] || { echo "chart not found at ${CHART}" >&2; exit 2; }
 
 failures=0
 

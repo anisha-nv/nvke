@@ -10,9 +10,9 @@ set -euo pipefail
 
 controller="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART="${CHART:-"${controller}/deploy/charts/controller"}"
-[[ -d "${CHART}" ]] || { echo "chart not found at ${CHART}" >&2; exit 2; }
+[[ -d "${CHART}" || ( -f "${CHART}" && "${CHART}" == *.tgz ) ]] || { echo "chart not found at ${CHART}" >&2; exit 2; }
 # Absolute, since the script later changes into the controller module.
-CHART="$(cd "${CHART}" && pwd)"
+CHART="$(cd "$(dirname "${CHART}")" && pwd)/$(basename "${CHART}")"
 
 # Values files live apart from the renders, every one of which the test loads.
 values="$(mktemp -d)"
