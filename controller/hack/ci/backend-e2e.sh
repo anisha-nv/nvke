@@ -44,6 +44,13 @@ DIAGNOSTICS_MARKER="${STATE_DIR}/SAFE_TO_UPLOAD"
 # lane has an inner runner, so the smoke drives the CLI inside it.
 NVKECTL_SMOKE="${NKE_E2E_NVKECTL_SMOKE:-false}"
 NVKECTL_SMOKE_RUNNER="${RUNNER_NAME}"
+# The stack lanes run deploy/nvke-deploy.sh apply inside the runner, and the
+# executor reads the deploy path through nvkectl, so the binary is built and
+# staged whenever the stack is used, not only when the smoke test runs.
+STAGE_NVKECTL="false"
+if [[ "${NVKECTL_SMOKE}" == "true" || "${NKE_E2E_USE_STACK:-false}" == "true" ]]; then
+  STAGE_NVKECTL="true"
+fi
 TMP_DIR="$(mktemp -d)"
 MANAGEMENT_KUBECONFIG="${TMP_DIR}/management.kubeconfig"
 CLUSTERCTL_BIN="${TMP_DIR}/clusterctl"
@@ -867,7 +874,7 @@ if [[ "${NICO_PROVIDER_ENABLED}" == true ]]; then
   NICO_SIM_BINARY_PREBUILT=true
 fi
 
-if [[ "${NVKECTL_SMOKE}" == "true" ]]; then
+if [[ "${STAGE_NVKECTL}" == "true" ]]; then
   nvkectl_smoke_build "${host_arch}"
 fi
 
@@ -964,7 +971,7 @@ if [[ ! "${runner_kind_ip}" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
 fi
 docker cp "${MANAGEMENT_KUBECONFIG}" "${RUNNER_NAME}:/state/management.kubeconfig"
 docker cp "${CLUSTERCTL_BIN}" "${RUNNER_NAME}:/usr/local/bin/clusterctl"
-if [[ "${NVKECTL_SMOKE}" == "true" ]]; then
+if [[ "${STAGE_NVKECTL}" == "true" ]]; then
   nvkectl_smoke_stage
 fi
 docker cp "${TILT_BIN}" "${RUNNER_NAME}:/usr/local/bin/tilt"
@@ -1047,9 +1054,11 @@ if [[ "${NKE_E2E_USE_STACK:-false}" == "true" ]]; then
   fi
 fi
 
-runner_exec bash -lc '
+runner_tools="curl docker git helm jq kind kubectl nc openssl python3 tar tilt"
+[[ "${STAGE_NVKECTL}" != "true" ]] || runner_tools+=" nvkectl"
+runner_exec env RUNNER_TOOLS="${runner_tools}" bash -lc '
   set -euo pipefail
-  for tool in curl docker git helm jq kind kubectl nc openssl python3 tar tilt; do
+  for tool in ${RUNNER_TOOLS}; do
     command -v "${tool}" >/dev/null || {
       echo "${tool} is required in the inner runner" >&2
       exit 1
