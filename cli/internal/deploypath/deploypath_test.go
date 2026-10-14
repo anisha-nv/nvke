@@ -64,8 +64,8 @@ func TestItemsAndReleases(t *testing.T) {
 	if len(spire.Requires) != 1 || spire.Requires[0].Kind != "certificate" {
 		t.Errorf("spire requires: %+v", spire.Requires)
 	}
-	// Marshal writes what the shell-side reader accepts, and round-trips,
-	// chart.setFile included.
+	// Marshal writes the committed grammar, and round-trips, chart.setFile
+	// included.
 	spire.Chart.SetFile = []string{"spire-server.upstreamAuthority.disk.secret.data.key=/etc/nvke/ca.key"}
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "release.yaml"), spire.Marshal(), 0o600); err != nil {
@@ -79,7 +79,7 @@ func TestItemsAndReleases(t *testing.T) {
 		len(again.Chart.SetFile) != 1 || again.Chart.SetFile[0] != spire.Chart.SetFile[0] {
 		t.Errorf("round trip changed the release:\n%s", spire.Marshal())
 	}
-	if !strings.Contains(string(spire.Marshal()), "  setFile:\n    - spire-server.upstreamAuthority.disk.secret.data.key=/etc/nvke/ca.key\n") ||
+	if !strings.Contains(string(spire.Marshal()), "  setFile:\n    - \"spire-server.upstreamAuthority.disk.secret.data.key=/etc/nvke/ca.key\"\n") ||
 		!strings.Contains(string(spire.Marshal()), "  version: \"0.30.1\"\n") || !strings.Contains(string(spire.Marshal()), "  - {kind: certificate, name: oidc-provider-upstream-ca, namespace: spire-server, condition: Ready}\n") {
 		t.Errorf("marshal grammar:\n%s", spire.Marshal())
 	}
@@ -93,8 +93,10 @@ func TestReadRelease_Problems(t *testing.T) {
 		"chart:\n  name: x\n  version: \"1\"\n  path: a\nrelease:\n  name: r\n": "release.name and release.namespace",
 		"chart:\n  name: x\n  version: \"1\"\n  colour: red\n":                  "field colour not found",
 		"image: ghcr.io/x/y\n": "image must be <repository>:<tag>",
-		"image: ghcr.io/x/y@sha256:" + strings.Repeat("a", 64) + "\n":                                                       "with no digest",
-		"chart:\n  name: x\n  version: \"1\"\n  setFile:\n    - a.b=relative/ca.crt\nrelease:\n  name: r\n  namespace: n\n": "setFile entry must be <helm key>=<absolute path>",
+		"image: ghcr.io/x/y@sha256:" + strings.Repeat("a", 64) + "\n":                                                                                               "with no digest",
+		"chart:\n  name: x\n  version: \"1\"\n  setFile:\n    - a.b=relative/ca.crt\nrelease:\n  name: r\n  namespace: n\n":                                         "setFile entry must be <helm key>=<absolute path>",
+		"chart:\n  name: x\n  version: \"1\"\nrelease:\n  name: r\n  namespace: n\nrequires:\n  - {kind: certificate, name: c, namespace: n}\n":                     "requires entry needs kind, name, namespace and condition",
+		"chart:\n  name: x\n  version: \"1\"\nrelease:\n  name: r\n  namespace: n\nrequires:\n  - {kind: certificate, name: a:b, namespace: n, condition: Ready}\n": "none holding ':'",
 	}
 	for text, want := range cases {
 		dir := t.TempDir()
@@ -944,5 +946,40 @@ func TestRender_SiteAndRelease(t *testing.T) {
 	items, _ := Items(out)
 	if items[0].Type != TypeManifest {
 		t.Errorf("template item not rendered: %+v", items[0])
+	}
+}
+
+// A path is read back whole whatever it holds: the executor quotes every
+// path it passes on, so the render need not refuse one with a space, and
+// `#` or `: ` would otherwise end a plain scalar.
+func TestMarshal_PathsRoundTrip(t *testing.T) {
+	for _, path := range []string{"/Users/me/projects #1/charts/x", "/a: b/c", "/plain path/x", `/back\slash/"quoted"`} {
+		rel := &Release{
+			Chart:   &Chart{Name: "x", Path: path, SetFile: []string{"a.b=" + path + "/ca.crt"}},
+			Release: &HelmRelease{Name: "r", Namespace: "n"},
+		}
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "release.yaml"), rel.Marshal(), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		again, err := ReadRelease(dir)
+		if err != nil {
+			t.Fatalf("%q: %v\n%s", path, err, rel.Marshal())
+		}
+		if again.Chart.Path != path || len(again.Chart.SetFile) != 1 || again.Chart.SetFile[0] != rel.Chart.SetFile[0] {
+			t.Errorf("%q came back as %q / %q", path, again.Chart.Path, again.Chart.SetFile)
+		}
+	}
+}
+
+// An item type the executor does not dispatch is refused when the list is
+// read, before anything is applied.
+func TestItems_UnknownType(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "nvke-deploy.yaml"), []byte("items:\n  - {name: x, type: foo.bar}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Items(dir); err == nil || !strings.Contains(err.Error(), "unknown type") {
+		t.Errorf("unknown item type: %v", err)
 	}
 }

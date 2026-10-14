@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -29,7 +30,7 @@ const (
 )
 
 // tokenPattern is an item name: letters, digits, `-`, `_` and inner dots.
-// `.` and `..` are not names, and the shell reader accepts the same set.
+// `.` and `..` are not names; hack/deploy-lists-check.sh checks the same set.
 var tokenPattern = regexp.MustCompile(`^[\w-]+(\.[\w-]+)*$`)
 
 // Item is one entry of nvke-deploy.yaml.
@@ -71,8 +72,8 @@ func Items(dir string) ([]Item, error) {
 	return list.Items, nil
 }
 
-// MarshalItems writes nvke-deploy.yaml's item list in the grammar the
-// shell-side reader accepts, with a header naming the render.
+// MarshalItems writes nvke-deploy.yaml's item list, one flow mapping per
+// item as the committed lists have it, with a header naming the render.
 func MarshalItems(items []Item, header string) []byte {
 	var b strings.Builder
 	if header != "" {
@@ -177,6 +178,15 @@ func (r *Release) validate() error {
 	if r.Release == nil || r.Release.Name == "" || r.Release.Namespace == "" {
 		return errors.New("release.name and release.namespace are required")
 	}
+	// The executor joins the four fields with ':' for kubectl wait, so each
+	// is present and holds none.
+	for _, q := range r.Requires {
+		for _, field := range []string{q.Kind, q.Name, q.Namespace, q.Condition} {
+			if field == "" || strings.Contains(field, ":") {
+				return fmt.Errorf("requires entry needs kind, name, namespace and condition, none holding ':': %+v", q)
+			}
+		}
+	}
 	for _, entry := range r.Chart.SetFile {
 		key, path, ok := strings.Cut(entry, "=")
 		if !ok || key == "" || !filepath.IsAbs(path) {
@@ -186,20 +196,24 @@ func (r *Release) validate() error {
 	return nil
 }
 
-// Marshal writes release.yaml in the grammar the shell-side reader accepts.
+// Marshal writes release.yaml in the plain grammar the committed files use.
+// Paths are quoted, so a path holding `#`, `:` or a space is read back whole.
 func (r *Release) Marshal() []byte {
 	var b strings.Builder
 	if r.Chart != nil {
-		version := ""
+		version, path := "", ""
 		if r.Chart.Version != "" {
 			version = quote(r.Chart.Version)
+		}
+		if r.Chart.Path != "" {
+			path = quote(r.Chart.Path)
 		}
 		b.WriteString("chart:\n")
 		for _, kv := range [][2]string{
 			{"name", r.Chart.Name},
 			{"version", version},
 			{"repository", r.Chart.Repository},
-			{"path", r.Chart.Path},
+			{"path", path},
 			{"artifact", r.Chart.Artifact},
 			{"imageArtifact", r.Chart.ImageArtifact},
 			{"profilesArtifact", r.Chart.ProfilesArtifact},
@@ -211,7 +225,7 @@ func (r *Release) Marshal() []byte {
 		if len(r.Chart.SetFile) > 0 {
 			b.WriteString("  setFile:\n")
 			for _, entry := range r.Chart.SetFile {
-				fmt.Fprintf(&b, "    - %s\n", entry)
+				fmt.Fprintf(&b, "    - %s\n", quote(entry))
 			}
 		}
 	}
@@ -239,7 +253,9 @@ func (r *Release) Marshal() []byte {
 	return []byte(b.String())
 }
 
-// quote keeps a version a string, as the committed files do.
+// quote writes a double-quoted YAML scalar. A version stays a string, as the
+// committed files have it, and a path is read back whole whatever it holds:
+// every escape strconv.Quote emits is one YAML's double-quoted style reads.
 func quote(value string) string {
-	return `"` + value + `"`
+	return strconv.Quote(value)
 }

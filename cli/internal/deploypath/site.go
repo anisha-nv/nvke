@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"text/template"
 	"unicode"
 
 	"gopkg.in/yaml.v3"
@@ -321,24 +320,17 @@ func (r *renderer) template(item string, ctx *TemplateContext) {
 			r.problem("%s: %v", item, err)
 			return
 		}
-		// A template that names a field the context does not have fails to
-		// execute, so a typo is a refused render.
-		tmpl, err := template.New(name).Option("missingkey=error").Parse(string(text))
+		out, err := renderTemplate(name, text, ctx)
 		if err != nil {
-			r.problem("%s/%s: %v", item, name, err)
-			return
-		}
-		var out bytes.Buffer
-		if err := tmpl.Execute(&out, ctx); err != nil {
-			r.problem("%s/%s: %v", item, name, err)
+			r.problem("%s/%v", item, err)
 			return
 		}
 		rendered := strings.TrimSuffix(name, ".tmpl")
-		if err := writePrivate(filepath.Join(dst, rendered), out.Bytes()); err != nil {
+		if err := writePrivate(filepath.Join(dst, rendered), out); err != nil {
 			r.problem("%s: %v", item, err)
 			return
 		}
-		if bytes.Contains(out.Bytes(), []byte("kind: Secret")) {
+		if bytes.Contains(out, []byte("kind: Secret")) {
 			r.credential(filepath.Join(item, rendered))
 		}
 		if err := os.Remove(filepath.Join(dst, name)); err != nil {

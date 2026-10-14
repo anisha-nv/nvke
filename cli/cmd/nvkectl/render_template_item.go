@@ -28,9 +28,9 @@ func newRenderTemplateItemCmd() *cobra.Command {
 		Long: `Render every .yaml.tmpl file of a template item against the BootstrapConfig
 JSON document --config names, into --out, and copy the plain .yaml files
 beside them. The field names are those of
-docs/site-bootstrap/deploy-repository.md. A template naming a field the
-document lacks, an empty value in the document, or a template that renders
-to nothing is refused.`,
+docs/site-bootstrap/deploy-repository.md. Every value in the document must
+be present and non-empty, referenced by a template or not; a template naming
+a field the document lacks, or one that renders to nothing, is refused.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {

@@ -56,6 +56,25 @@ func checkLeaves(node any, at string) error {
 	return nil
 }
 
+// renderTemplate parses one .yaml.tmpl and executes it against data. A field
+// data lacks fails the execution, so a typo is a refused render rather than
+// an empty value in a Secret, and a result with nothing in it is refused too.
+// Site renders and template items both render through here.
+func renderTemplate(name string, text []byte, data any) ([]byte, error) {
+	tmpl, err := template.New(name).Option("missingkey=error").Parse(string(text))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	var out bytes.Buffer
+	if err := tmpl.Execute(&out, data); err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	if strings.TrimSpace(out.String()) == "" {
+		return nil, fmt.Errorf("%s: rendered to nothing", name)
+	}
+	return out.Bytes(), nil
+}
+
 // RenderTemplateDir renders every .yaml.tmpl file of src against data into
 // dst, copies the plain .yaml and .yml files beside them, and returns how
 // many templates it rendered. A template naming a field data lacks, or
@@ -84,18 +103,11 @@ func RenderTemplateDir(src, dst string, data any) (int, error) {
 			if err != nil {
 				return rendered, err
 			}
-			tmpl, err := template.New(name).Option("missingkey=error").Parse(string(text))
+			out, err := renderTemplate(name, text, data)
 			if err != nil {
-				return rendered, fmt.Errorf("%s: %w", name, err)
+				return rendered, err
 			}
-			var out bytes.Buffer
-			if err := tmpl.Execute(&out, data); err != nil {
-				return rendered, fmt.Errorf("%s: %w", name, err)
-			}
-			if strings.TrimSpace(out.String()) == "" {
-				return rendered, fmt.Errorf("%s: rendered to nothing", name)
-			}
-			if err := os.WriteFile(filepath.Join(dst, strings.TrimSuffix(name, ".tmpl")), out.Bytes(), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(dst, strings.TrimSuffix(name, ".tmpl")), out, 0o600); err != nil {
 				return rendered, err
 			}
 			rendered++
