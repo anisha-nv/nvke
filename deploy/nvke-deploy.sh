@@ -36,6 +36,15 @@ NVKECTL="${NVKECTL:-nvkectl}"
 # user can read, never a shared temp directory, and is removed on exit.
 STATE_DIR="${NVKE_STATE_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/nvke}"
 SCRATCH=""
+# The directory a template item renders into while its manifests are applied.
+TEMPLATE_OUT=""
+# cleanup removes the render scratch and a template item's render however
+# this script ends: a die, a failed render, a signal. Both hold credentials.
+cleanup() {
+  [[ -z "${SCRATCH}" ]] || rm -rf "${SCRATCH}"
+  [[ -z "${TEMPLATE_OUT}" ]] || rm -rf "${TEMPLATE_OUT}"
+}
+trap cleanup EXIT
 VALUES_FOR=()
 DEPLOY_PATH=""
 # CTR imports images into the node's containerd for a deploy path rendered
@@ -138,17 +147,19 @@ apply_manifest_item() {
 #
 # The output goes to a temp directory rather than over the source: the tree may
 # be a read-only extraction of a published artifact, and what is rendered holds
-# credentials. Removed as soon as it is applied.
+# credentials. Removed as soon as it is applied, and by on_exit when the render
+# or the apply fails, so a half-rendered Secret does not stay behind.
 render_template_item() {
-  local dir="$1" item="$2" out
+  local dir="$1" item="$2"
   [[ -n "${CONFIG}" ]] || die "item ${item} is type template, which needs --config <BootstrapConfig json>.
 Its .yaml.tmpl files render against that context; see
 docs/site-bootstrap/deploy-repository.md for the field names."
-  out="$(mktemp -d "${TMPDIR:-/tmp}/nvke-deploy.XXXXXX")"
-  "${NVKECTL}" render template-item --config "${CONFIG}" --item "${dir}" --out "${out}" >/dev/null ||
+  TEMPLATE_OUT="$(mktemp -d "${TMPDIR:-/tmp}/nvke-deploy.XXXXXX")"
+  "${NVKECTL}" render template-item --config "${CONFIG}" --item "${dir}" --out "${TEMPLATE_OUT}" >/dev/null ||
     die "item ${item}: cannot render its templates"
-  apply_manifest_item "${out}"
-  rm -rf "${out}"
+  apply_manifest_item "${TEMPLATE_OUT}"
+  rm -rf "${TEMPLATE_OUT}"
+  TEMPLATE_OUT=""
 }
 
 # wait_for_requires blocks on the preconditions a phase declares but the chart
@@ -331,8 +342,6 @@ render_deploy_path() {
   local base="${STATE_DIR}/renders"
   (umask 077 && mkdir -p "${base}") || die "cannot create ${base}; NVKE_STATE_DIR names the state directory"
   SCRATCH="$(mktemp -d "${base}/install.XXXXXX")"
-  # Removed however this script ends: a die, a failed render, a signal.
-  trap 'rm -rf "${SCRATCH}"' EXIT
   log "rendering ${DEPLOY_PATH}"
   "${NVKECTL}" "${args[@]}" --out "${SCRATCH}/rendered" || die "the render failed"
   DEPLOY_PATH="${SCRATCH}/rendered"
@@ -387,6 +396,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+command -v "${NVKECTL}" >/dev/null 2>&1 || die "nvkectl reads the deploy path; set NVKECTL or put it on PATH (make -C cli build)"
+# An nvkectl from before the deploy path reader moved into it lists no such
+# command; say so here instead of failing on the first item as a parse error.
+# The help is captured, not piped into grep: grep -q closes the pipe on its
+# first match, and under pipefail the SIGPIPE nvkectl then takes is a failure.
+[[ "$("${NVKECTL}" inspect --help 2>/dev/null)" == *deploy-path* ]] ||
+  die "${NVKECTL} has no 'inspect deploy-path'; the executor reads the deploy path through it, so nvkectl must come from the same release as deploy/"
 [[ -z "${RUN_DIR}" || -n "${RELEASE}" ]] || die "--nvkr-run-dir holds a release's artifacts; pass --release"
 command -v "${NVKECTL}" >/dev/null 2>&1 || die "nvkectl reads the deploy path; set NVKECTL or put it on PATH (make -C cli build)"
 [[ -z "${RELEASE}" || -n "${SITESPEC}" ]] || die "--release needs --sitespec: the site spec names the architecture"

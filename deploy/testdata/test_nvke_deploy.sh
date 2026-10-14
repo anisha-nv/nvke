@@ -163,7 +163,7 @@ expect "render reports the images" "^images: nvkr.local/nvke/capnico-controller-
 expect "render says where a missing chart comes from" '^nktp: nktp is not in the release; the chart comes from the deploy path or its repository$' "${out}"
 [[ -f "${rendered}/charts/temporal/temporal-${d_temporal#sha256:}.tgz" ]] && pass "the temporal archive is in the rendered tree" || fail "temporal archive missing"
 [[ "$(cat "${rendered}/charts/temporal/temporal-${d_temporal#sha256:}.tgz")" == "not really a chart" ]] && pass "the archive is the layout's blob" || fail "archive content"
-grep -q '^  path: charts/temporal/temporal-' "${rendered}/temporal/release.yaml" && pass "temporal release.yaml points at the archive" || fail "temporal release.yaml"
+grep -q '^  path: "charts/temporal/temporal-' "${rendered}/temporal/release.yaml" && pass "temporal release.yaml points at the archive" || fail "temporal release.yaml"
 grep -q '^  repository: https://go.temporal.io' "${NICO}/temporal/release.yaml" && pass "the committed release.yaml is untouched" || fail "committed temporal release.yaml changed"
 [[ ! -e "${NICO}/charts" && ! -e "${NICO}/images.txt" ]] && pass "nothing was written into the committed deploy path" || fail "committed deploy path written"
 grep -q "^nvkr.local/nvke/cwe@${d_cwe}	${packages}/cwe$" "${rendered}/images.txt" && pass "images.txt names the cwe layout" || fail "images.txt: $(cat "${rendered}/images.txt")"
@@ -237,7 +237,24 @@ out="$(NVKE_STATE_DIR="${state}" bash "${EXECUTOR}" install --deploy-path "${NIC
 [[ -z "$(ls -A "${renders}" 2>/dev/null)" ]] && pass "a failed render leaves no scratch behind" || fail "scratch left after a failed render: $(ls -A "${renders}")"
 out="$(NVKECTL=/nonexistent/nvkectl bash "${EXECUTOR}" install --deploy-path "${NICO}" --sitespec "${WORK}/site/sitespec.yaml" --dry-run 2>&1)" && fail "render without nvkectl exited 0"
 expect "a missing nvkectl is named" 'nvkectl reads the deploy path' "${out}"
-out="$(bash "${EXECUTOR}" install --deploy-path "${NICO}" --release "${WORK}/local.json" --dry-run 2>&1)" && fail "release without sitespec exited 0"
+# An nvkectl from before the deploy path reader moved into it is named as
+# such, before any item is read.
+old="${WORK}/old-nvkectl"
+mkdir -p "${old}"
+printf '#!/usr/bin/env bash\n[[ "$1" == inspect && "$2" == --help ]] && { echo "  nvkr-release"; exit 0; }\necho "unknown command" >&2\nexit 1\n' >"${old}/nvkectl"
+chmod +x "${old}/nvkectl"
+out="$(NVKECTL="${old}/nvkectl" bash "${EXECUTOR}" install --deploy-path "${NICO}" --config "${CONFIG}" --dry-run 2>&1)" && fail "install with an old nvkectl exited 0"
+expect "an nvkectl without inspect deploy-path is named" "has no 'inspect deploy-path'" "${out}"
+reject "nothing is read through the old nvkectl" 'cannot parse' "${out}"
+# A template render that fails leaves nothing behind: the EXIT handler
+# removes the render scratch, not only a successful apply.
+tmp="${WORK}/template-tmp"
+mkdir -p "${tmp}"
+printf '{"Nico": {"Endpoint": "https://nico.example", "OrgID": "", "Token": "t", "APIName": "forge"}}\n' >"${WORK}/empty-config.json"
+out="$(TMPDIR="${tmp}" bash "${EXECUTOR}" install --deploy-path "${NICO}" --config "${WORK}/empty-config.json" --dry-run 2>&1)" && fail "install with an empty config value exited 0"
+expect "the failed template render is named" 'cannot render its templates' "${out}"
+[[ -z "$(ls -A "${tmp}")" ]] && pass "a failed template render leaves no scratch behind" || fail "scratch left after a failed template render: $(ls -A "${tmp}")"
+out="$(bash "${EXECUTOR}" apply --deploy-path "${NICO}" --release "${WORK}/local.json" --dry-run 2>&1)" && fail "release without sitespec exited 0"
 expect "a release without the site spec is refused" 'release needs --sitespec' "${out}"
 
 # A parser failure stops the install before anything is applied.
