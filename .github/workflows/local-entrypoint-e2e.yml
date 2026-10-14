@@ -173,6 +173,16 @@ jobs:
           raise_minimum fs.inotify.max_user_instances 1024
           raise_minimum fs.inotify.max_user_watches 1048576
 
+      # Pins are read with `make print-*`. ubuntu-latest and the ARC image
+      # both ship make; install it when they do not, so a fork on a minimal
+      # runner can run this job without rebuilding that image.
+      - name: Install make
+        run: |
+          command -v make >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq make
+          }
+
       # Version pins come from make/versions.mk, the same source backend-e2e.yml
       # reads, so the two lanes cannot install different tools.
       - name: Read pinned tool versions
@@ -227,6 +237,18 @@ jobs:
           tar -xzf "${tmp}/tilt.tgz" -C "${tmp}" tilt
           sudo install -m 0755 "${tmp}/tilt" /usr/local/bin/tilt
           tilt version
+
+      # Tilt's readiness probes exec `nc -z`. netcat-openbsd has -z;
+      # netcat-traditional satisfies `command -v nc` and then never passes.
+      # ubuntu-latest and the ARC image ship the openbsd one; install it
+      # when a fork's runner does not.
+      - name: Install netcat
+        run: |
+          if ! { nc -h 2>&1 || true; } | grep -q -- -z; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq netcat-openbsd
+          fi
+          { nc -h 2>&1 || true; } | grep -q -- -z
 
       - name: Run the local entrypoint
         run: ./hack/local-backend-e2e.sh

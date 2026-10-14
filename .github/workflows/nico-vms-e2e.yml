@@ -188,6 +188,22 @@ jobs:
           cp -R "${source_dir}/." "${CAPNICO_SOURCE_DIR}/"
           chmod -R u+w "${CAPNICO_SOURCE_DIR}"
 
+      # Pins are read with `make print-*`. ubuntu-latest and the ARC image
+      # both ship make; install it when they do not, so a fork on a minimal
+      # runner can run this job without rebuilding that image.
+      - name: Install make
+        run: |
+          command -v make >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq make
+          }
+
+      # nico-vms-e2e.sh resolves the node image with `gh api`. setup-gh pins
+      # the CLI, so a missing or older gh on a fork's runner is an install
+      # failure here rather than "no os-image published".
+      - name: Set up gh
+        uses: ./.github/actions/setup-gh
+
       - name: Read pinned tool versions
         id: versions
         run: |

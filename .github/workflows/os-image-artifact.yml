@@ -334,9 +334,9 @@ jobs:
             go.work.sum
             **/go.sum
 
-      # The arm64 ARC scale-set image has no make; the EC2 fleet it replaced
-      # did. Every step from here on shells out to it, so install it before
-      # the first one rather than with the QEMU packages further down.
+      # Pins are read with `make print-*`. ubuntu-latest and the ARC image
+      # both ship make; install it when they do not, so a fork on a minimal
+      # runner can run this job without rebuilding that image.
       - name: Install make
         run: |
           command -v make >/dev/null || {
