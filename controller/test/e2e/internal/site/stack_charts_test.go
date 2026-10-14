@@ -25,8 +25,8 @@ import (
 // these catch a value the charts do not read, which on a live site fails
 // silently or an hour in.
 //
-// They need bash, helm, nvkectl (NVKECTL_BIN, else PATH) and a clone
-// DeployPathRef resolves in.
+// They need bash, helm, nvkectl (NVKECTL_BIN, which make test sets, else
+// PATH) and a clone DeployPathRef resolves in.
 // The SPIRE chart is fetched from its repository and is skipped offline.
 
 // deployPath exports the pinned deploy path, or skips.
@@ -59,12 +59,14 @@ func deployPath(t *testing.T) string {
 }
 
 // nvkectlBinary resolves the nvkectl the executor and the template render run:
-// NVKECTL_BIN, as CI sets it, else PATH; or skips.
+// NVKECTL_BIN, which make test sets after building it, else PATH; or skips.
+// A set NVKECTL_BIN that names nothing is a failure, not a skip: that is a
+// build that did not happen, and a skip would hide it.
 func nvkectlBinary(t *testing.T) string {
 	t.Helper()
 	if bin := os.Getenv("NVKECTL_BIN"); bin != "" {
 		if _, err := os.Stat(bin); err != nil {
-			t.Skipf("NVKECTL_BIN: %v", err)
+			t.Fatalf("NVKECTL_BIN: %v", err)
 		}
 		return bin
 	}

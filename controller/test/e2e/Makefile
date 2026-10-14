@@ -13,7 +13,12 @@ include ../../../make/coverage.mk
 
 GO_TEST_FLAGS ?=
 
-.PHONY: fmt lint test
+# The chart tests run deploy/nvke-deploy.sh, which reads the deploy path
+# through nvkectl. It is built from this checkout before the tests run, as
+# deploy/Makefile does, so `make test` is self-contained here and in CI.
+NVKECTL_BIN ?= $(abspath ../../..)/cli/bin/nvkectl
+
+.PHONY: fmt lint test nvkectl
 
 fmt: ## Format Go files.
 	@$(GOLANGCI_LINT_RUN) fmt ./...
@@ -21,9 +26,12 @@ fmt: ## Format Go files.
 lint: ## Run golangci-lint. (run by the merge gate)
 	@$(GOLANGCI_LINT_RUN) run --timeout 10m --max-same-issues 0 --max-issues-per-linter 0 ./...
 
-test: ## Run tests. (run by the merge gate)
+nvkectl: ## Build nvkectl with the cli module's own build target.
+	$(MAKE) -C ../../../cli build
+
+test: nvkectl ## Run tests. (run by the merge gate)
 	@$(COVERAGE_MKDIR)
-	$(GO) test $(GO_TEST_FLAGS) $(GO_COVER_FLAGS) -skip '^TestE2E$$' . ./internal/...
+	NVKECTL_BIN=$(NVKECTL_BIN) $(GO) test $(GO_TEST_FLAGS) $(GO_COVER_FLAGS) -skip '^TestE2E$$' . ./internal/...
 
 # What the site lane (site_controller_test.go) stages onto its node. The image
 # archives are written outside the clone so they can't be committed.
