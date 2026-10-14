@@ -68,7 +68,10 @@ type bootstrapSiteOptions struct {
 	provisionedProviderImage string
 	// diagnosticsDir is where a failed bootstrap writes what the cluster had
 	// to say for itself, before it is torn down.
-	diagnosticsDir    string
+	diagnosticsDir string
+	// diagnostics is --diagnostics: diagnosticsOnFailure (the default) or
+	// diagnosticsAlways.
+	diagnostics       string
 	keepBootstrapKind bool
 
 	// disableMTLS stands the site up without SPIFFE, for bring-up debugging.
@@ -195,6 +198,9 @@ site spec file format.`,
 		envOrDefault("NVKECTL_BOOTSTRAP_DIAGNOSTICS_DIR", "cluster-diagnostics"),
 		"Directory a failed bootstrap writes cluster diagnostics to before tearing the cluster down. "+
 			"Overrides NVKECTL_BOOTSTRAP_DIAGNOSTICS_DIR.")
+	cmd.Flags().StringVar(&opts.diagnostics, "diagnostics", diagnosticsOnFailure,
+		"When to collect cluster diagnostics: "+diagnosticsOnFailure+" or "+diagnosticsAlways)
+	_ = cmd.Flags().MarkHidden("diagnostics")
 	cmd.Flags().BoolVar(&opts.disableMTLS, "disable-mtls", false,
 		"Stand the site up without SPIFFE: no SPIRE, and the controller dials node agents in plaintext. "+
 			"The agents must be running with --disable-mtls too. Development only.")
@@ -225,6 +231,15 @@ func bootstrapSettings() []string {
 	return names
 }
 
+// The values of --diagnostics.
+const (
+	// diagnosticsOnFailure collects cluster diagnostics only when bootstrap fails.
+	diagnosticsOnFailure = "failure"
+	// diagnosticsAlways also collects them when bootstrap succeeds, and fails the
+	// command if the bundle still holds a credential. For tests of the bundle.
+	diagnosticsAlways = "always"
+)
+
 // cleanupTimeout bounds each post-failure cleanup step. The steps run on a
 // context detached from the command's, so they need a stop of their own.
 const cleanupTimeout = 2 * time.Minute
@@ -233,6 +248,11 @@ func runBootstrapSite(ctx context.Context, out io.Writer, opts *bootstrapSiteOpt
 	logger := slog.Default().With("component", "bootstrap-site")
 	for _, s := range envalias.Deprecated(bootstrapSettings()...) {
 		logger.Warn(s.Warning(), "deprecated", s.Old, "replacement", s.New)
+	}
+	switch opts.diagnostics {
+	case "", diagnosticsOnFailure, diagnosticsAlways:
+	default:
+		return fmt.Errorf("--diagnostics must be %q or %q, not %q", diagnosticsOnFailure, diagnosticsAlways, opts.diagnostics)
 	}
 
 	// Step 1: load and validate the sitespec. Fail fast on any problem.
@@ -345,21 +365,34 @@ func runBootstrapSite(ctx context.Context, out io.Writer, opts *bootstrapSiteOpt
 		// Collect diagnostics before anything is torn down: this cluster is
 		// removed on every exit path, so this is the only moment the evidence
 		// still exists. Only on failure — a successful bootstrap has nothing
-		// to explain.
+		// to explain — unless --diagnostics=always asks for the bundle anyway.
 		// Cleanup runs on the cancellation path too: a SIGINT during the
 		// deploy cancels ctx, and both runners exec through
 		// exec.CommandContext, so reusing ctx here would skip the diagnostics
 		// and leave the Kind cluster standing to block the next bootstrap.
 		// Each step gets its own bounded context detached from ctx, so slow
 		// diagnostics cannot eat the deletion's budget.
-		if err != nil && !handedOver {
+		if (err != nil && !handedOver) || opts.diagnostics == diagnosticsAlways {
 			diagnosticsCtx, cancelDiagnostics := context.WithTimeout(
 				context.WithoutCancel(ctx), cleanupTimeout,
 			)
 			dir := opts.diagnosticsDir
-			logger.Info("bootstrap failed; collecting cluster diagnostics", "dir", dir)
-			controllerdeploy.New(opts.cweRunner, logger).
-				DumpDiagnostics(diagnosticsCtx, cluster.KubeconfigPath, dir)
+			if err != nil {
+				logger.Info("bootstrap failed; collecting cluster diagnostics", "dir", dir)
+			} else {
+				logger.Info("collecting cluster diagnostics (--diagnostics=always)", "dir", dir)
+			}
+			if dumpErr := controllerdeploy.New(opts.cweRunner, logger).
+				DumpDiagnostics(diagnosticsCtx, cluster.KubeconfigPath, dir); dumpErr != nil {
+				// A bootstrap that already failed keeps its own error. One that
+				// succeeded fails, so a bundle with a credential in it is not
+				// mistaken for a clean run.
+				if err == nil {
+					err = dumpErr
+				} else {
+					logger.Error("the diagnostics may hold a credential", "err", dumpErr)
+				}
+			}
 			cancelDiagnostics()
 		}
 

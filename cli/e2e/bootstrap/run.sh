@@ -24,6 +24,12 @@
 #   5. Traefik serves a whoami Deployment on that cluster: hosts that already
 #      existed now serve traffic like any other cluster.
 #
+# Stage 2 runs `bootstrap site --diagnostics=always`, which also collects the
+# cluster diagnostics on success, scrubs them and checks the result, so the real
+# bundle is tested on every run and not only on a failed one. A credential left
+# in it fails the command. The EXIT trap then checks the bundle once more, to
+# cover the host files this script adds to it after nvkectl has exited.
+#
 # Everything created is registered for teardown as it is created, and the EXIT
 # trap runs those registrations in reverse, whatever the exit. A failing exit
 # first collects diagnostics into NVKECTL_BOOTSTRAP_DIAGNOSTICS_DIR.
@@ -164,6 +170,25 @@ cleanup() {
     eval "${DEFERRED[$i]}" || true
   done
 
+  # The bundle is uploaded when the run fails. nvkectl scrubbed what it wrote,
+  # but collect_diagnostics adds host files after nvkectl has exited, so a
+  # generated password in a database URL is looked for once more, by shape, and
+  # any file holding one is deleted so it cannot be uploaded. A password is 32
+  # hex digits, which is what nvkectl generates.
+  local leaked=()
+  if [ -d "${DIAGNOSTICS_DIR}" ]; then
+    while IFS= read -r file; do
+      leaked+=("${file}")
+    done < <(grep -rEl 'postgres(ql)?://[^:/@[:space:]"]+:[0-9a-f]{32}@' "${DIAGNOSTICS_DIR}" 2>/dev/null || true)
+  fi
+  if [ "${#leaked[@]}" -gt 0 ]; then
+    log "FAIL: a generated password is in ${#leaked[@]} diagnostics file(s); they are deleted, not uploaded:"
+    for file in "${leaked[@]}"; do
+      log "  ${file}"
+      rm -f -- "${file}"
+    done
+  fi
+
   # Same cause as the KUBECONFIG scratch path above: under `sudo -E` nvkectl
   # writes this bundle as root, and the CI step that uploads it runs as the
   # normal user, which cannot traverse a root-owned 0750 directory. Hand
@@ -175,6 +200,10 @@ cleanup() {
 
   rm -f "${TENANT_KUBECONFIG}" "${ETCD_KEY_FILE}" "${BOOTSTRAP_LOG}"
   rm -rf "${KUBECONFIG_DIR}" "${CNI_BUNDLE_DIR}" "${BGP_RENDER_DIR}"
+  # A leak turns a passing run red; a run that already failed stays failed.
+  if [ "${#leaked[@]}" -gt 0 ] && [ "${status}" -eq 0 ]; then
+    exit 1
+  fi
 }
 nodes_started=false
 trap cleanup EXIT
@@ -508,7 +537,7 @@ fi
 # leftover from an interrupted run has to go first.
 rm -f "${ETCD_KEY_FILE}"
 
-log "running: nvkectl bootstrap site -f ${RENDERED_SITESPEC} --keep-bootstrap-cluster --timeout 15m" \
+log "running: nvkectl bootstrap site -f ${RENDERED_SITESPEC} --keep-bootstrap-cluster --diagnostics=always --timeout 15m" \
   "(NVKECTL_CONTROLLER_IMAGE=${NVKECTL_CONTROLLER_IMAGE}," \
   "NVKECTL_CAPI_PROVISIONED_IMAGE=${NVKECTL_CAPI_PROVISIONED_IMAGE})"
 
@@ -523,7 +552,7 @@ defer teardown_bootstrap_cluster
 # kind, nerdctl and helm it drives as one group; nvkectl does not forward
 # signals to its children.
 setsid "${NVKECTL}" bootstrap site -f "${RENDERED_SITESPEC}" --keep-bootstrap-cluster \
-  --timeout 15m --kubeconfig-out "${TENANT_KUBECONFIG}" \
+  --diagnostics=always --timeout 15m --kubeconfig-out "${TENANT_KUBECONFIG}" \
   --encryption-key-out "${ETCD_KEY_FILE}" >"${BOOTSTRAP_LOG}" 2>&1 &
 bootstrap_pid=$!
 
@@ -666,6 +695,15 @@ if [ ! -s "${TENANT_KUBECONFIG}" ]; then
   fail "no kubeconfig was written to ${TENANT_KUBECONFIG}"
 fi
 log "PASS: bootstrap site created the site cluster through the controller API"
+
+# --diagnostics=always has to have run, or the check on the bundle is vacuous:
+# the log says the bundle was checked, and the bundle is there to be checked.
+if ! grep -q "no credential found in the diagnostics" <<<"${output}"; then
+  fail "bootstrap site did not report checking its diagnostics for credentials"
+fi
+[ -s "${DIAGNOSTICS_DIR}/all-resources.txt" ] ||
+  fail "bootstrap site wrote no diagnostics bundle to ${DIAGNOSTICS_DIR}"
+log "PASS: the diagnostics bundle was collected and holds no credential"
 
 # The controller reached this point by answering /readyz through its Service
 # and the host through its external NodePort. What that does not show is that

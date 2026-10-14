@@ -711,7 +711,9 @@ func TestDumpDiagnostics(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "cluster-diagnostics")
 	runner := &fakeRunner{outputs: []fakeOutput{{output: "collected"}}}
 
-	New(runner, nil).DumpDiagnostics(context.Background(), "/tmp/kubeconfig", dir)
+	if err := New(runner, nil).DumpDiagnostics(context.Background(), "/tmp/kubeconfig", dir); err != nil {
+		t.Errorf("DumpDiagnostics = %v, want nil: nothing in the bundle holds a credential", err)
+	}
 
 	var dumped bool
 	for _, call := range runner.calls {
@@ -737,7 +739,9 @@ func TestDumpDiagnostics_SurvivesAFailingCluster(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "cluster-diagnostics")
 	runner := &fakeRunner{outputs: []fakeOutput{{output: "unreachable", err: errors.New("exit status 1")}}}
 
-	New(runner, nil).DumpDiagnostics(context.Background(), "/tmp/kubeconfig", dir)
+	if err := New(runner, nil).DumpDiagnostics(context.Background(), "/tmp/kubeconfig", dir); err != nil {
+		t.Errorf("DumpDiagnostics = %v, want nil: a failing cluster leaves a clean bundle", err)
+	}
 
 	body, err := os.ReadFile(filepath.Join(dir, "all-resources.txt"))
 	if err != nil {
@@ -1399,7 +1403,9 @@ func TestDumpDiagnostics_ScrubsCredentials(t *testing.T) {
 	redact.RegisterSecret(fakeValue)
 	dir := filepath.Join(t.TempDir(), "cluster-diagnostics")
 
-	New(&dumpingRunner{fakeRunner: &fakeRunner{}}, nil).DumpDiagnostics(context.Background(), "/tmp/kubeconfig", dir)
+	if err := New(&dumpingRunner{fakeRunner: &fakeRunner{}}, nil).DumpDiagnostics(context.Background(), "/tmp/kubeconfig", dir); err != nil {
+		t.Errorf("DumpDiagnostics = %v, want nil: the scrub masked every credential", err)
+	}
 
 	for file, mustNotHold := range map[string]string{
 		"pods.json":  fakeValue,        // a registered password, in a URL
@@ -1439,5 +1445,47 @@ func TestHelm_MasksARegisteredCredentialInAnArgument(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--install demo chart") {
 		t.Errorf("the rest of the command should stay readable:\n%s", err)
+	}
+}
+
+// leftoverRunner makes `kubectl cluster-info dump` write a file holding a form
+// of the credential that the scrub does not mask.
+type leftoverRunner struct{ *fakeRunner }
+
+func (r leftoverRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	out, err := r.fakeRunner.Run(ctx, name, args...)
+	for i, a := range args {
+		if a == "--output-directory" && i+1 < len(args) {
+			body := base64.StdEncoding.EncodeToString([]byte("postgresql://u:" + fakeValue + "@h/db"))
+			if wErr := os.WriteFile(filepath.Join(args[i+1], "secret.txt"), []byte("data: "+body), 0o600); wErr != nil {
+				return out, wErr
+			}
+		}
+	}
+	return out, err
+}
+
+func TestDumpDiagnostics_ReportsWhatItCouldNotScrub(t *testing.T) {
+	redact.RegisterSecret(fakeValue)
+	dir := filepath.Join(t.TempDir(), "cluster-diagnostics")
+
+	err := New(leftoverRunner{&fakeRunner{}}, nil).DumpDiagnostics(context.Background(), "/tmp/kubeconfig", dir)
+	if err == nil {
+		t.Fatal("expected the base64 form, which the scrub does not mask, to be reported")
+	}
+	if !strings.Contains(err.Error(), "secret.txt (base64)") {
+		t.Errorf("error = %q, want the file and its form", err)
+	}
+	if strings.Contains(err.Error(), fakeValue) {
+		t.Errorf("the error carries the credential: %q", err)
+	}
+}
+
+func TestDumpDiagnostics_ReturnsNilForACleanBundle(t *testing.T) {
+	redact.RegisterSecret(fakeValue)
+	dir := filepath.Join(t.TempDir(), "cluster-diagnostics")
+
+	if err := New(&dumpingRunner{fakeRunner: &fakeRunner{}}, nil).DumpDiagnostics(context.Background(), "/tmp/kubeconfig", dir); err != nil {
+		t.Errorf("DumpDiagnostics = %v, want nil once the scrub has masked the credentials", err)
 	}
 }

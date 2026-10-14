@@ -30,6 +30,7 @@ import (
 	bootstrapengine "github.com/dsx-ai-factory/nvke/cli/internal/bootstrap/engine"
 	"github.com/dsx-ai-factory/nvke/cli/internal/bootstrap/manifest"
 	"github.com/dsx-ai-factory/nvke/cli/internal/bootstrap/sitespec"
+	"github.com/dsx-ai-factory/nvke/cli/internal/redact"
 	api "github.com/dsx-ai-factory/nvke/controller/api"
 )
 
@@ -958,6 +959,138 @@ func TestRunBootstrapSite_DiagnosticsOnlyOnRealFailures(t *testing.T) {
 			t.Errorf("no diagnostics written for a real failure: %v", statErr)
 		}
 	})
+}
+
+// bundleValue stands in for a credential. It is deliberately plain.
+const bundleValue = "aaaa-bbbb-cccc"
+
+// dumpWritingRunner makes `kubectl cluster-info dump` write a file into the
+// output directory, as the cluster would, so a test can put something in the
+// diagnostics bundle.
+type dumpWritingRunner struct {
+	next controllerdeploy.CommandRunner
+	file string
+	body string
+}
+
+func (r dumpWritingRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	for i, a := range args {
+		if name == "kubectl" && a == "--output-directory" && i+1 < len(args) {
+			if err := os.MkdirAll(args[i+1], 0o750); err != nil {
+				return "", err
+			}
+			if err := os.WriteFile(filepath.Join(args[i+1], r.file), []byte(r.body), 0o600); err != nil {
+				return "", err
+			}
+		}
+	}
+	return r.next.Run(ctx, name, args...)
+}
+
+func successfulBootstrapOptions(t *testing.T, dir string, runner controllerdeploy.CommandRunner) *bootstrapSiteOptions {
+	t.Helper()
+	return &bootstrapSiteOptions{
+		siteSpec:            writeSiteSpec(t, validSiteSpec),
+		diagnosticsDir:      dir,
+		diagnostics:         diagnosticsAlways,
+		bootstrapRunner:     fakeBootstrapRunner{},
+		cweRunner:           runner,
+		kubeconfigOut:       filepath.Join(t.TempDir(), "nvke-site.kubeconfig"),
+		lookPath:            runtimeOnPath,
+		dialContext:         refuseDial,
+		untaintControlPlane: skipUntaint,
+		dumpSpireEntries: func(context.Context, string, string) (int, error) {
+			return 0, nil
+		},
+		encryptionKeyOut: filepath.Join(t.TempDir(), "key.json"),
+	}
+}
+
+// TestRunBootstrapSite_DiagnosticsAlways covers --diagnostics=always, which
+// collects and checks the bundle on a run that succeeded.
+func TestRunBootstrapSite_DiagnosticsAlways(t *testing.T) {
+	setBootstrapEnv(t)
+	redact.RegisterSecret(bundleValue)
+	leftover := base64.StdEncoding.EncodeToString([]byte("postgresql://u:" + bundleValue + "@h/db"))
+
+	t.Run("a successful bootstrap writes and checks a bundle", func(t *testing.T) {
+		startFakeCWEAPI(t, true)
+		dir := filepath.Join(t.TempDir(), "cluster-diagnostics")
+
+		if err := runBootstrapSite(context.Background(), io.Discard, successfulBootstrapOptions(t, dir, fakeCWERunner{})); err != nil {
+			t.Fatalf("runBootstrapSite: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "helm-releases.txt")); err != nil {
+			t.Errorf("no bundle was written: %v", err)
+		}
+	})
+
+	t.Run("a credential the scrub cannot remove fails a bootstrap that succeeded", func(t *testing.T) {
+		startFakeCWEAPI(t, true)
+		dir := filepath.Join(t.TempDir(), "cluster-diagnostics")
+		runner := dumpWritingRunner{next: fakeCWERunner{}, file: "secret.txt", body: "data: " + leftover}
+
+		err := runBootstrapSite(context.Background(), io.Discard, successfulBootstrapOptions(t, dir, runner))
+		if err == nil {
+			t.Fatal("expected the bundle's credential to fail the command")
+		}
+		if !strings.Contains(err.Error(), "secret.txt (base64)") {
+			t.Errorf("error = %q, want it to name the file and its form", err)
+		}
+		if strings.Contains(err.Error(), bundleValue) || strings.Contains(err.Error(), leftover) {
+			t.Errorf("the error carries the credential: %q", err)
+		}
+	})
+
+	t.Run("a bootstrap that failed keeps its own error", func(t *testing.T) {
+		t.Setenv("NVKECTL_CONTROLLER_READY_TIMEOUT", "1s")
+		dir := filepath.Join(t.TempDir(), "cluster-diagnostics")
+		runner := dumpWritingRunner{next: unhealthyCWERunner{}, file: "secret.txt", body: "data: " + leftover}
+		opts := successfulBootstrapOptions(t, dir, runner)
+
+		err := runBootstrapSite(context.Background(), io.Discard, opts)
+		if err == nil {
+			t.Fatal("expected a real failure")
+		}
+		if strings.Contains(err.Error(), "may hold a credential") {
+			t.Errorf("the diagnostics error replaced the bootstrap's own: %q", err)
+		}
+	})
+
+	t.Run("the default mode still writes nothing on success", func(t *testing.T) {
+		startFakeCWEAPI(t, true)
+		dir := filepath.Join(t.TempDir(), "cluster-diagnostics")
+		opts := successfulBootstrapOptions(t, dir, fakeCWERunner{})
+		opts.diagnostics = ""
+
+		if err := runBootstrapSite(context.Background(), io.Discard, opts); err != nil {
+			t.Fatalf("runBootstrapSite: %v", err)
+		}
+		if _, err := os.Stat(dir); err == nil {
+			t.Error("a successful bootstrap should leave no diagnostics behind")
+		}
+	})
+
+	t.Run("an unknown value is rejected", func(t *testing.T) {
+		opts := successfulBootstrapOptions(t, t.TempDir(), fakeCWERunner{})
+		opts.diagnostics = "sometimes"
+
+		err := runBootstrapSite(context.Background(), io.Discard, opts)
+		if err == nil || !strings.Contains(err.Error(), `--diagnostics must be "failure" or "always"`) {
+			t.Errorf("error = %v, want the allowed values named", err)
+		}
+	})
+}
+
+// The flag is for tests of the bundle, so it stays out of the help.
+func TestBootstrapSiteDiagnosticsFlagIsHidden(t *testing.T) {
+	flag := newBootstrapSiteCmd().Flags().Lookup("diagnostics")
+	if flag == nil || !flag.Hidden {
+		t.Fatalf("--diagnostics = %+v, want a hidden flag", flag)
+	}
+	if flag.DefValue != diagnosticsOnFailure {
+		t.Errorf("default = %q, want %q", flag.DefValue, diagnosticsOnFailure)
+	}
 }
 
 // unhealthyCWERunner deploys fine but never reports healthy, which is the

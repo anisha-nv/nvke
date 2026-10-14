@@ -4,6 +4,8 @@
 package redact
 
 import (
+	"encoding/base64"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,5 +145,119 @@ func TestTree_ReportsARootThatIsNotADirectory(t *testing.T) {
 		if failed := Tree(root); len(failed) != 1 || failed[0] != root {
 			t.Errorf("Tree(%s) = %v, want just the root", root, failed)
 		}
+	}
+}
+
+func TestVerify_FindsACredentialInEveryForm(t *testing.T) {
+	const (
+		plain   = fakeValue
+		special = "pa ss/word+1234" // URL-escapes differently as a query and as a path
+		urlSafe = "???>>>???>>>"    // base64 of it uses + and /
+	)
+	for _, v := range []string{plain, special, urlSafe} {
+		RegisterSecret(v)
+	}
+	b64 := base64.StdEncoding.EncodeToString
+	b64url := base64.URLEncoding.EncodeToString
+
+	for _, tc := range []struct {
+		name, content, form string
+	}{
+		{"raw", "env DB=" + plain, "raw"},
+		{"base64 of the whole value", "data: " + b64([]byte(plain)), "base64"},
+		{"base64 of a longer string, value at offset 0", "data: " + b64([]byte(plain+"@host/db")), "base64"},
+		{"base64 of a longer string, value at offset 1", "data: " + b64([]byte("x"+plain+"y")), "base64"},
+		{"base64 of a longer string, value at offset 2", "data: " + b64([]byte("xy"+plain+"!")), "base64"},
+		{"base64 of a URL holding the value", "data: " + b64([]byte("postgresql://u:"+plain+"@h/db")), "base64"},
+		{"URL-safe base64", "data: " + b64url([]byte("pre-"+urlSafe+"-post")), "base64"},
+		{"query-escaped", "dsn=" + url.QueryEscape(special), "url-encoded"},
+		{"path-escaped", "dsn=" + url.PathEscape(special), "url-encoded"},
+		{"a password in a database URL nobody registered", "postgres://u:other-pw@h/db", "database URL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "sub", "f.txt")
+			write(t, path, tc.content)
+
+			found := Verify(dir)
+			if len(found) != 1 || found[0].Path != path || found[0].Form != tc.form {
+				t.Errorf("Verify = %v, want %s (%s)", found, path, tc.form)
+			}
+			if got := read(t, path); got != tc.content {
+				t.Errorf("Verify changed the file: %q", got)
+			}
+			for _, f := range found {
+				if strings.Contains(f.String(), plain) || strings.Contains(f.String(), special) {
+					t.Errorf("a finding carries the credential: %s", f)
+				}
+			}
+		})
+	}
+}
+
+func TestVerify_PassesCleanOutput(t *testing.T) {
+	RegisterSecret(fakeValue)
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "a.txt"), "installing postgres, then temporal")
+	write(t, filepath.Join(dir, "b.json"), `{"env":[{"name":"DATABASE_URL","valueFrom":{"secretKeyRef":{"name":"c-db"}}}]}`)
+	write(t, filepath.Join(dir, "c.txt"), "postgres://u:<redacted>@h/db")
+	write(t, filepath.Join(dir, "d.txt"), "short base64 look-alikes: YWFh Zm9v")
+
+	if found := Verify(dir); len(found) != 0 {
+		t.Errorf("Verify = %v, want nothing", found)
+	}
+}
+
+// A value too short to search for in encoded form would match unrelated text.
+func TestVerify_IgnoresEncodedFormsOfAShortValue(t *testing.T) {
+	RegisterSecret("abc")
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "a.txt"), base64.StdEncoding.EncodeToString([]byte("abc")))
+
+	if found := Verify(dir); len(found) != 0 {
+		t.Errorf("Verify = %v, want nothing", found)
+	}
+}
+
+func TestVerify_ReportsWhatItCannotRead(t *testing.T) {
+	skipIfRoot(t)
+	dir := t.TempDir()
+	hidden := filepath.Join(dir, "hidden")
+	write(t, filepath.Join(hidden, "x.txt"), "x")
+	locked := filepath.Join(dir, "locked.txt")
+	write(t, locked, "x")
+	for _, p := range []string{hidden, locked} {
+		if err := os.Chmod(p, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { _ = os.Chmod(hidden, 0o700) })
+
+	found := Verify(dir)
+	if len(found) != 2 {
+		t.Fatalf("Verify = %v, want the directory and the file", found)
+	}
+	for _, f := range found {
+		if f.Form != "unreadable" {
+			t.Errorf("%s: form = %q, want unreadable", f.Path, f.Form)
+		}
+	}
+}
+
+func TestVerify_FollowsASymlinkedRootAndReportsANonDirectory(t *testing.T) {
+	RegisterSecret(fakeValue)
+	target := filepath.Join(t.TempDir(), "real")
+	write(t, filepath.Join(target, "f.txt"), fakeValue)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	if found := Verify(link); len(found) != 1 || found[0].Form != "raw" {
+		t.Errorf("Verify(symlink) = %v, want the file behind it", found)
+	}
+
+	missing := filepath.Join(t.TempDir(), "missing")
+	if found := Verify(missing); len(found) != 1 || found[0].Path != missing || found[0].Form != "unreadable" {
+		t.Errorf("Verify(missing) = %v, want the root reported", found)
 	}
 }

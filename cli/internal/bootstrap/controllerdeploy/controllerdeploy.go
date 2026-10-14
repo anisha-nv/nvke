@@ -1089,10 +1089,15 @@ func (e *Engine) tenantKubeconfigOnce(ctx context.Context, kubeconfigPath, clust
 // Every step is best-effort. This runs on a path where something has already
 // gone wrong, and failing to collect diagnostics must not replace the original
 // error with one about diagnostics.
-func (e *Engine) DumpDiagnostics(ctx context.Context, kubeconfigPath, dir string) {
+//
+// DumpDiagnostics scrubs the registered credentials from what it wrote, then
+// checks the result. It returns an error naming each path that still holds a
+// credential or could not be read, and nil when the directory is clean or could
+// not be created. It never returns an error for a command that failed.
+func (e *Engine) DumpDiagnostics(ctx context.Context, kubeconfigPath, dir string) error {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		e.log.Warn("could not create the diagnostics directory", "dir", dir, "err", err)
-		return
+		return nil
 	}
 
 	if _, err := e.Runner.Run(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
@@ -1121,13 +1126,31 @@ func (e *Engine) DumpDiagnostics(ctx context.Context, kubeconfigPath, dir string
 		e.log.Warn("could not write a diagnostics file", "file", "helm-releases.txt", "err", err)
 	}
 
-	e.redactDiagnostics(dir)
+	return e.scrubDiagnostics(dir)
 }
 
-// redactDiagnostics masks credentials in everything DumpDiagnostics wrote. The
-// controller's pod spec carries the database URL, so the dump holds the password.
-func (e *Engine) redactDiagnostics(dir string) {
+// maxListedFindings bounds how many paths a scrub error names.
+const maxListedFindings = 10
+
+// scrubDiagnostics masks credentials in everything DumpDiagnostics wrote, then
+// verifies the result.
+func (e *Engine) scrubDiagnostics(dir string) error {
 	for _, path := range redact.Tree(dir) {
 		e.log.Warn("could not scrub part of the diagnostics; check it before sharing", "path", path)
 	}
+	found := redact.Verify(dir)
+	if len(found) == 0 {
+		e.log.Info("no credential found in the diagnostics", "dir", dir)
+		return nil
+	}
+	listed := make([]string, 0, maxListedFindings)
+	for i, f := range found {
+		if i == maxListedFindings {
+			listed = append(listed, fmt.Sprintf("and %d more", len(found)-maxListedFindings))
+			break
+		}
+		listed = append(listed, f.String())
+	}
+	return fmt.Errorf("controllerdeploy: the diagnostics in %s may hold a credential or could not be checked: %s",
+		dir, strings.Join(listed, ", "))
 }
