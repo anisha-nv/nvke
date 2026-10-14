@@ -79,7 +79,7 @@ All connections are TCP; traffic between the nodes of one cluster is not listed.
 |---|---|
 | NVKR build host | Linux AMD64 with Docker, Git, GNU Make, `jq` and the Go version NVKR pins. For the node OS image, also Kernel-based Virtual Machine (KVM) access, 8 CPUs, 10 GiB of memory and 64 GiB of free disk. |
 | Bootstrap host | Linux, run as root, with rootful `nerdctl` and containerd, `kind`, `helm`, `kubectl`, `clusterctl`, Go and GNU Make. Docker is not supported. It can be a management cluster node. |
-| Install host | `nvkectl`, `helm` v4.2.4, `kubectl`, `clusterctl` v1.13.6, `curl`, `python3` and `git`. It can be the bootstrap host. |
+| Install host | `nvkectl`, `helm` v4.2.4, `kubectl`, `clusterctl` v1.13.6, `curl` and `git`. It can be the bootstrap host. |
 | API workstation | `nvkectl`, `curl` and `jq`; with API authentication, also the `kubectl oidc-login` plugin and `python3`. |
 
 ### Identity provider

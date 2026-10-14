@@ -34,7 +34,7 @@ One line per finding, PASS, WARN, SKIP or FAIL with the fix, and a non-zero exit
 
 | Finding | What it checks |
 |---|---|
-| tools | `kubectl`, `helm`, `clusterctl`, `curl`, `python3` on `PATH`; `helm` at the pin in `make/tool-versions.mk`; `nvkectl` (`NVKECTL`, else `PATH`) |
+| tools | `kubectl`, `helm`, `clusterctl`, `curl` on `PATH`; `helm` at the pin in `make/tool-versions.mk`; `nvkectl` (`NVKECTL`, else `PATH`) |
 | checkout | `deploy/nico/nvke-deploy.yaml` and the controller and NKTP charts, which the executor installs from the tree |
 | Cluster API | `CAPI_VERSION` from `make/tool-versions.mk`; `clusterctl` at that version; not installed yet, installed at that version with its kubeadm providers, or a FAIL: another version, a digest-only image, or a core without the kubeadm providers |
 | site spec | `nvkectl validate sitespec` passes; the architecture is read for the node check |
@@ -57,7 +57,7 @@ The executor: it walks `nvke-deploy.yaml` and applies the items in list order. W
 | Type | What happens |
 |---|---|
 | `manifest` | every `.yaml` in the item directory, `kubectl apply --server-side`, in name order; a rendered `kustomization.yaml` is applied through `kubectl kustomize` |
-| `template` | rendered for the site by `nvkectl render`; with `--config`, rendered by `deploy/lib/render-template.py` against that BootstrapConfig JSON into a temporary directory, then applied like a manifest item |
+| `template` | rendered for the site by `nvkectl render`; with `--config`, rendered by `nvkectl render template-item` against that BootstrapConfig JSON into a temporary directory, then applied like a manifest item |
 | `helm` | one chart, one release, `helm upgrade --install --wait`; `release.yaml` names the chart, version, source, release name, namespace, values files, `setFile` entries and `requires` preconditions |
 
 A chart comes from `chart.path` (a checkout directory, `helm dependency build` first, or the archive a render put under `charts/`), else `chart.repository` at `chart.version`. Values apply in order: the item's own files, then the files a render adds (`site-values.yaml`, and `release-images.yaml` when the release carries the item's images), then every `--values-for`. `images.txt` in a rendered tree names the OCI layouts to import into the node's containerd before anything is applied; `CTR` names the import command (`sudo ctr`, or `docker exec -i <node> ctr` for a kind node).

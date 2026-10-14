@@ -194,7 +194,7 @@ func TestSBOMAgainstDeployPath(t *testing.T) {
 	t.Setenv(controller.EnvNamespace, name)
 	t.Setenv(controller.EnvService, name)
 	values := renderValues(t, assets)
-	dryRun, err := runTool(t, "bash", filepath.Join(assets, "deploy", "nvke-deploy.sh"), "apply",
+	dryRun, err := runTool(t, "bash", filepath.Join(assets, "deploy", "nvke-deploy.sh"), "install",
 		"--deploy-path", filepath.Join(assets, "deploy", "nico"),
 		"--config", filepath.Join(values, "bootstrap-config.json"),
 		"--values-for", "controller="+filepath.Join(values, "controller.yaml"),

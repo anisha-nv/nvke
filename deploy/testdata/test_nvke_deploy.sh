@@ -254,7 +254,7 @@ printf '{"Nico": {"Endpoint": "https://nico.example", "OrgID": "", "Token": "t",
 out="$(TMPDIR="${tmp}" bash "${EXECUTOR}" install --deploy-path "${NICO}" --config "${WORK}/empty-config.json" --dry-run 2>&1)" && fail "install with an empty config value exited 0"
 expect "the failed template render is named" 'cannot render its templates' "${out}"
 [[ -z "$(ls -A "${tmp}")" ]] && pass "a failed template render leaves no scratch behind" || fail "scratch left after a failed template render: $(ls -A "${tmp}")"
-out="$(bash "${EXECUTOR}" apply --deploy-path "${NICO}" --release "${WORK}/local.json" --dry-run 2>&1)" && fail "release without sitespec exited 0"
+out="$(bash "${EXECUTOR}" install --deploy-path "${NICO}" --release "${WORK}/local.json" --dry-run 2>&1)" && fail "release without sitespec exited 0"
 expect "a release without the site spec is refused" 'release needs --sitespec' "${out}"
 
 # A parser failure stops the install before anything is applied.
@@ -367,7 +367,7 @@ expect "the verdict carries the check's own name" '^check-site.sh: [0-9]+ findin
 # The executor refuses an unknown item type before it applies anything.
 mkdir -p "${WORK}/badpath/x"; printf 'items:\n  - {name: x, type: bogus}\n' >"${WORK}/badpath/nvke-deploy.yaml"; printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: x\n' >"${WORK}/badpath/x/a.yaml"
 out="$(bash "${EXECUTOR}" install --deploy-path "${WORK}/badpath" --dry-run 2>&1)" && fail "an unknown item type exited 0"
-expect "an unknown item type is refused by the parser" 'unrecognised:.*type: bogus' "${out}"
+expect "an unknown item type is refused by the parser" 'unknown type "bogus"' "${out}"
 reject "nothing is applied before the refusal" 'kubectl .*apply' "${out}"
 out="$(bash "${CHECK}" --kubeconfig "${WORK}/stub.kubeconfig" 2>&1)" && fail "check-site without --sitespec exited 0"
 expect "the site spec is required" '^usage: check-site.sh' "${out}"

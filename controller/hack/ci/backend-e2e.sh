@@ -44,7 +44,7 @@ DIAGNOSTICS_MARKER="${STATE_DIR}/SAFE_TO_UPLOAD"
 # lane has an inner runner, so the smoke drives the CLI inside it.
 NVKECTL_SMOKE="${NKE_E2E_NVKECTL_SMOKE:-false}"
 NVKECTL_SMOKE_RUNNER="${RUNNER_NAME}"
-# The stack lanes run deploy/nvke-deploy.sh apply inside the runner, and the
+# The stack lanes run deploy/nvke-deploy.sh install inside the runner, and the
 # executor reads the deploy path through nvkectl, so the binary is built and
 # staged whenever the stack is used, not only when the smoke test runs.
 STAGE_NVKECTL="false"

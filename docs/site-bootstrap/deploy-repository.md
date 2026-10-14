@@ -58,7 +58,7 @@ items:
 
 The list order is the install order. Items are applied one at a time, and a failed item stops the run. Nothing is auto-detected: an item that is not listed is not applied, and `nvkectl` and the executor's own parser both refuse an unknown type before anything is applied.
 
-The script reads the item list and an item's `release.yaml` through `deploy/lib/nvke-deploy-items.py`; `nvkectl render deploy-path` reads them through `cli/internal/deploypath`. Both accept the grammar shown here.
+The script reads the item list and an item's `release.yaml` through `nvkectl inspect deploy-path`, and the render reads them the same way, so `cli/internal/deploypath` is the one parser of this format.
 
 ## Item Types
 

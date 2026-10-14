@@ -19,7 +19,7 @@ The install is a short list of commands that you run in order. Each one stands o
 - You run the commands on a Linux host that reaches the management cluster's Kubernetes API, such as the bootstrap host. It has the `nvke/` checkout from the bootstrap, at the same release as `nvkectl`, and these tools on `PATH`:
   - `nvkectl`. The install reads the deploy path and renders it with it. `NVKECTL` names another binary.
   - `helm` `v4.2.4`. Helm 3 cannot install these charts.
-  - `clusterctl` `v1.13.6`, `kubectl`, `curl` and `python3`.
+  - `clusterctl` `v1.13.6`, `kubectl` and `curl`.
 
   The versions are the ones `make/tool-versions.mk` pins.
 - The management cluster's nodes reach the registries the release names and the images the charts, the CAPNICo manifest and Cluster API run. The host reaches `github.com` for `clusterctl init`, and `kubernetes-sigs.github.io`, `open-telemetry.github.io` and `prometheus-community.github.io` for NKTP's chart dependencies. An install from a local NVKR Run needs none of the registries.

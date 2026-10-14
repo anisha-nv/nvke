@@ -18,7 +18,7 @@ func TestRenderTemplateItem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(stdout, "rendered 4 templates of ") {
+	if !strings.HasPrefix(stdout, "rendered 3 templates of ") {
 		t.Errorf("stdout: %q", stdout)
 	}
 	secret, err := os.ReadFile(filepath.Join(out, "20-nico-credentials.yaml"))

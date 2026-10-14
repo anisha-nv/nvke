@@ -103,7 +103,7 @@ q() { printf '%q' "$1"; }
 
 # --- this machine ------------------------------------------------------------
 
-for tool in kubectl helm clusterctl curl python3; do
+for tool in kubectl helm clusterctl curl; do
   if command -v "${tool}" >/dev/null 2>&1; then
     check_pass "tool ${tool}: $(command -v "${tool}")"
   else
