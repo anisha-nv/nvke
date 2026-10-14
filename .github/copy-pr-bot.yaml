@@ -6,13 +6,34 @@ auto_sync_draft: true
 auto_sync_ready: true
 
 # Contributors whose pull requests the bot mirrors without a vetter's
-# `/ok to test`: the nvke-admin, nvke-maintainer and nvke-write rosters as of
-# 2026-09-12, including members whose dsx-ai-factory invitation is pending,
-# plus everyone with a commit or pull request here as of 2026-10-11.
+# `/ok to test`. A mirrored run is a `push` on a branch inside this repository,
+# so it carries full repo context and reaches the self-hosted runners -- every
+# entry here is an account that can execute code on them with no per-pull-request
+# human review. Keep the list minimal.
+#
+# Eligibility: a current member of the dsx-ai-factory organization who also holds
+# write, maintain or admin on this repository. Anyone else needs a maintainer's
+# `/ok to test <SHA>`, which is granted per-commit.
+#
+# This list does not maintain itself -- leavers and access changes are not
+# reflected until someone prunes it. To list entries that no longer qualify:
+#
+#   comm -23 \
+#     <(sed -n 's/^  - //p' .github/copy-pr-bot.yaml | sort) \
+#     <(comm -12 \
+#       <(gh api --paginate "orgs/dsx-ai-factory/members?per_page=100" \
+#           --jq '.[].login' | sort) \
+#       <(gh api --paginate "repos/dsx-ai-factory/nvke/collaborators?per_page=100" \
+#           --jq '.[] | select(.role_name=="write" or .role_name=="maintain"
+#                 or .role_name=="admin") | .login' | sort))
+#
+# Eligibility is necessary, not sufficient: being eligible does not mean an
+# account belongs here, so prune from this list rather than regenerating it.
+#
+# Last pruned 2026-10-14.
 additional_trustees:
   - abhay-krishna
   - abhinavmpandey08
-  - adityavenneti
   - aks02hay
   - anisha-nv
   - avasilevskii
@@ -29,18 +50,14 @@ additional_trustees:
   - echapman13
   - erstaples
   - g-gaston
-  - Ganiredi
   - glaguteta
   - harish-sampath
   - hulquest
   - iamkhaledh
   - j-griffith
-  - jaxesn
   - Jay-Madden
   - jdubs
   - jedimt
-  - jmmclean
-  - johnshults
   - jonathanmeier5
   - junshun
   - justinhopper
@@ -60,22 +77,18 @@ additional_trustees:
   - natherz97
   - naut-brian
   - nbhoomakkanavar
-  - newtonkishore-nv
   - nhammernik
   - njhensley
   - nvidiajeff
-  - odacremolbap
   - pbikki
   - pdmack
   - rbever-nvidia
   - rcompos
   - rorajani
-  - sithape2025
   - smalleni
   - srao-nv
   - srekhi93
   - stephliu-nv
-  - suket22
   - TerryHowe
   - tjrasche
   - vignesh-goutham
