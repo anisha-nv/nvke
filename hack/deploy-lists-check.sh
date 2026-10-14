@@ -2,6 +2,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Fail when an nvke-deploy.yaml item has no directory; deploy/nvke-deploy.sh dies there.
+#
+# This check is stricter than the parser on purpose. cli/internal/deploypath
+# reads any YAML the schema allows; the committed lists are written in one
+# shape, and this check holds them to it, so a list is never parsed loosely
+# into fewer items than it claims. The item name set is the parser's
+# (letters, digits, `-`, `_`, inner dots) and the type set is the one the
+# executor dispatches.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -9,8 +16,7 @@ status=0
 lists=0
 items=0
 # The list is one `items:` line followed by `  - {name: X, type: Y}` lines.
-# Any other line that is not blank or a comment is an error: a list that is
-# parsed loosely installs less than it claims.
+# Any other line that is not blank or a comment is an error.
 while IFS= read -r list; do
 	lists=$((lists + 1))
 	deploy_path="$(dirname "${list}")"
@@ -18,6 +24,11 @@ while IFS= read -r list; do
 	header=0
 	while IFS= read -r line || [[ -n "${line}" ]]; do
 		[[ "${line}" =~ ^[[:space:]]*(#|$) ]] && continue
+		if [[ "${line}" == *$'\r' ]]; then
+			echo "ERROR: ${list}: CRLF line ending: ${line%$'\r'}" >&2
+			status=1
+			continue
+		fi
 		if [[ "${line}" == "items:" ]]; then
 			header=1
 			continue
@@ -27,9 +38,9 @@ while IFS= read -r list; do
 			status=1
 			continue
 		fi
-		if [[ "${line}" =~ ^\ \ -\ \{name:\ ([A-Za-z0-9._-]+),\ type:\ ([A-Za-z0-9-]+)\}$ ]]; then
+		if [[ "${line}" =~ ^\ \ -\ \{name:\ ([A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*),\ type:\ (manifest|helm|template)\}$ ]]; then
 			name="${BASH_REMATCH[1]}"
-			type="${BASH_REMATCH[2]}"
+			type="${BASH_REMATCH[3]}"
 			found=1
 			items=$((items + 1))
 			if [[ ! -d "${deploy_path}/${name}" ]]; then
