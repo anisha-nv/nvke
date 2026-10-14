@@ -15,9 +15,18 @@ while IFS= read -r list; do
 	lists=$((lists + 1))
 	deploy_path="$(dirname "${list}")"
 	found=0
-	while IFS= read -r line; do
+	header=0
+	while IFS= read -r line || [[ -n "${line}" ]]; do
 		[[ "${line}" =~ ^[[:space:]]*(#|$) ]] && continue
-		[[ "${line}" == "items:" ]] && continue
+		if [[ "${line}" == "items:" ]]; then
+			header=1
+			continue
+		fi
+		if [[ "${header}" -eq 0 ]]; then
+			echo "ERROR: ${list}: line before the items: header: ${line}" >&2
+			status=1
+			continue
+		fi
 		if [[ "${line}" =~ ^\ \ -\ \{name:\ ([A-Za-z0-9._-]+),\ type:\ ([A-Za-z0-9-]+)\}$ ]]; then
 			name="${BASH_REMATCH[1]}"
 			type="${BASH_REMATCH[2]}"
