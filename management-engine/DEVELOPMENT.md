@@ -1,5 +1,8 @@
 # Management Engine Development
 
+> **Under development. Do not use management-engine in production.**
+> The instructions below are for isolated development and evaluation only.
+
 From the repository root, activate the [shared toolchain](../docs/development.md#getting-the-tools)
 and enter the module:
 
@@ -66,6 +69,74 @@ For direct commands against the default environment:
 export KUBECONFIG="$PWD/.local/dev/nvke/kubeconfig"
 kubectl --context kind-nvke-state get namespaces
 ```
+
+## Tenant API runtime
+
+The standalone tenant process implements the [public contract](public/tenant/README.md).
+Deployment, Tilt integration, image packaging, and deployed smoke testing are a
+separate delivery step. `make dev` and `make dev-cwe` do not start this API yet.
+
+For isolated local evaluation, provide an explicit datastore kubeconfig, a fixed
+namespace, and a file containing 32–64 random bytes shared by API replicas for
+pagination. The kubeconfig must use verified HTTPS with an explicit CA and either
+a token file or a client certificate/key pair. Exec plugins, explicit kubeconfig
+`proxy-url`, embedded bearer tokens, and impersonation are rejected. Environment
+proxies are ignored. Keep credential files outside version control.
+The [datastore identity](config/api/state/identity.yaml)
+defines the required namespace-scoped permissions for its ServiceAccount and
+RoleBinding. Apply it in the selected namespace, including the binding subject's namespace.
+
+The process uses the explicit kubeconfig's `current-context` by default. Pass
+`--context=<name>` to select another context from that file without changing it.
+A missing selected context fails startup. `--namespace` sets the process scope
+independently of the context's namespace. The shared development kubeconfig
+defaults to the management context, so select `--context=kind-nvke-state` for the
+default environment's datastore. The selected identity must still satisfy the
+credential requirements above and have the required namespace permissions.
+
+```sh
+go run ./cmd/tenant --evaluation-no-auth \
+  --kubeconfig=/absolute/path/datastore-kubeconfig \
+  --namespace=org-example \
+  --page-token-key-file=/absolute/path/page-token-key
+```
+
+Defaults bind HTTP to `127.0.0.1:8080`, gRPC to `127.0.0.1:9090`, and probes to
+`127.0.0.1:8081`. No caller authentication or authorization is implemented, so keep
+these listeners isolated. `GET /healthz` checks the process, while `GET /readyz`
+checks datastore access and rejects readiness during shutdown.
+
+Connection and request limits are configured per process:
+
+| Flag | Default | Scope |
+| --- | ---: | --- |
+| `--max-http-connections` | 32 | Accepted REST connections |
+| `--max-grpc-connections` | 32 | Accepted native gRPC connections |
+| `--max-concurrent-streams` | 16 | RPC streams on each connection, including the gateway |
+| `--max-concurrent-requests` | 64 | Each HTTP body-processing and shared handler execution budget |
+
+Each flag accepts 1–1024. These are provisional evaluation limits, not validated
+production capacity. The gateway uses a separate loopback listener on the same
+gRPC server, so native connections cannot consume its connection allowance.
+Probes have a separate connection budget. Loopback is shared by processes in the
+same network namespace and does not establish caller identity.
+
+HTTP admission precedes body parsing. RPC message receipt is bounded by the
+connection and per-connection stream limits, a 64 KiB message limit, and a
+five-second deadline. Shared handler admission follows decoding and lasts until
+the handler returns, including after cancellation. A forwarded HTTP call counts
+once in shared handler execution.
+The gateway reuses one connection, so its stream limit can queue calls before
+handler admission. Raising connection limits alone does not raise that limit.
+
+Before increasing limits, measure latency, memory, open file descriptors, and
+datastore throttling under idle connections, mixed HTTP/gRPC bursts, slow bodies,
+large list responses, datastore outages, reconnects, and shutdown. Keep the
+datastore's per-process 20 QPS / burst 40 budget in view. These API requests
+persist desired state without waiting for provisioning.
+
+Run `make test-public-api` for contract, runtime, persistence, RBAC, and controller
+checkpoint tests using local envtest binaries. Docker, Tilt, and CWE are not required.
 
 ## CWE integration
 
