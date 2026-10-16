@@ -406,6 +406,8 @@ account, admit it, and grant the kubeconfig identity the permissions in
 [Configuring NVKE API Authentication](../controller/docs/configuring-api-authentication.md).
 Without them, `get clusters` fails at minting or CWE returns 403.
 
+To configure `nvkectl` with OpenID Connect (OIDC) instead, follow [Secure the NVKE API](operate/api-authentication.md#with-nvkectl).
+
 With the site registered, `nvkectl` can report on the provider the install put
 in place:
 

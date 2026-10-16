@@ -5,7 +5,7 @@ This page describes how to create an NVIDIA Kubernetes Engine (NVKE) workload cl
 ## Before you begin
 
 - You have completed [Install management-plane services](../operate/install-management-plane-services.md) and [Configure an infrastructure provider: NICo](../operate/provider-nico.md).
-- `nvkectl` points at your management plane, set with `nvkectl config set-site`, and `nvkectl get providers` reports the `nico` row as `CONFIGURED`. If you turned on API authentication, `nvkectl` uses an OpenID Connect (OIDC) kubeconfig, as described in [Secure the NVKE API](../operate/api-authentication.md). `nvkectl get providers` reads the management cluster's Kubernetes API with that kubeconfig, which the bootstrap does not configure to accept tokens from your identity provider, so the command fails. Check the provider with the management cluster's admin kubeconfig instead:
+- `nvkectl` points at your management plane, set with `nvkectl config set-site`, and `nvkectl get providers` reports the `nico` row as `CONFIGURED`. If you turned on API authentication, `nvkectl` uses an OpenID Connect (OIDC) kubeconfig, as described in [Secure the NVKE API](../operate/api-authentication.md). `nvkectl get providers` reads the management cluster's Kubernetes API with that kubeconfig. It succeeds when the OIDC group the user is mapped to can read the provider objects. When the group cannot, check the provider with the management cluster's admin kubeconfig instead:
 
   ```bash
   kubectl --kubeconfig <CLUSTER_NAME>.kubeconfig -n capnico-system get deploy,secret
@@ -13,7 +13,11 @@ This page describes how to create an NVIDIA Kubernetes Engine (NVKE) workload cl
 
   The Deployment `controller-manager` shows all replicas ready, and the Secret `nico-credentials` is listed. `<CLUSTER_NAME>` is the management cluster's name.
 - You have the NVIDIA Infra Controller (NICo) identifiers listed in [Collect the NICo identifiers](../operate/provider-nico.md#collect-the-nico-identifiers): the organization, site and virtual private cloud (VPC) IDs, the instance type IDs, the VPC prefix or subnet IDs, and optionally SSH key group IDs.
-- The releases you plan to use exist on the management cluster. The control plane names a cluster release and each node pool names a node pool release. List them with `nvkectl get clusterreleases` and `nvkectl get nodepoolreleases`.
+- The releases you plan to use exist on the management cluster. The control plane names a cluster release and each node pool names a node pool release. List them with `nvkectl get clusterreleases` and `nvkectl get nodepoolreleases`. With API authentication on, those commands succeed when the OIDC group the user is mapped to can read the releases. When the group cannot, list them with the admin kubeconfig instead:
+
+  ```bash
+  kubectl --kubeconfig <CLUSTER_NAME>.kubeconfig get clusterreleases,nodepoolreleases
+  ```
 - If the cluster has more than one control-plane node, you have an unused, routable IPv4 address on the control-plane network for the Kubernetes API virtual IP address (VIP).
 - `curl` and `jq` are installed, for the REST calls on this page.
 

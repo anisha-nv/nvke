@@ -2,6 +2,8 @@
 
 This page describes how to make the Kubernetes API servers of the workload clusters that NVIDIA Kubernetes Engine (NVKE) creates accept JSON Web Tokens (JWTs) from OpenID Connect (OIDC) identity providers (IdPs). Do it after [Install management-plane services](../operate/install-management-plane-services.md) and before you create the workload clusters that need it: a workload cluster keeps the fleet-wide providers it was created with.
 
+`cluster.oidcProviders` in the site spec is a separate list. [Add OIDC providers](../operate/bootstrap-management-cluster.md#add-oidc-providers) applies it to the management cluster at bootstrap. Workload clusters receive the providers from this page.
+
 A workload cluster's API server trusts two kinds of provider:
 
 | | Shared provider | Fleet-wide providers |

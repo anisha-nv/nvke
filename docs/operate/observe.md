@@ -4,7 +4,7 @@ This page describes how to check the health of the NVIDIA Kubernetes Engine (NVK
 
 ## Before you begin
 
-- You have completed [Install management-plane services](install-management-plane-services.md), and `nvkectl config set-site` points `nvkectl` at your NVKE API and the management cluster's kubeconfig. If API authentication is on, `nvkectl` points at an OpenID Connect (OIDC) kubeconfig instead, as described in [Secure the NVKE API](api-authentication.md). With that kubeconfig, `nvkectl get providers` and `nvkectl get kubeconfig` fail, because they read the management cluster's Kubernetes API, which does not accept your identity provider's tokens; the steps that use them give a `kubectl` alternative.
+- You have completed [Install management-plane services](install-management-plane-services.md), and `nvkectl config set-site` points `nvkectl` at your NVKE API and the management cluster's kubeconfig. If API authentication is on, `nvkectl` points at an OpenID Connect (OIDC) kubeconfig instead, as described in [Secure the NVKE API](api-authentication.md). With that kubeconfig, `nvkectl get providers` and `nvkectl get kubeconfig` read the management cluster's Kubernetes API. They succeed when the OIDC group the user is mapped to can read the objects they use, including Secrets in `nke-system` for `nvkectl get kubeconfig`. When the group cannot, the steps that use them give a `kubectl` alternative. `nvkectl get kubeconfig` writes a workload cluster's break-glass admin kubeconfig.
 - `kubectl` uses the management cluster's admin kubeconfig, for example with `export KUBECONFIG=<CLUSTER_NAME>.kubeconfig`, where `<CLUSTER_NAME>` is the management cluster's name.
 - You have `curl` and `jq`.
 - If you change the management plane's values below, run the install from a shell with the `NVKECTL_*` variables exported, as described in [Run the install again](install-management-plane-services.md#run-the-install-again).
@@ -165,7 +165,7 @@ A NetworkPolicy admits scrapes of port 9090 only from a fixed set of namespaces,
    nvkectl get kubeconfig <WORKLOAD_CLUSTER> --output-file <WORKLOAD_CLUSTER>.kubeconfig
    ```
 
-   With API authentication on, this command fails; get the file with `kubectl` as described in [Get the admin kubeconfig](../workload-clusters/access.md#get-the-admin-kubeconfig) instead.
+   With API authentication on, this command succeeds when the OIDC group the user is mapped to can `get` Secrets in `nke-system`. When the group cannot, get the file with `kubectl` as described in [Get the admin kubeconfig](../workload-clusters/access.md#get-the-admin-kubeconfig).
 
    ```bash
    kubectl --kubeconfig <WORKLOAD_CLUSTER>.kubeconfig get nodes

@@ -164,7 +164,7 @@ Configure your callers now, while NVKE still serves every request. From the mome
    nvkectl config set-site --name <CLUSTER_NAME> --url <API_URL> --kubeconfig oidc.kubeconfig
    ```
 
-   `<API_URL>` is the base address of the NVKE API without `/api`: `http://<MANAGEMENT_ADDRESS>:30080`, as in [Install management-plane services](install-management-plane-services.md), or the `https` address of the TLS endpoint you put in front of it. A token sent to the `http` address crosses the network unencrypted; see the warning at the top of this page. `nvkectl get kubeconfig`, `nvkectl get providers`, and the machine image, cluster release and node pool release commands, such as `nvkectl get nodepoolreleases`, read the management cluster's Kubernetes API directly with this kubeconfig. The bootstrap does not configure that API server to accept tokens from your IdP, so these commands fail. Use `kubectl` with `<CLUSTER_NAME>.kubeconfig` for them instead, as described in [Access a workload cluster](../workload-clusters/access.md#get-the-admin-kubeconfig) and [Create a workload cluster](../workload-clusters/create.md#before-you-begin).
+   `<API_URL>` is the base address of the NVKE API without `/api`: `http://<MANAGEMENT_ADDRESS>:30080`, as in [Install management-plane services](install-management-plane-services.md), or the `https` address of the TLS endpoint you put in front of it. A token sent to the `http` address crosses the network unencrypted; see the warning at the top of this page. `nvkectl get kubeconfig`, `nvkectl get providers`, and the machine image, cluster release and node pool release commands, such as `nvkectl get nodepoolreleases`, read the management cluster's Kubernetes API with this kubeconfig. The API server accepts these tokens when [Add OIDC providers](bootstrap-management-cluster.md#add-oidc-providers) listed your provider. The commands then succeed when the OIDC group that user is mapped to can read the objects they use. `nvkectl get kubeconfig` needs `get` on Secrets in the `nke-system` namespace. When the group lacks that permission, use `kubectl` with `<CLUSTER_NAME>.kubeconfig`, as described in [Access a workload cluster](../workload-clusters/access.md#get-the-admin-kubeconfig) and [Create a workload cluster](../workload-clusters/create.md#before-you-begin). `nvkectl get kubeconfig` writes a workload cluster's break-glass admin kubeconfig.
 
 3. Call the API.
 
@@ -281,4 +281,5 @@ The deploy path's own values turn authentication off. Every time you run the ins
 
 ## Next steps
 
+- [Configure OIDC for workload clusters](../workload-clusters/oidc.md), before you create a workload cluster that should accept your identity provider.
 - [Create a workload cluster](../workload-clusters/create.md).

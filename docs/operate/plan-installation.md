@@ -93,12 +93,15 @@ API authentication is off by default: any caller that reaches port 30080 can cal
 
 NVKE admits callers by group but does no authorization: every admitted caller can call every endpoint.
 
+The same provider can authenticate three APIs, and each API has its own configuration. The management cluster's Kubernetes API takes `cluster.oidcProviders` in the site spec, and bootstrap is the only time NVKE applies it: [Add OIDC providers](bootstrap-management-cluster.md#add-oidc-providers). The NVKE API takes `apiAuth` after the install: [Secure the NVKE API](api-authentication.md). Workload clusters take the controller values in [Configure OIDC for workload clusters](../workload-clusters/oidc.md). Writing the provider in one of these places leaves the other two unchanged.
+
 ## Decide before you install
 
 | Setting | Fixed at | What to decide |
 |---|---|---|
 | Management cluster node count | Bootstrap | An odd number. The management cluster cannot add or replace nodes, so size it for the life of the installation. |
 | Management cluster etcd encryption | Bootstrap | On by default. A management cluster bootstrapped without it stays unencrypted. |
+| Management cluster Kubernetes API OIDC | Bootstrap | `cluster.oidcProviders`. A management cluster bootstrapped without it accepts no identity-provider tokens on its Kubernetes API. |
 | Management cluster API VIP | Bootstrap | Required for more than one node. |
 | SPIFFE trust domain | Node preparation | One value in the node user data, the site spec and the install values. If the site spec leaves it unset, `nvkectl` uses `nvkectl-bootstrap.nke.local`, which does not match your nodes. |
 | Node CPU architecture | Image build | The node image and the SPIRE TPM attestor checksum are per architecture. |
@@ -160,10 +163,12 @@ Each placeholder has the same name on the page that uses it. Keep credentials in
 |---|---|---|---|
 | Login account written into every workload cluster node's user data, and its password | `NVKECTL_NODE_USER`, `NVKECTL_NODE_PASSWORD` | Install | |
 | Database password, chosen once and kept in your secret manager | `NVKECTL_DATABASE_PASSWORD` | Install | |
-| Issuer URL | `<ISSUER_URL>` | Secure the API | |
+| Issuer URL | `<ISSUER_URL>` | Bootstrap, Secure the API | |
 | Signing-key URL | `<JWKS_URI>` | Secure the API | |
 | OIDC client ID for `nvkectl` | `<CLIENT_ID>` | Secure the API | |
-| Token audience | `<AUDIENCE>` | Secure the API | |
+| Token audience | `<AUDIENCE>` | Bootstrap, Secure the API | |
+| Username claim and prefix for the management cluster Kubernetes API | `<USERNAME_CLAIM>`, `<USERNAME_PREFIX>` | Bootstrap | |
+| Providers for the management cluster Kubernetes API, including the PEM CA bundle | `cluster.oidcProviders` | Bootstrap | |
 | Group allowed to call the API | `<ADMITTED_GROUP>` | Secure the API | |
 | Extra scopes your IdP needs to release the `groups` claim, if any | `<SCOPE>` | Secure the API | |
 | NVKE API base address, `http://<MANAGEMENT_ADDRESS>:30080` | `<API_URL>` | Secure the API, Manage node pools | |

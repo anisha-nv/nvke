@@ -83,7 +83,40 @@ The site spec is a YAML file that lists the nodes and the Kubernetes settings fo
 
    `generate sitespec` validates every field before it writes the file. `bootstrap site` also reads environment variables, such as `CLUSTER_POD_CIDR`, that override fields in the file; [Site Spec](../../cli/docs/sitespec.md) lists them. Unset them before you run the bootstrap unless you mean to override the file.
 
-3. Validate the site spec without touching any node.
+   `nvkectl generate sitespec --set` cannot set `cluster.oidcProviders`, and no environment variable overrides it. Add that list in the next section before you validate the file.
+
+## Add OIDC providers
+
+Add providers here when the management cluster's Kubernetes API should accept tokens from your OpenID Connect (OIDC) identity provider. Skip the edit to leave that API without providers. Either way, validate the file at the end of this section before you bootstrap.
+
+Bootstrap is the only time NVKE applies this list. A management cluster created without it accepts no identity-provider tokens on its Kubernetes API.
+
+1. Open `sitespec.yaml` and add `oidcProviders` under the `cluster` key already in the file.
+
+   ```yaml
+   oidcProviders:
+     - name: example-idp
+       issuerURL: <ISSUER_URL>
+       audiences: ["<AUDIENCE>"]
+       usernameClaim: <USERNAME_CLAIM>
+       usernamePrefix: <USERNAME_PREFIX>
+       groupsClaim: groups
+       groupsPrefix: <USERNAME_PREFIX>
+       caBundle: |
+         -----BEGIN CERTIFICATE-----
+         ...
+         -----END CERTIFICATE-----
+   ```
+
+   `<ISSUER_URL>` is the provider's issuer URL, an `https` URL such as `https://idp.example.com/realms/example`. The API server compares it with the token's `iss` claim. `<AUDIENCE>` is an `aud` value the API server accepts. `<USERNAME_CLAIM>` is the claim the API server uses as the username, such as `email` or `sub`. `<USERNAME_PREFIX>` is text the API server puts in front of that username, such as `example-idp:`. The same prefix in front of each group is `groupsPrefix`.
+
+   - The list holds at most five providers. `cluster.k8sVersion` must be `1.34.0` or newer.
+   - `name` and `issuerURL` are unique in the list. `usernamePrefix` is required, and it must not start with `system:`, `kubeadm:`, `nke:`, `nvke:`, or `nvidia:`. `groupsPrefix` has the same reserved prefixes.
+   - `caBundle` is the PEM certificates the API server trusts when it fetches that provider. It trusts no other CA for the provider. `groupsClaim`, `groupsPrefix`, and `requiredClaims` are optional. [Site Spec](../../cli/docs/sitespec.md#oidc-providers) lists every field.
+   - This list configures the management cluster's Kubernetes API. The NVKE API takes its own configuration in [Secure the NVKE API](api-authentication.md). Workload clusters take theirs from the controller values in [Configure OIDC for workload clusters](../workload-clusters/oidc.md). Writing the list in one of these places leaves the other two unchanged.
+   - Commands that read the management cluster, including `nvkectl get kubeconfig` and `nvkectl get providers`, succeed when the OIDC group the user is mapped to can read the objects they use. `nvkectl get kubeconfig` needs `get` on Secrets in the `nke-system` namespace.
+
+2. Validate the site spec without touching any node.
 
    ```bash
    export NVKECTL_SPIRE_CA_CERT_FILE=<CA_CERT_PATH> NVKECTL_SPIRE_CA_KEY_FILE=<CA_KEY_PATH>
@@ -140,7 +173,7 @@ To build both images from the repository on the bootstrap host instead, run `mak
 
    The kubeconfig and the key file are secrets. Every control-plane node holds the etcd key, so the running cluster does not depend on the file, and installing the management-plane services does not use it. It is the only copy of the key that is not on a node. After you finish [Verify](#verify), copy the key file to secure storage and delete it from the bootstrap host.
 
-   Keep `<CLUSTER_NAME>.kubeconfig` on the host you install from. [Install management-plane services](install-management-plane-services.md), [Configure an infrastructure provider: NICo](provider-nico.md) and [Secure the NVKE API](api-authentication.md) all use it. When you finish those pages, copy it to secure storage and delete it from that host.
+   Keep `<CLUSTER_NAME>.kubeconfig` on the host you install from. [Install management-plane services](install-management-plane-services.md), [Configure an infrastructure provider: NICo](provider-nico.md) and [Secure the NVKE API](api-authentication.md) all use it. [Secure the NVKE API](api-authentication.md) takes this file as the input to `nvkectl generate oidc-kubeconfig`, which writes the kubeconfig `nvkectl` then uses for the NVKE API. When you finish those pages, copy it to secure storage and delete it from that host.
 
 ## What happens during the bootstrap
 

@@ -114,6 +114,8 @@ Auto-provisioning waits for matching capacity. Check:
 
 Authentication is enabled on the site controller. `nvkectl` mints a bearer token from the kubeconfig you passed to `nvkectl config set-site`. Ensure the `nke-clients/nke-client` service account exists on the site controller cluster and that the kubeconfig identity has the required permissions. See [Configuring API Authentication](../../controller/docs/configuring-api-authentication.md).
 
+To configure `nvkectl` with OpenID Connect (OIDC) instead, follow [Secure the NVKE API](../operate/api-authentication.md#with-nvkectl).
+
 ### Nodes are not schedulable after bootstrap
 
 All nodes are control-plane nodes after `nvkectl bootstrap site`, and the command removes the control-plane `NoSchedule` taint from every node once they have all joined. Nodes stay tainted only when that removal failed and the command said so. Remove the taint by hand before installing workloads:

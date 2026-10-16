@@ -174,6 +174,11 @@ The kubeconfig identity needs `create` on `serviceaccounts/token` for
 `nke-client`. See
 [Configuring NVKE API Authentication](../../controller/docs/configuring-api-authentication.md).
 
+If you authenticate with OpenID Connect (OIDC) instead of that service account,
+follow [Secure the NVKE API](../../docs/operate/api-authentication.md#with-nvkectl).
+That page generates an OIDC kubeconfig, points `nvkectl` at it, and admits
+callers by the `groups` claim.
+
 ### 7. Check the infrastructure providers
 
 A tenant cluster is created on an infrastructure provider: a controller running
