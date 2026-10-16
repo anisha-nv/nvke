@@ -82,6 +82,7 @@ The install reads what only the management plane needs from `stack-config.json`,
    The other keys are optional. Leave a key you do not use as `""`.
 
    - `images.controller` and `images.profiles`: the controller image and the profile content image, each as `repository:tag` or `repository@sha256:<DIGEST>`. See [Choose where the artifacts come from](#choose-where-the-artifacts-come-from).
+   - `images.capnico`: the CAPNICo image, as `repository:tag` or `repository@sha256:<DIGEST>`. It wins over the release's `capnico-controller` artifact. Without it and without a release, CAPNICo runs the image its manifest names.
    - `mirror`: a registry to pull the external images from instead of their upstream registries, as `host[:port][/prefix]`, with no scheme.
 
    NKTP sends telemetry to a bundled development backend that keeps data in memory and has no authentication. To send it to your own backend, write a values file as described in [Getting started with NKTP](../nktp/getting-started.md) and pass `--values-for nktp=<FILE>` to every install run.
