@@ -407,12 +407,13 @@ type CniPlugin string
 const (
 	CNICalico                      CniPlugin = "calico"
 	CNIOvnKubernetes               CniPlugin = "ovn-kubernetes"
+	CNIOvnKubernetesDPUHost        CniPlugin = "ovn-kubernetes-dpu-host"
 	DefaultCalicoCNIVersion                  = "3.30.1"
 	DefaultOvnKubernetesCNIVersion           = "1.4.0"
 )
 
 func ListCNIPlugins() []CniPlugin {
-	return []CniPlugin{CNICalico, CNIOvnKubernetes}
+	return []CniPlugin{CNICalico, CNIOvnKubernetes, CNIOvnKubernetesDPUHost}
 }
 
 func DefaultCNIVersion(plugin CniPlugin) (string, bool) {
@@ -421,6 +422,8 @@ func DefaultCNIVersion(plugin CniPlugin) (string, bool) {
 		return DefaultCalicoCNIVersion, true
 	case CNIOvnKubernetes:
 		return DefaultOvnKubernetesCNIVersion, true
+	case CNIOvnKubernetesDPUHost:
+		return "1.5.18", true
 	default:
 		return "", false
 	}

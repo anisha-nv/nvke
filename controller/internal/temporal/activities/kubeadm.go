@@ -57,6 +57,14 @@ func nodeLabels(labels []string) kubeadmconfig.KubeLabels {
 	return out
 }
 
+func nodeLabelsForCNI(labels []string, plugin db.CniPlugin) kubeadmconfig.KubeLabels {
+	out := nodeLabels(labels)
+	if plugin == db.CNIOvnKubernetesDPUHost {
+		out["k8s.ovn.org/dpu-host"] = ""
+	}
+	return out
+}
+
 func toNodeAgentFiles(files []kubeadmconfig.File) []*nkeproto.File {
 	out := make([]*nkeproto.File, 0, len(files))
 	for _, file := range files {

@@ -359,7 +359,7 @@ func (a *Activities) renderUserData(
 	switch cluster.CniPlugin {
 	case db.CNICalico:
 		calicoEnabled = true
-	case db.CNIOvnKubernetes:
+	case db.CNIOvnKubernetes, db.CNIOvnKubernetesDPUHost:
 		ovnEnabled = true
 	default:
 		return "", fmt.Errorf("unsupported CNI plugin: %s", cluster.CniPlugin)
@@ -458,7 +458,7 @@ func cniImagePackageName(plugin db.CniPlugin, version string) (string, error) {
 	switch plugin {
 	case db.CNICalico:
 		return "nke-cni-calico-images-" + version, nil
-	case db.CNIOvnKubernetes:
+	case db.CNIOvnKubernetes, db.CNIOvnKubernetesDPUHost:
 		return "nke-cni-ovn-images-" + version, nil
 	default:
 		return "", fmt.Errorf("unsupported CNI plugin: %s", plugin)
@@ -477,7 +477,7 @@ func cniChartsPackageName(plugin db.CniPlugin, version string) (string, error) {
 	switch plugin {
 	case db.CNICalico:
 		return "nke-cni-calico-manifests-" + version, nil
-	case db.CNIOvnKubernetes:
+	case db.CNIOvnKubernetes, db.CNIOvnKubernetesDPUHost:
 		return "nke-cni-ovn-charts-" + version, nil
 	default:
 		return "", fmt.Errorf("unsupported CNI plugin: %s", plugin)
