@@ -41,13 +41,6 @@ const (
 	// credentials from. The name, namespace and keys are CAPNICo's own.
 	nicoCredentialsSecret = "nico-credentials"
 
-	// CAPNICoArtifact is the name of the release artifact that holds the
-	// CAPNICo controller image, and only that image: the manifest's CRDs and
-	// RBAC do not come from a release. deploy/nico/capnico/release.yaml binds
-	// the same name, so a release repoints the image for the deploy path and
-	// the bootstrap alike.
-	CAPNICoArtifact = "capnico-controller"
-
 	// capnicoManifestFile is deploy/nico/capnico/capnico.yaml, copied by
 	// `make -C cli capnico-manifest`. The copy lives here because go:embed
 	// cannot reach outside this module, and embedding it is what lets
@@ -137,6 +130,8 @@ func (e *Engine) installCAPNICo(ctx context.Context, kubeconfigPath string, cfg 
 		if image, err = pinnedCAPNICoImage(); err != nil {
 			return err
 		}
+	} else if err := CheckCAPNICoImage(image); err != nil {
+		return err
 	}
 	raw, err = capnicoManifest(raw, image)
 	if err != nil {
@@ -157,7 +152,7 @@ func (e *Engine) installCAPNICo(ctx context.Context, kubeconfigPath string, cfg 
 	}
 	defer cleanupManifest()
 
-	e.log.Info("installing CAPNICo", "namespace", capnicoNamespace, "image", image, "release", cfg.CAPNICoImage != "")
+	e.log.Info("installing CAPNICo", "namespace", capnicoNamespace, "image", image, "overridden", cfg.CAPNICoImage != "")
 	for _, file := range []string{secretsFile, manifestFile} {
 		// Server-side apply: the CRDs are large enough that a client-side apply
 		// can exceed the last-applied-configuration annotation limit. It also
@@ -176,8 +171,8 @@ func (e *Engine) installCAPNICo(ctx context.Context, kubeconfigPath string, cfg 
 }
 
 // pinnedCAPNICoImage returns the repository and digest of the CAPNICo image the
-// bootstrap manifest lists, as repository@digest: the form a release's artifact
-// is applied in. The embedded manifest names the image by tag, which a registry
+// bootstrap manifest lists, as repository@digest. The embedded manifest names
+// the image by tag, which a registry
 // can move, and the manager can read cluster Secrets, so the default install runs
 // the digest instead. It fails when the manifest lists none rather than fall
 // back to the tag.
@@ -196,16 +191,41 @@ func pinnedCAPNICoImage() (string, error) {
 	return repo + "@" + img.Digest, nil
 }
 
+// imageRefPattern is the OCI distribution reference grammar: a host (name,
+// IPv4 or bracketed IPv6, optional port), one or more lowercase path
+// components, an optional tag and an optional sha256 digest. Nothing in it is
+// a space, a quote or a newline, so a reference that matches is one scalar in
+// the manifest's image: line.
+var imageRefPattern = regexp.MustCompile(`^(?:[A-Za-z0-9]+(?:[-.][A-Za-z0-9]+)*|\[[0-9A-Fa-f:.]+\])(?::[0-9]+)?` +
+	`(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)+(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[0-9a-f]{64})?$`)
+
+// CheckCAPNICoImage reports whether ref can name the CAPNICo image: a
+// registry-qualified reference, repository:tag or repository@sha256:<digest>
+// (a tag may precede the digest). A reference naming neither a tag nor a
+// digest is refused, since it would pull whatever "latest" is.
+func CheckCAPNICoImage(ref string) error {
+	if !imageRefPattern.MatchString(ref) {
+		return fmt.Errorf("%q is not an image reference: want <registry>/<repository>:<tag> or <registry>/<repository>@sha256:<digest>", ref)
+	}
+	if strings.Contains(ref, "@sha256:") {
+		return nil
+	}
+	if colon := strings.LastIndexByte(ref, ':'); colon < strings.LastIndexByte(ref, '/') {
+		return fmt.Errorf("%q names neither a tag nor a digest", ref)
+	}
+	return nil
+}
+
 // capnicoImageLine matches an image: line of the manifest.
 var capnicoImageLine = regexp.MustCompile(`(?m)^(\s*image:\s*)(\S+)[ \t]*$`)
 
 // capnicoManifest returns the embedded manifest with its image replaced by
-// image, as the deploy path's render does for a release (a kustomization that
-// rewrites the manager image to the artifact's repository and digest). An empty
-// image returns the manifest as embedded.
+// image, as the deploy path's render does for the site controller's CAPNICo (a
+// kustomization that rewrites the manager image). An empty image returns the
+// manifest as embedded.
 //
 // The manifest names exactly one image, the manager's. If a bump adds a second,
-// this refuses rather than guess which one the release's artifact replaces.
+// this refuses rather than guess which one the image replaces.
 func capnicoManifest(raw []byte, image string) ([]byte, error) {
 	if image == "" {
 		return raw, nil

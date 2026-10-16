@@ -287,9 +287,9 @@ type Config struct {
 	ReleasesPath string
 
 	// CAPNICoImage, when set, replaces the image the embedded CAPNICo manifest
-	// names, as repository@sha256:digest. It is the capnico-controller artifact
-	// of an NVKR release, so a bootstrap runs the bytes the release published
-	// rather than a tag. Empty runs the manifest's own image.
+	// names; see CheckCAPNICoImage for the forms it takes. A digest runs the
+	// bytes it names rather than a tag a registry can move. Empty runs the
+	// digest the bootstrap manifest pins.
 	CAPNICoImage string
 
 	// NodeAgentPort is the port CWE dials nke-agent on. Empty leaves CWE's own

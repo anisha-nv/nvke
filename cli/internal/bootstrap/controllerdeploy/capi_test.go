@@ -382,8 +382,8 @@ func TestInstallCAPNICo_AppliesSecretsThenTheManifest(t *testing.T) {
 
 // TestInstallCAPNICo_RunsTheManifestsDigestByDefault: the embedded manifest
 // names the image by tag, which a registry can move, and the manager can read
-// cluster Secrets. With no --release the install applies the digest the
-// bootstrap manifest lists; a release's image still replaces it.
+// cluster Secrets. With no --capnico-image the install applies the digest the
+// bootstrap manifest lists; an image the operator names replaces it.
 func TestInstallCAPNICo_RunsTheManifestsDigestByDefault(t *testing.T) {
 	listed := manifest.Load().Components[manifest.ComponentCAPNICo].Images[manifest.ImageCAPNICo]
 	wantImage := "ghcr.io/dsx-ai-factory/cluster-api-provider-nico/controller@" + listed.Digest
@@ -405,20 +405,62 @@ func TestInstallCAPNICo_RunsTheManifestsDigestByDefault(t *testing.T) {
 		t.Error("the applied manifest still runs the image by tag")
 	}
 
-	const release = "registry.example/capnico/controller@sha256:" +
-		"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	for _, named := range []string{
+		"registry.example/capnico/controller@sha256:" + strings.Repeat("d", 64),
+		"registry.example/capnico/controller:v9.9.9",
+	} {
+		cfg := nicoTestConfig(t)
+		cfg.CAPNICoImage = named
+		runner = &fakeRunner{}
+		if err := New(runner, nil).installCAPNICo(context.Background(), "/tmp/kubeconfig", cfg, time.Minute); err != nil {
+			t.Fatalf("installCAPNICo with the image %s: %v", named, err)
+		}
+		found := false
+		for _, doc := range runner.applied {
+			found = found || strings.Contains(doc, "        image: "+named+"\n")
+		}
+		if !found {
+			t.Errorf("the named image %s was not applied", named)
+		}
+	}
+	// An image that is not one scalar is refused before anything is applied.
 	cfg := nicoTestConfig(t)
-	cfg.CAPNICoImage = release
+	cfg.CAPNICoImage = "registry.example/c:v1\n        command: [sh]"
 	runner = &fakeRunner{}
-	if err := New(runner, nil).installCAPNICo(context.Background(), "/tmp/kubeconfig", cfg, time.Minute); err != nil {
-		t.Fatalf("installCAPNICo with a release image: %v", err)
+	if err := New(runner, nil).installCAPNICo(context.Background(), "/tmp/kubeconfig", cfg, time.Minute); err == nil || len(runner.applied) != 0 {
+		t.Errorf("a multi-line image: error %v, applied %d", err, len(runner.applied))
 	}
-	found := false
-	for _, doc := range runner.applied {
-		found = found || strings.Contains(doc, "        image: "+release+"\n")
+}
+
+// TestCheckCAPNICoImage: a registry-qualified reference with a tag or a
+// digest is accepted; anything that could be more than one scalar in the
+// manifest's image: line, or that pulls an unpinned image, is not.
+func TestCheckCAPNICoImage(t *testing.T) {
+	digest := "@sha256:" + strings.Repeat("a", 64)
+	for _, ref := range []string{
+		"ghcr.io/dsx-ai-factory/cluster-api-provider-nico/controller:v0.0.45",
+		"ghcr.io/dsx-ai-factory/cluster-api-provider-nico/controller" + digest,
+		"ghcr.io/org/controller:v1" + digest,
+		"localhost:5000/capnico/controller:dev",
+		"registry.example:5000/a/b/c:1.2.3-rc.1",
+	} {
+		if err := CheckCAPNICoImage(ref); err != nil {
+			t.Errorf("CheckCAPNICoImage(%q) = %v, want nil", ref, err)
+		}
 	}
-	if !found {
-		t.Errorf("the release's image %s was not applied", release)
+	for ref, want := range map[string]string{
+		"":                                  "is not an image reference",
+		"ghcr.io/org/controller":            "names neither a tag nor a digest",
+		"localhost:5000/capnico/controller": "names neither a tag nor a digest",
+		"controller:v1":                     "is not an image reference",
+		"ghcr.io/org/controller:v1 extra":   "is not an image reference",
+		"ghcr.io/org/controller:v1\nx: y":   "is not an image reference",
+		"ghcr.io/org/controller@sha256:abc": "is not an image reference",
+		"ghcr.io/Org/Controller:v1":         "is not an image reference",
+	} {
+		if err := CheckCAPNICoImage(ref); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("CheckCAPNICoImage(%q) = %v, want one containing %q", ref, err, want)
+		}
 	}
 }
 
@@ -629,20 +671,17 @@ func TestCAPNICoManifest_RefusesAmbiguousImages(t *testing.T) {
 	}
 }
 
-// TestCAPNICoArtifact_IsTheOneTheDeployPathBinds: the bootstrap asks a release
-// for the artifact deploy/nico/capnico/release.yaml binds to the manifest, and
-// that file's image is the one the embedded manifest runs.
-func TestCAPNICoArtifact_IsTheOneTheDeployPathBinds(t *testing.T) {
+// TestCAPNICoReleaseYAML_NamesTheEmbeddedImage: the image deploy/nico/capnico/
+// release.yaml names, which the site controller's render repoints, is the one
+// the embedded manifest runs.
+func TestCAPNICoReleaseYAML_NamesTheEmbeddedImage(t *testing.T) {
 	data, err := os.ReadFile("../../../../deploy/nico/capnico/release.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var rel struct{ Image, Artifact string }
+	var rel struct{ Image string }
 	if err := yaml.Unmarshal(data, &rel); err != nil {
 		t.Fatal(err)
-	}
-	if rel.Artifact != CAPNICoArtifact {
-		t.Errorf("release.yaml binds artifact %q, the bootstrap asks for %q", rel.Artifact, CAPNICoArtifact)
 	}
 	embedded, err := manifestsFS.ReadFile(capnicoManifestFile)
 	if err != nil {

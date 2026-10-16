@@ -29,8 +29,9 @@ import (
 type Config struct {
 	// Nico is the NICo API CAPNICo calls.
 	Nico Nico `json:"nico"`
-	// Images overrides the controller and profiles images, which default to
-	// the release's artifacts.
+	// Images overrides the controller, profiles and CAPNICo images. The
+	// controller and profiles images default to the release's artifacts; the
+	// CAPNICo image to the deploy path's own.
 	Images Images `json:"images"`
 	// Mirror is a registry the external images are pulled from instead of
 	// their upstream registries, as host[:port][/prefix], no scheme.
@@ -47,10 +48,12 @@ type Nico struct {
 	APIName  string `json:"apiName"`
 }
 
-// Images overrides images that default to the release's artifacts.
+// Images overrides images that default to the release's artifacts, or for
+// CAPNICo to the image the deploy path's manifest runs.
 type Images struct {
 	Controller string `json:"controller"`
 	Profiles   string `json:"profiles"`
+	Capnico    string `json:"capnico"`
 }
 
 // placeholderPrefix marks a value the example leaves for the operator to
@@ -79,6 +82,7 @@ func (c *Config) fields() []field {
 		{path: "nico.apiName", value: c.Nico.APIName, required: true, template: true},
 		{path: "images.controller", value: c.Images.Controller},
 		{path: "images.profiles", value: c.Images.Profiles},
+		{path: "images.capnico", value: c.Images.Capnico},
 		{path: "mirror", value: c.Mirror},
 	}
 }

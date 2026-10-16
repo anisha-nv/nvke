@@ -19,6 +19,7 @@ import (
 	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/content/oci"
 
+	"github.com/dsx-ai-factory/nvke/cli/internal/bootstrap/controllerdeploy"
 	"github.com/dsx-ai-factory/nvke/cli/internal/bootstrap/nvkrrelease"
 	"github.com/dsx-ai-factory/nvke/cli/internal/bootstrap/sitespec"
 	"github.com/dsx-ai-factory/nvke/cli/internal/deploypath/stackconfig"
@@ -196,6 +197,7 @@ func Render(ctx context.Context, opts RenderOptions) (*Rendered, error) {
 	}
 	if opts.Site != nil {
 		r.site()
+		r.capnicoImage()
 	}
 	if len(r.problems) > 0 {
 		_ = os.RemoveAll(opts.Out)
@@ -450,6 +452,39 @@ func (r *renderer) helm(item string) {
 	}
 }
 
+// kustomizeImage writes the item's kustomization.yaml, which repoints the image
+// the item's release.yaml names (image: <repository>:<tag>) to newName with
+// the tag or digest pin names: pinKey is "digest" or "newTag". The manifests in
+// the item are its resources, so the executor applies them through the
+// kustomization. It reports whether it wrote the file.
+func (r *renderer) kustomizeImage(item, image, newName, pinKey, pin string) bool {
+	entries, err := os.ReadDir(filepath.Join(r.opts.DeployPath, item))
+	if err != nil {
+		r.problem("%s: %v", item, err)
+		return false
+	}
+	var resources []string
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".yaml") || name == "release.yaml" || name == "kustomization.yaml" {
+			continue
+		}
+		resources = append(resources, name)
+	}
+	sort.Strings(resources)
+	var b strings.Builder
+	b.WriteString("resources:\n")
+	for _, res := range resources {
+		fmt.Fprintf(&b, "  - %s\n", res)
+	}
+	fmt.Fprintf(&b, "images:\n  - name: %q\n    newName: %q\n    %s: %q\n", image[:strings.LastIndex(image, ":")], newName, pinKey, pin)
+	if err := writePrivate(filepath.Join(r.opts.Out, item, "kustomization.yaml"), []byte(b.String())); err != nil {
+		r.problem("%s: %v", item, err)
+		return false
+	}
+	return true
+}
+
 func (r *renderer) manifest(item string) {
 	src := filepath.Join(r.opts.DeployPath, item)
 	if _, err := os.Stat(filepath.Join(src, "release.yaml")); err != nil {
@@ -471,32 +506,57 @@ func (r *renderer) manifest(item string) {
 	if !ok {
 		return
 	}
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		r.problem("%s: %v", item, err)
-		return
-	}
-	var resources []string
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".yaml") || name == "release.yaml" || name == "kustomization.yaml" {
-			continue
-		}
-		resources = append(resources, name)
-	}
-	sort.Strings(resources)
-	var b strings.Builder
-	b.WriteString("resources:\n")
-	for _, res := range resources {
-		fmt.Fprintf(&b, "  - %s\n", res)
-	}
-	fmt.Fprintf(&b, "images:\n  - name: %q\n    newName: %q\n    digest: %q\n", rel.Image[:strings.LastIndex(rel.Image, ":")], img.Repository(), img.Digest)
-	if err := writePrivate(filepath.Join(r.opts.Out, item, "kustomization.yaml"), []byte(b.String())); err != nil {
-		r.problem("%s: %v", item, err)
+	if !r.kustomizeImage(item, rel.Image, img.Repository(), "digest", img.Digest) {
 		return
 	}
 	r.image(img)
 	r.note("%s: image %s -> %s", item, rel.Image, img.Reference)
+}
+
+// capnicoItem is the manifest item that installs CAPNICo; images.capnico in
+// the stack config repoints its image.
+const capnicoItem = "capnico"
+
+// capnicoImage repoints the capnico item's image to images.capnico of the
+// stack config, as repository:tag or repository@sha256:<digest>, with the same
+// kustomization the release's artifact would give. It wins over the release,
+// as images.controller does for the controller. Without the key the item keeps
+// the image of the release or of the deploy path.
+func (r *renderer) capnicoImage() {
+	ref := r.opts.Stack.Images.Capnico
+	if ref == "" || len(r.problems) > 0 {
+		return
+	}
+	if !r.hasItem(capnicoItem, TypeManifest) {
+		r.problem("stack config: images.capnico: the deploy path has no manifest item named %s", capnicoItem)
+		return
+	}
+	if err := controllerdeploy.CheckCAPNICoImage(ref); err != nil {
+		r.problem("stack config: images.capnico: %v", err)
+		return
+	}
+	rel, err := ReadRelease(filepath.Join(r.opts.DeployPath, capnicoItem))
+	if err != nil {
+		r.problem("%s: %v", capnicoItem, err)
+		return
+	}
+	if rel.Image == "" {
+		r.problem("%s: release.yaml does not say which image the manifest runs (image: <repository>:<tag>), so images.capnico has nothing to replace", capnicoItem)
+		return
+	}
+	values := imageValues(ref)
+	newName, _ := values["repository"].(string)
+	pinKey, pin := "newTag", values["tag"]
+	if digest, _ := values["digest"].(string); digest != "" {
+		pinKey, pin = "digest", digest
+	}
+	if !r.kustomizeImage(capnicoItem, rel.Image, newName, pinKey, fmt.Sprint(pin)) {
+		return
+	}
+	if rel.Artifact != "" && r.opts.Release != nil {
+		r.note("%s: images.capnico in the stack config overrides the release's image", capnicoItem)
+	}
+	r.note("%s: image %s -> %s", capnicoItem, rel.Image, ref)
 }
 
 // image records an image the rendered tree runs, as repository@digest: the

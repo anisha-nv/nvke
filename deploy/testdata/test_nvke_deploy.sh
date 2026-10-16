@@ -162,6 +162,18 @@ grep -q '^SITE_NAME=nvke-site$' "${rendered}/site.env" && grep -q '^SITE_TRUST_D
 expect "the operator is told which files hold credentials" "^${rendered} holds this site's credentials: controller/site-values.yaml, postgresql/site-values.yaml, temporal/site-values.yaml, nvke-base-config/20-nico-credentials.yaml, .*\. Delete it after the install\.$" "${out}"
 [[ "$(cat "${rendered}/.gitignore")" == "*" ]] && pass "the rendered tree ignores itself for git" || fail ".gitignore"
 
+# images.capnico in the stack config repoints the CAPNICo manifest's image with
+# no release, and the executor applies it through the kustomization.
+capnico_digest="sha256:$(printf 'c%.0s' $(seq 64))"
+sed "s#\"capnico\": \"\"#\"capnico\": \"registry.example.test/capnico/controller@${capnico_digest}\"#" "${STACK}" >"${WORK}/stack/stack-capnico.json"
+grep -q 'registry.example.test/capnico/controller' "${WORK}/stack/stack-capnico.json" || fail "the stack config has no images.capnico to set"
+out="$("${NVKECTL}" render deploy-path --deploy-path "${NICO}" --sitespec "${SITESPEC}" --stack-config "${WORK}/stack/stack-capnico.json" --arch linux/arm64 --out "${WORK}/capnico-override" 2>&1)" || fail "render with images.capnico exited $?: ${out}"
+expect "the render says the capnico image was repointed" '^capnico: image ghcr.io/dsx-ai-factory/cluster-api-provider-nico/controller:v[0-9.]+ -> registry.example.test/capnico/controller@sha256:c+$' "${out}"
+grep -q "newName: \"registry.example.test/capnico/controller\"" "${WORK}/capnico-override/capnico/kustomization.yaml" && grep -q "digest: \"${capnico_digest}\"" "${WORK}/capnico-override/capnico/kustomization.yaml" && pass "the capnico kustomization names the image from the stack config" || fail "capnico kustomization: $(cat "${WORK}/capnico-override/capnico/kustomization.yaml" 2>&1)"
+out="$(bash "${EXECUTOR}" install --deploy-path "${WORK}/capnico-override" --dry-run 2>&1)" || fail "the capnico-override dry run exited $?"
+expect "the executor applies the capnico item through the kustomization" "^.*kustomization: registry.example.test/capnico/controller@${capnico_digest}$" "${out}"
+[[ ! -e "${rendered}/capnico/kustomization.yaml" ]] && pass "without images.capnico or a release the capnico item stays the committed manifest" || fail "a capnico kustomization without an override"
+
 out="$(bash "${EXECUTOR}" install --deploy-path "${rendered}" --dry-run 2>&1)" || fail "rendered dry run exited $?"
 expect "the controller takes its site values" "helm upgrade --install nke-controller .*--values ${rendered}/controller/values.yaml --values ${rendered}/controller/overlay.yaml --values ${rendered}/controller/site-values.yaml" "${out}"
 expect "spire takes its site values" "helm upgrade --install spire .*--values ${rendered}/spire/site-values.yaml" "${out}"

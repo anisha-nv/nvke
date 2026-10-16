@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -27,7 +26,6 @@ import (
 	// Aliased: this file has a local variable named engine.
 	bootstrapengine "github.com/dsx-ai-factory/nvke/cli/internal/bootstrap/engine"
 	"github.com/dsx-ai-factory/nvke/cli/internal/bootstrap/etcdkey"
-	"github.com/dsx-ai-factory/nvke/cli/internal/bootstrap/nvkrrelease"
 	"github.com/dsx-ai-factory/nvke/cli/internal/bootstrap/sitecluster"
 	"github.com/dsx-ai-factory/nvke/cli/internal/bootstrap/sitespec"
 	"github.com/dsx-ai-factory/nvke/cli/internal/bootstrap/spireentrydump"
@@ -67,11 +65,9 @@ type bootstrapSiteOptions struct {
 	diagnosticsDir    string
 	keepBootstrapKind bool
 
-	// release is an NVKR release description. With infra.provider nico its
-	// capnico-controller artifact replaces the CAPNICo image, as the deploy
-	// path's render does. arch selects the artifact's architecture.
-	release string
-	arch    string
+	// capnicoImage is the --capnico-image flag: with infra.provider nico it
+	// replaces the image the bootstrap CAPNICo runs.
+	capnicoImage string
 
 	// disableMTLS stands the site up without SPIFFE, for bring-up debugging.
 	disableMTLS bool
@@ -152,7 +148,7 @@ dispatched or any node is touched.
 The bootstrap side-loads the images this repository builds, nke-controller:latest
 and, with the provisioned provider, cluster-api-provider-provisioned:latest,
 which "make -C cli images" builds. With nico, CAPNICo's image is public and
-pulled by the cluster; --release pins it to an NVKR release's artifact. --controller-image and --provisioned-provider-image, or
+pulled by the cluster; --capnico-image names another. --controller-image and --provisioned-provider-image, or
 NVKECTL_CONTROLLER_IMAGE and NVKECTL_CAPI_PROVISIONED_IMAGE, name other images, such as
 ones pushed to a registry; a flag wins over its variable. cli/README.md lists
 every NVKECTL_* variable.
@@ -186,10 +182,6 @@ site spec file format.`,
 			if id := telemetry.RunFrom(cmd.Context()).TraceID(); id != "" {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Trace ID: %s\n", id)
 			}
-			// arch has a default, so only Changed tells an explicit value from none.
-			if cmd.Flags().Changed("arch") && opts.release == "" {
-				return errors.New("--arch selects the architecture of a --release artifact; pass --release too, or drop --arch")
-			}
 			return runBootstrapSite(cmd.Context(), cmd.OutOrStdout(), opts)
 		},
 	}
@@ -203,14 +195,9 @@ site spec file format.`,
 		"Controller image to deploy (overrides NVKECTL_CONTROLLER_IMAGE and the manifest default)")
 	cmd.Flags().StringVar(&opts.provisionedProviderImage, "provisioned-provider-image", "",
 		"Provisioned-provider image to deploy (overrides NVKECTL_CAPI_PROVISIONED_IMAGE and the manifest default)")
-	cmd.Flags().StringVar(&opts.release, "release", "",
-		"NVKR release description whose "+controllerdeploy.CAPNICoArtifact+" artifact replaces the bootstrap CAPNICo image "+
-			"with its pinned digest, as \"render deploy-path --release\" does for the site controller's CAPNICo. "+
-			"The release description is not verified: run \"nvkr release verify\" on the same reference first. "+
-			"Only with infra.provider nico.")
-	cmd.Flags().StringVar(&opts.arch, "arch", "linux/"+runtime.GOARCH,
-		"Architecture of the release artifact to use: the bootstrap host's, since the bootstrap CAPNICo runs in its Kind cluster. "+
-			"Only with --release.")
+	cmd.Flags().StringVar(&opts.capnicoImage, "capnico-image", "",
+		"CAPNICo image to deploy in the bootstrap cluster, as repository:tag or repository@sha256:<digest>; "+
+			"a digest is not moved by a retag. Overrides the digest the bootstrap manifest pins. Only with infra.provider nico.")
 	cmd.Flags().StringVar(&opts.diagnosticsDir, "diagnostics-dir",
 		envOrDefault("NVKECTL_BOOTSTRAP_DIAGNOSTICS_DIR", "cluster-diagnostics"),
 		"Directory a failed bootstrap writes cluster diagnostics to before tearing the cluster down. "+
@@ -321,8 +308,8 @@ func runBootstrapSite(ctx context.Context, out io.Writer, opts *bootstrapSiteOpt
 	if warning := inv.NicoVIPWarning(); warning != "" {
 		logger.Warn(warning)
 	}
-	// Resolved here too, so a bad --release or --arch fails the dry run.
-	capnicoImage, err := capnicoReleaseImage(inv, opts.release, opts.arch)
+	// Checked here too, so a bad --capnico-image fails the dry run.
+	capnicoImage, err := checkCAPNICoImage(inv, opts.capnicoImage)
 	if err != nil {
 		return err
 	}
@@ -1209,27 +1196,21 @@ func capnicoAccess(inv *sitespec.SiteSpec) (controllerdeploy.CAPNICoAccess, erro
 	}, nil
 }
 
-// capnicoReleaseImage returns the image the bootstrap CAPNICo runs when a
-// release is given: the release's capnico-controller artifact as
-// repository@digest, which is how the deploy path's render names it. It returns
-// "" without a release, which leaves the manifest's own image. A release with
-// provider provisioned is refused, since nothing there would read it.
-func capnicoReleaseImage(inv *sitespec.SiteSpec, releasePath, arch string) (string, error) {
-	if releasePath == "" {
+// checkCAPNICoImage returns the image the bootstrap CAPNICo runs when
+// --capnico-image names one, and "" without it, which leaves the digest the
+// bootstrap manifest pins. An image with provider provisioned is refused,
+// since nothing there would run it.
+func checkCAPNICoImage(inv *sitespec.SiteSpec, image string) (string, error) {
+	if image == "" {
 		return "", nil
 	}
 	if !inv.IsNico() {
-		return "", errors.New("--release only applies with infra.provider nico: it replaces the bootstrap CAPNICo image, and no other provider installs one")
+		return "", errors.New("--capnico-image only applies with infra.provider nico: it replaces the bootstrap CAPNICo image, and no other provider installs one")
 	}
-	release, err := nvkrrelease.Load(releasePath)
-	if err != nil {
-		return "", err
+	if err := controllerdeploy.CheckCAPNICoImage(image); err != nil {
+		return "", fmt.Errorf("--capnico-image: %w", err)
 	}
-	artifact, err := release.Select(controllerdeploy.CAPNICoArtifact, arch)
-	if err != nil {
-		return "", fmt.Errorf("--release %s: %w", releasePath, err)
-	}
-	return artifact.Repository() + "@" + artifact.Digest, nil
+	return image, nil
 }
 
 // waitForCWEHostEndpoint verifies the same host path that the create request

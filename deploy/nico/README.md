@@ -180,6 +180,7 @@ rendered path, after `site-values.yaml`.
 | Postgres / Temporal password | `NVKECTL_DATABASE_PASSWORD`, on both Temporal datastores; the controller reads its connection string from a Secret | generated per run |
 | controller image | the release, or the stack config's `images.controller` | built per run |
 | profiles image | the release, or the stack config's `images.profiles` | built per run |
+| CAPNICo image | the stack config's `images.capnico`, else the release's `capnico-controller` artifact, else the tag `capnico/capnico.yaml` names | built per run |
 | telemetry backend | `--values-for nktp=<file>`, else the chart's bundled development backend | not installed |
 | telemetry `k8s.cluster.name` | `clusterName`, through the `nvke-base-config` template | not installed |
 

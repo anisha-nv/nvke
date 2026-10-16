@@ -70,13 +70,15 @@ func TestLoad(t *testing.T) {
 		body := strings.NewReplacer(
 			`"controller": ""`, `"controller": "registry.example.com/nvke/cwe:v1"`,
 			`"profiles": ""`, `"profiles": "registry.example.com/nvke/profiles@sha256:`+strings.Repeat("a", 64)+`"`,
+			`"capnico": ""`, `"capnico": "registry.example.com/nvke/capnico:v1"`,
 			`"mirror": ""`, `"mirror": "mirror.example.com:5000"`,
 		).Replace(filled(t))
 		c, err := Load(write(t, body))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if c.Images.Controller != "registry.example.com/nvke/cwe:v1" || !strings.HasPrefix(c.Images.Profiles, "registry.example.com/nvke/profiles@sha256:") || c.Mirror != "mirror.example.com:5000" {
+		if c.Images.Controller != "registry.example.com/nvke/cwe:v1" || !strings.HasPrefix(c.Images.Profiles, "registry.example.com/nvke/profiles@sha256:") ||
+			c.Images.Capnico != "registry.example.com/nvke/capnico:v1" || c.Mirror != "mirror.example.com:5000" {
 			t.Errorf("optional values: %+v", c)
 		}
 	})

@@ -41,6 +41,7 @@ One JSON object, the keys of [`examples/stack-config.json`](examples/stack-confi
 | `nico.apiName` | yes | The API name in the NICo API path, for example `forge` |
 | `images.controller` | no | Overrides the controller image, as `repository:tag` or `repository@sha256:<digest>`; defaults to the release's `cwe` artifact, or without a release to the overlay's pinned image |
 | `images.profiles` | no | Overrides the profile content image; defaults to the release's `controller-profiles` artifact. Required without a release: `deploy/nico` enables the image without naming it |
+| `images.capnico` | no | Overrides the CAPNICo image, as `repository:tag` or `repository@sha256:<digest>`; defaults to the release's `capnico-controller` artifact, or without a release to the tag `deploy/nico/capnico/capnico.yaml` names. It wins over the release. `nvkectl bootstrap site --capnico-image` sets the same image for the bootstrap cluster's CAPNICo |
 | `mirror` | no | A registry the external images are pulled from instead of their upstream registries, as `host[:port][/prefix]`, no scheme |
 
 ## check-site.sh

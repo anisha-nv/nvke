@@ -191,19 +191,16 @@ the chart does not, and needs only `kubectl`.
 
 By default the image is the digest that `bootstrap-manifest.yaml` lists for the
 tag the manifest names (`nvkectl get bootstrap-manifest`), so a retagged image
-does not change what runs. Pass `--release <file>` to
-pin it to an NVKR release's `capnico-controller` artifact instead, as
-`nvkectl render deploy-path --release` does for the site controller's CAPNICo:
-the manifest's one image is replaced with the artifact's `repository@digest`.
-The release description is not verified, here or there: run `nvkr release
-verify` on the same reference first.
-`--arch` (default the bootstrap host's) picks the artifact's architecture, since
-the bootstrap CAPNICo runs in the Kind cluster on that host. It is refused
-without `--release`, whatever the provider, and `--release` is itself refused
-with the `provisioned` provider, where no CAPNICo is installed. The Kind node pulls
-the image anonymously, so the release's `capnico-controller` image must be
-publicly pullable; staging images from a release run directory, as the deploy path does for the
-node, is not supported here. The Kind host must reach `ghcr.io`
+does not change what runs. Pass `--capnico-image <image>`, as `repository:tag`
+or `repository@sha256:<digest>`, to run another image for one bootstrap, such
+as a build you pushed: the manifest's one image is replaced with it. A digest
+is not moved by a retag. `nvkectl render deploy-path` takes the site
+controller's CAPNICo image from `images.capnico` in the stack config, so give
+both the same value to run one image in both. `--capnico-image` is refused with
+the `provisioned` provider, where no CAPNICo is installed. The Kind node pulls
+the image anonymously, so the image must be publicly pullable; staging an image
+from a local directory, as the deploy path does for the node, is not supported
+here. The Kind host must reach `ghcr.io`
 and the NICo API and each new node's agent port, and the nodes must reach the
 SPIRE server the bootstrap publishes on the host. After every node joins, the
 bootstrap calls the site's Kubernetes API to write the kubeconfig, so the host

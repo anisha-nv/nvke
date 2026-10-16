@@ -2125,32 +2125,30 @@ func TestCapnicoAccess(t *testing.T) {
 	}
 }
 
-// TestCapnicoReleaseImage: a release's capnico-controller artifact becomes the
-// bootstrap CAPNICo image as repository@digest, for the architecture asked, and
-// only with the nico provider.
-func TestCapnicoReleaseImage(t *testing.T) {
-	const release = "../../../deploy/testdata/nvkr-release/valid.json"
+// TestCheckCAPNICoImage: an image named with --capnico-image reaches the
+// installer as given, only with the nico provider and only as a reference.
+func TestCheckCAPNICoImage(t *testing.T) {
 	nico := &sitespec.SiteSpec{Infra: sitespec.Infra{Provider: sitespec.ProviderNico}}
 	provisioned := &sitespec.SiteSpec{Infra: sitespec.Infra{Provider: sitespec.ProviderProvisioned}}
+	digest := "registry.example/capnico/controller@sha256:" + strings.Repeat("d", 64)
 
 	tests := []struct {
 		name    string
 		inv     *sitespec.SiteSpec
-		release string
-		arch    string
+		image   string
 		want    string
 		wantErr string
 	}{
-		{"no release leaves the manifest's image", nico, "", "linux/amd64", "", ""},
-		{"amd64", nico, release, "linux/amd64", "ghcr.io/example/recipes/capnico-controller@sha256:" + strings.Repeat("d", 64), ""},
-		{"arm64", nico, release, "linux/arm64", "ghcr.io/example/recipes/capnico-controller-arm64@sha256:" + strings.Repeat("e", 64), ""},
-		{"provisioned refuses a release", provisioned, release, "linux/amd64", "", "only applies with infra.provider nico"},
-		{"missing release file", nico, filepath.Join(t.TempDir(), "absent.json"), "linux/amd64", "", "absent.json"},
-		{"unknown architecture", nico, release, "linux/riscv64", "", "arch linux/riscv64"},
+		{"no flag leaves the manifest's digest", nico, "", "", ""},
+		{"a digest", nico, digest, digest, ""},
+		{"a tag", nico, "registry.example/capnico/controller:v9", "registry.example/capnico/controller:v9", ""},
+		{"provisioned refuses it", provisioned, digest, "", "only applies with infra.provider nico"},
+		{"neither tag nor digest", nico, "registry.example/capnico/controller", "", "--capnico-image: " + `"registry.example/capnico/controller" names neither`},
+		{"not a reference", nico, "not an image", "", "--capnico-image: " + `"not an image" is not an image reference`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := capnicoReleaseImage(tt.inv, tt.release, tt.arch)
+			got, err := checkCAPNICoImage(tt.inv, tt.image)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("error = %v, want it to contain %q", err, tt.wantErr)
@@ -2158,7 +2156,7 @@ func TestCapnicoReleaseImage(t *testing.T) {
 				return
 			}
 			if err != nil || got != tt.want {
-				t.Fatalf("capnicoReleaseImage = %q, %v; want %q", got, err, tt.want)
+				t.Fatalf("checkCAPNICoImage = %q, %v; want %q", got, err, tt.want)
 			}
 		})
 	}
@@ -2278,13 +2276,15 @@ func TestRunBootstrapSiteStopsOnRemovedSettings(t *testing.T) {
 	}
 }
 
-// TestBootstrapSite_ArchNeedsARelease: --arch only picks a --release artifact,
-// so an explicit one without --release is refused instead of ignored. The
-// default does not count, which is why the check reads the flag's Changed.
-func TestBootstrapSite_ArchNeedsARelease(t *testing.T) {
-	_, _, err := runGenerate(t, "bootstrap", "site", "-f", "unused.yaml", "--arch", "linux/riscv64")
-	if err == nil || !strings.Contains(err.Error(), "--arch") || !strings.Contains(err.Error(), "--release") {
-		t.Fatalf("err = %v, want --arch refused without --release", err)
+// TestBootstrapSite_ReleaseAndArchAreGone: the bootstrap takes the CAPNICo
+// image as --capnico-image; the NVKR release flags it once had are refused
+// as unknown flags.
+func TestBootstrapSite_ReleaseAndArchAreGone(t *testing.T) {
+	for _, flag := range []string{"--release", "--arch"} {
+		_, _, err := runGenerate(t, "bootstrap", "site", "-f", "unused.yaml", flag, "x")
+		if err == nil || !strings.Contains(err.Error(), "unknown flag: "+flag) {
+			t.Errorf("%s: err = %v, want an unknown flag", flag, err)
+		}
 	}
 }
 

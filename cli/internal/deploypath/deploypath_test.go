@@ -991,6 +991,88 @@ func TestRender_SiteAndRelease(t *testing.T) {
 
 // The TPM attestor checksum follows the architecture the render was given,
 // since the nodes' architecture lives in no file.
+// images.capnico in the stack config repoints the capnico item's image,
+// without a release and over one, with the same kustomization a release's
+// artifact gives; the key is checked as the bootstrap's --capnico-image is.
+func TestRender_CapnicoImageOverride(t *testing.T) {
+	const upstream = "ghcr.io/dsx-ai-factory/cluster-api-provider-nico/controller"
+	pinned := "sha256:" + strings.Repeat("c", 64)
+	render := func(t *testing.T, ref string, release *nvkrrelease.Release, p *registry) (string, []string, error) {
+		t.Helper()
+		spec, stack := filledInputs(t, false, nil)
+		stack.Images.Capnico = ref
+		out := filepath.Join(t.TempDir(), "rendered")
+		opts := RenderOptions{AllowTempOut: true, DeployPath: nico, Site: spec, Stack: stack, Arch: "linux/arm64", Out: out}
+		if release != nil {
+			opts.Release, opts.Registry = release, p.open
+		}
+		result, err := Render(context.Background(), opts)
+		if err != nil {
+			return out, nil, err
+		}
+		return out, result.Notes, nil
+	}
+
+	// No override and no release: the item stays the committed manifest.
+	out, _, err := render(t, "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "capnico", "kustomization.yaml")); err == nil {
+		t.Error("a kustomization without an override or a release")
+	}
+
+	for name, tc := range map[string]struct{ ref, pinKey, pin, repo string }{
+		"a digest":              {"registry.example/capnico/controller@" + pinned, "digest", pinned, "registry.example/capnico/controller"},
+		"a tag":                 {"registry.example/capnico/controller:v9.9.9", "newTag", "v9.9.9", "registry.example/capnico/controller"},
+		"a tag beside a digest": {"registry.example/capnico/controller:v9.9.9@" + pinned, "digest", pinned, "registry.example/capnico/controller"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, notes, err := render(t, tc.ref, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			kust, _ := os.ReadFile(filepath.Join(out, "capnico", "kustomization.yaml"))
+			want := "resources:\n  - capnico.yaml\nimages:\n  - name: \"" + upstream + "\"\n    newName: \"" + tc.repo + "\"\n    " + tc.pinKey + ": \"" + tc.pin + "\"\n"
+			if string(kust) != want {
+				t.Errorf("kustomization:\n%s\nwant:\n%s", kust, want)
+			}
+			if !contains(notes, "capnico: image "+upstream+":v0.0.45 -> "+tc.ref) {
+				t.Errorf("notes: %v", notes)
+			}
+		})
+	}
+
+	// Over a release that carries the artifact, the stack config wins and
+	// says so.
+	p := newRegistry()
+	repo := "ghcr.io/example/recipes"
+	capARM := imageArtifact(repo, "capnico-controller-arm64", "linux/arm64")
+	outputs := []nvkrrelease.Artifact{imageArtifact(repo, "cwe", ""), imageArtifact(repo, "controller-profiles", ""), capARM}
+	release := &nvkrrelease.Release{Reference: repo + "/releases@" + digest([]byte("r")), Outputs: outputs}
+	out, notes, err := render(t, "registry.example/capnico/controller:v9.9.9", release, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kust, _ := os.ReadFile(filepath.Join(out, "capnico", "kustomization.yaml"))
+	if !strings.Contains(string(kust), `newName: "registry.example/capnico/controller"`) || strings.Contains(string(kust), capARM.Digest) {
+		t.Errorf("the release's artifact beat images.capnico:\n%s", kust)
+	}
+	if !contains(notes, "capnico: images.capnico in the stack config overrides the release's image") {
+		t.Errorf("notes: %v", notes)
+	}
+
+	for ref, want := range map[string]string{
+		"registry.example/capnico/controller":          "images.capnico: \"registry.example/capnico/controller\" names neither a tag nor a digest",
+		"not an image":                                 "images.capnico: \"not an image\" is not an image reference",
+		"registry.example/c:v1\n    newName: \"evil\"": "is not an image reference",
+	} {
+		if _, _, err := render(t, ref, nil, nil); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("images.capnico %q: error %v, want one containing %q", ref, err, want)
+		}
+	}
+}
+
 func TestRender_ChecksumPerArchitecture(t *testing.T) {
 	for arch, want := range map[string]string{"linux/amd64": "46d0caad8c25a027dd11c93e18b58a8bc6fbd9f1fe2e36fa2a0dd440986de4dc", "linux/arm64": "b69d0153c8241383f24da138bc85429a620d9f962a2f10abb314aa0e39046d16"} {
 		spec, stack := filledInputs(t, false, nil)
