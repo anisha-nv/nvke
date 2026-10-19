@@ -5,6 +5,7 @@ package activities
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/log"
+	"go.temporal.io/sdk/temporal"
 
 	nvkeproto "github.com/dsx-ai-factory/nvke/agent/pkg/agent/proto"
 
@@ -22,7 +24,9 @@ import (
 const (
 	capdBootstrapSuccessPath           = "/run/cluster-api/bootstrap-success.complete"
 	minCloudInitStatusPreflightVersion = "0.1.24"
+	nodePreflightStatusNotReady        = "notready"
 	nodePreflightStatusReady           = "ready"
+	nodePreflightNotReadyErrorType     = "NodePreflightNotReady"
 )
 
 type NodePreflightInput struct {
@@ -53,7 +57,10 @@ func (a *Activities) nodePreflight(ctx context.Context, nodeID uuid.UUID, logger
 
 	agentVersion, err := a.nodeAgentClient.GetAgentVersion(ctx, node)
 	if err != nil {
-		return fmt.Errorf("node agent is not ready on node %s: %w", node.Name, err)
+		return nodePreflightNotReadyError(
+			fmt.Sprintf("node agent is not ready on node %s", node.Name),
+			err,
+		)
 	}
 
 	// agent versions before v0.1.24 do not have nvkeproto.CheckCloudInitStatus.
@@ -73,12 +80,27 @@ func (a *Activities) nodePreflight(ctx context.Context, nodeID uuid.UUID, logger
 		return err
 	}
 	preflightStatus := strings.ToLower(resp.GetStatus())
-
-	if preflightStatus != nodePreflightStatusReady {
-		return fmt.Errorf("node preflight status %q: %s", resp.GetStatus(), resp.GetErrorMessage())
+	if preflightStatus == nodePreflightStatusReady {
+		return nil
 	}
 
-	return nil
+	message := fmt.Sprintf("node preflight status %q: %s", resp.GetStatus(), resp.GetErrorMessage())
+	if preflightStatus == nodePreflightStatusNotReady {
+		return nodePreflightNotReadyError(message, nil)
+	}
+
+	return errors.New(message)
+}
+
+func nodePreflightNotReadyError(message string, cause error) error {
+	return temporal.NewApplicationErrorWithOptions(
+		message,
+		nodePreflightNotReadyErrorType,
+		temporal.ApplicationErrorOptions{
+			Cause:    cause,
+			Category: temporal.ApplicationErrorCategoryBenign,
+		},
+	)
 }
 
 func nodeAgentVersionAtLeast(version, minVersion string, defaultOnParseError bool) bool {

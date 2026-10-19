@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	temporallog "go.temporal.io/sdk/log"
+	"go.temporal.io/sdk/temporal"
 
 	nvkeproto "github.com/dsx-ai-factory/nvke/agent/pkg/agent/proto"
 
@@ -34,7 +35,12 @@ func TestNodePreflight(t *testing.T) {
 		capiInfraMachineTemplate json.RawMessage
 		agentVersion             string
 		agentVersionErr          error
+		preflightErr             error
+		preflightStatus          string
+		preflightErrorMessage    string
 		wantErr                  string
+		wantBenignError          bool
+		wantOrdinaryError        bool
 		wantPreflightCalls       int
 		assertPreflightRequest   func(t *testing.T, req *nvkeproto.ExecuteNodePreflightRequest)
 	}{
@@ -80,30 +86,77 @@ func TestNodePreflight(t *testing.T) {
 			siteID:          uuid.New(),
 			agentVersionErr: versionErr,
 			wantErr:         "node agent is not ready",
+			wantBenignError: true,
+		},
+		{
+			name:                  "preflight not ready is an expected retry",
+			siteID:                uuid.New(),
+			agentVersion:          "0.1.24",
+			preflightStatus:       nodePreflightStatusNotReady,
+			preflightErrorMessage: "cloud-init is still running",
+			wantErr:               `node preflight status "notready": cloud-init is still running`,
+			wantBenignError:       true,
+			wantPreflightCalls:    1,
+		},
+		{
+			name:                  "preflight error status remains an ordinary error",
+			siteID:                uuid.New(),
+			agentVersion:          "0.1.24",
+			preflightStatus:       "error",
+			preflightErrorMessage: "cloud-init failed",
+			wantErr:               `node preflight status "error": cloud-init failed`,
+			wantOrdinaryError:     true,
+			wantPreflightCalls:    1,
+		},
+		{
+			name:               "unexpected preflight RPC failure remains an ordinary error",
+			siteID:             uuid.New(),
+			agentVersion:       "0.1.24",
+			preflightErr:       errors.New("unexpected RPC failure"),
+			wantErr:            "unexpected RPC failure",
+			wantOrdinaryError:  true,
+			wantPreflightCalls: 1,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			activity, node := setupNodePreflightRequestTest(t, ctx, tt.siteID, tt.capiInfraCluster, tt.capiInfraMachineTemplate)
+			preflightStatus := tt.preflightStatus
+			if preflightStatus == "" {
+				preflightStatus = nodePreflightStatusReady
+			}
 			nodeAgent := &agenttest.FakeClient{
 				AgentVersion:    tt.agentVersion,
 				AgentVersionErr: tt.agentVersionErr,
+				PreflightErr:    tt.preflightErr,
 				PreflightResp: &nvkeproto.ExecuteNodePreflightResponse{
-					Status: nodePreflightStatusReady,
+					Status:       preflightStatus,
+					ErrorMessage: tt.preflightErrorMessage,
 				},
 			}
 			activity.nodeAgentClient = nodeAgent
 
 			err := activity.nodePreflight(ctx, node.ID, logger)
+			assert.Equal(t, tt.wantPreflightCalls, nodeAgent.PreflightCalls)
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantErr)
+				if tt.wantBenignError {
+					var applicationErr *temporal.ApplicationError
+					require.ErrorAs(t, err, &applicationErr)
+					assert.Equal(t, nodePreflightNotReadyErrorType, applicationErr.Type())
+					assert.Equal(t, temporal.ApplicationErrorCategoryBenign, applicationErr.Category())
+					assert.False(t, applicationErr.NonRetryable())
+				}
+				if tt.wantOrdinaryError {
+					var applicationErr *temporal.ApplicationError
+					assert.NotErrorAs(t, err, &applicationErr)
+				}
 				return
 			}
 			require.NoError(t, err)
 
-			assert.Equal(t, tt.wantPreflightCalls, nodeAgent.PreflightCalls)
 			if tt.assertPreflightRequest != nil {
 				require.NotNil(t, nodeAgent.LastPreflightReq)
 				tt.assertPreflightRequest(t, nodeAgent.LastPreflightReq)
