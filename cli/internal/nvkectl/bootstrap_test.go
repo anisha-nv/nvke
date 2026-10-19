@@ -313,6 +313,11 @@ func startFakeCWEAPIWithNodes(t *testing.T, provisioned bool, total, joined int)
 // cluster, a successful create, and a resolvable host manifest digest.
 type fakeBootstrapRunner struct{}
 
+func (f fakeBootstrapRunner) Capture(ctx context.Context, env map[string]string, name string, args ...string) (string, string, error) {
+	out, err := f.Run(ctx, env, name, args...)
+	return out, "", err
+}
+
 func (fakeBootstrapRunner) Run(_ context.Context, _ map[string]string, name string, args ...string) (string, error) {
 	if len(args) < 2 {
 		return "", nil
@@ -782,6 +787,11 @@ func (f runnerFunc) Run(ctx context.Context, env map[string]string, name string,
 	return f(ctx, env, name, args...)
 }
 
+func (f runnerFunc) Capture(ctx context.Context, env map[string]string, name string, args ...string) (string, string, error) {
+	out, err := f(ctx, env, name, args...)
+	return out, "", err
+}
+
 // The flag is gone outright rather than rejecting "docker" by value, so
 // cobra's own unknown-flag error is the contract.
 func TestBootstrapSiteRejectsBootstrapProviderFlag(t *testing.T) {
@@ -1033,6 +1043,12 @@ func (r *recordingRunner) Run(ctx context.Context, env map[string]string, name s
 	r.names = append(r.names, name)
 	r.calls = append(r.calls, args)
 	return r.next.Run(ctx, env, name, args...)
+}
+
+func (r *recordingRunner) Capture(ctx context.Context, env map[string]string, name string, args ...string) (string, string, error) {
+	r.names = append(r.names, name)
+	r.calls = append(r.calls, args)
+	return r.next.Capture(ctx, env, name, args...)
 }
 
 func (r *recordingRunner) sawArgs(prefix ...string) bool {

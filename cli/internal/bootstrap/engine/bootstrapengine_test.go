@@ -46,6 +46,11 @@ func (f *fakeRunner) Run(_ context.Context, env map[string]string, name string, 
 	return "", nil
 }
 
+func (f *fakeRunner) Capture(ctx context.Context, env map[string]string, name string, args ...string) (string, string, error) {
+	out, err := f.Run(ctx, env, name, args...)
+	return out, "", err
+}
+
 func joinArgs(args []string) string { return strings.Join(args, " ") }
 
 // TestCreate_AlwaysSetsNerdctlProviderEnv pins that every kind invocation

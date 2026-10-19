@@ -139,6 +139,9 @@ type CommandRunner interface {
 	// the command exited non-zero or failed to start; the returned output is
 	// still populated on error so callers can surface it.
 	Run(ctx context.Context, env map[string]string, name string, args ...string) (output string, err error)
+
+	// Capture returns stdout and stderr separately, including on failure.
+	Capture(ctx context.Context, env map[string]string, name string, args ...string) (stdout, stderr string, err error)
 }
 
 // ExecCommandRunner is the real CommandRunner, backed by os/exec.
@@ -146,6 +149,24 @@ type ExecCommandRunner struct{}
 
 // Run implements CommandRunner.
 func (ExecCommandRunner) Run(ctx context.Context, env map[string]string, name string, args ...string) (string, error) {
+	cmd := command(ctx, env, name, args...)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err := cmd.Run()
+	return out.String(), err
+}
+
+// Capture implements CommandRunner with separate output streams.
+func (ExecCommandRunner) Capture(ctx context.Context, env map[string]string, name string, args ...string) (string, string, error) {
+	cmd := command(ctx, env, name, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	return string(stdout), stderr.String(), err
+}
+
+func command(ctx context.Context, env map[string]string, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
 	if len(env) > 0 {
 		cmd.Env = os.Environ()
@@ -153,11 +174,7 @@ func (ExecCommandRunner) Run(ctx context.Context, env map[string]string, name st
 			cmd.Env = append(cmd.Env, k+"="+v)
 		}
 	}
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	err := cmd.Run()
-	return out.String(), err
+	return cmd
 }
 
 // Cluster is a created, running bootstrap Kind cluster.
@@ -354,7 +371,7 @@ func (e *Engine) LoadImage(ctx context.Context, clusterName, image string) error
 	e.log.Info("loading image into bootstrap kind cluster",
 		"cluster", clusterName, "image", image)
 
-	archivePath, cleanup, err := saveImageArchive(ctx, e.Runner, image)
+	archivePath, cleanup, err := saveImageArchive(ctx, e.Runner, image, e.log)
 	if err != nil {
 		return err
 	}
@@ -369,8 +386,8 @@ func (e *Engine) LoadImage(ctx context.Context, clusterName, image string) error
 
 // saveImageArchive saves image to a temp tarball via `nerdctl save`. The
 // caller must call cleanup once done with the file.
-func saveImageArchive(ctx context.Context, runner CommandRunner, image string) (path string, cleanup func(), err error) {
-	if err := flattenToHostPlatform(ctx, runner, RuntimeCLI, image); err != nil {
+func saveImageArchive(ctx context.Context, runner CommandRunner, image string, log *slog.Logger) (path string, cleanup func(), err error) {
+	if err := flattenToHostPlatform(ctx, runner, RuntimeCLI, image, log); err != nil {
 		return "", nil, err
 	}
 
@@ -405,15 +422,18 @@ func saveImageArchive(ctx context.Context, runner CommandRunner, image string) (
 // that call below) -- without it, `tag` fails with "not found" for a digest
 // `image inspect` just resolved, confirmed against a real nerdctl-provider
 // CI run: https://github.com/dsx-ai-factory/nvke/actions/runs/33088745329.
-func flattenToHostPlatform(ctx context.Context, runner CommandRunner, cli, image string) error {
+func flattenToHostPlatform(ctx context.Context, runner CommandRunner, cli, image string, log *slog.Logger) error {
 	repo, ok := repoOfTaggedRef(image)
 	if !ok {
 		return nil
 	}
-	out, err := runner.Run(ctx, nil, cli, "image", "inspect", "--mode=native",
+	out, stderr, err := runner.Capture(ctx, nil, cli, "image", "inspect", "--mode=native",
 		"--format", "{{.Image.Target.Digest}} {{.ManifestDesc.Digest}}", image)
+	if stderr != "" {
+		log.WarnContext(ctx, "container runtime image inspection diagnostics", "image", image, "stderr", stderr)
+	}
 	if err != nil {
-		return fmt.Errorf("%s image inspect %s: %w\n%s", cli, image, err, out)
+		return fmt.Errorf("%s image inspect %s: %w\n%s%s", cli, image, err, out, stderr)
 	}
 	// One line per store entry matching image, all the same pair.
 	line, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
