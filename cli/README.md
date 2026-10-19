@@ -292,6 +292,7 @@ through `KIND_EXPERIMENTAL_PROVIDER=nerdctl`, which `nvkectl` sets itself.
 | `NVKECTL_NICO_ALLOW_INSECURE_ENDPOINT` | unset | Set to `1` to let `infra.nico.remote.endpoint` be an http URL. The bootstrap sends the NICo token there, so without it `bootstrap site` and `validate sitespec --bootstrap-only` require https; it is for a local or simulated NICo. |
 | `NVKECTL_BOOTSTRAP_CLUSTER_TIMEOUT` | `30m` | How long to wait for the site cluster to finish provisioning (`--timeout`) |
 | `NVKECTL_CONTROLLER_IMAGE` | `nke-controller:latest` | Controller image to deploy. A reference without a registry is side-loaded from the local image store; `make -C cli images` builds the default with nerdctl. A reference with a registry host is pulled with `nerdctl pull` when it is not already in containerd's image store, then loaded into the ephemeral cluster; log in to the registry first (`nerdctl login`). For Docker Hub, write `docker.io/<org>/<name>`. `--controller-image` overrides it for one run. |
+| `NVKECTL_CONTROLLER_PROFILES_IMAGE` | unset | OCI content image whose `/profiles` tree is copied into the controller's profiles directory, which is otherwise empty. It needs a tag other than `latest`, or a digest; `bootstrap site` refuses one that does not, including with `--dry-run`. An image with no registry host is side-loaded from the local image store, so it must already be there; one with a registry host is pulled. The image must provide `/profiles` and `/bin/sh`: the chart's init container runs `cp -a /profiles/. /profiles-out/` through the shell. |
 | `NVKECTL_CAPI_PROVISIONED_IMAGE` | `cluster-api-provider-provisioned:latest` | Provisioned-provider image, same semantics; unused with `infra.provider: nico`. `--provisioned-provider-image` overrides it for one run. |
 | `NVKECTL_CONTROLLER_PORT` | `30080` | Port of the controller API: its Service, NodePort, Kind host mapping and the address `nvkectl` calls |
 | `NVKECTL_CONTROLLER_TEMPORAL_CHART` | `temporal` from `https://go.temporal.io/helm-charts` | Temporal chart, as an OCI reference or a local path. Set, it replaces the repo lookup. |
@@ -302,8 +303,9 @@ through `KIND_EXPERIMENTAL_PROVIDER=nerdctl`, which `nvkectl` sets itself.
 | `NVKECTL_BOOTSTRAP_DIAGNOSTICS_DIR` | `cluster-diagnostics` | Where a failed bootstrap writes a cluster dump before tearing the cluster down (`--diagnostics-dir`) |
 
 Every `NVKECTL_*` variable above except `NVKECTL_NICO_ALLOW_INSECURE_ENDPOINT`,
-which turns a safety check off and so answers only to its own name, was named
-`NKECTL_*` while the binary was called `nkectl`. The old names still work for one release: when only the old
+which turns a safety check off and so answers only to its own name, and
+`NVKECTL_CONTROLLER_PROFILES_IMAGE`, which is read only under its own name, was
+named `NKECTL_*` while the binary was called `nkectl`. The old names still work for one release: when only the old
 name is set, `nvkectl` uses it and logs a warning naming the replacement. When
 both are set, the new name wins. nvkectl does not read the `NKECTL_CWE_*`
 names of cli/v0.1.x: `nvkectl bootstrap site` stops when one is set without
