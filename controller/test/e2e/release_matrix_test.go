@@ -59,13 +59,13 @@ var nicoVMSReleaseExclusions = map[string]releaseExclusion{
 	"nke-1.31.12-251029-osmo": {
 		reason: legacyAutoinstallExclusionReason,
 	},
-	"nke-1.34.2-251201-amd64-site-2": {
+	"nke-1.34.2-251201-amd64-ytl": {
 		reason: legacyAutoinstallExclusionReason,
 	},
-	"nke-1.34.2-251205-amd64-site-2": {
+	"nke-1.34.2-251205-amd64-ytl": {
 		reason: legacyAutoinstallExclusionReason,
 	},
-	"nke-1.34.2-260616-amd64-site-2": {
+	"nke-1.34.2-260616-amd64-ytl": {
 		reason: legacyAutoinstallExclusionReason,
 	},
 	"nke-260313-22.04-amd64": {
