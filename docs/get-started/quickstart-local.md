@@ -167,7 +167,7 @@ CAPNICo is public at [dsx-ai-factory/cluster-api-provider-nico](https://github.c
    cd controller && tilt up
    ```
 
-   Tilt prints the address of its web UI. Open it and wait until every resource is green. If `helm`, `docker`, `go` or `kind` is missing, the `check-management-cluster` resource fails and its log names the tool. `nico-sim` is mock-NICo, `capnico-provider` builds and installs CAPNICo, and `cwe` is the management plane.
+   Tilt prints the address of its web UI. Open it and wait until every resource is green. If `helm`, `docker`, `go` or `kind` is missing, the `check-management-cluster` resource fails and its log names the tool. `nico-sim` is mock-NICo, `capnico-provider` builds and installs CAPNICo, and `nvke-controller` is the management plane.
 
 Open a second terminal in the `nvke` directory for the rest of this page, and run `export PATH="$PWD/cli/bin:$PATH"` in it.
 
@@ -227,7 +227,7 @@ Open a second terminal in the `nvke` directory for the rest of this page, and ru
    my-cluster   1.34.8               ovn-kubernetes   Provisioned   <CLUSTER_ID>   <AGE>
    ```
 
-   The status is `Provisioning` while mock-NICo starts the node containers and NVKE forms the cluster. If it becomes `ProvisioningFailed`, check the `cwe` and `nico-sim` logs in the Tilt UI, and the CAPNICo logs with `kubectl -n capnico-system logs deployment/controller-manager`.
+   The status is `Provisioning` while mock-NICo starts the node containers and NVKE forms the cluster. If it becomes `ProvisioningFailed`, check the `nvke-controller` and `nico-sim` logs in the Tilt UI, and the CAPNICo logs with `kubectl -n capnico-system logs deployment/controller-manager`.
 
 ## Access the workload cluster
 
@@ -239,7 +239,13 @@ Open a second terminal in the `nvke` directory for the rest of this page, and ru
 
    The output is `kubeconfig written to my-cluster.kubeconfig`. The file is an admin credential for the cluster.
 
-2. List the cluster's nodes.
+2. Wait for every node to become ready. `Provisioned` means the provisioning workflow has finished; node networking can still be starting. Watch the nodes until each one shows `Ready`, then press Ctrl+C. This usually takes a few minutes.
+
+   ```bash
+   kubectl --kubeconfig my-cluster.kubeconfig get nodes --watch
+   ```
+
+3. List the cluster's nodes.
 
    ```bash
    kubectl --kubeconfig my-cluster.kubeconfig get nodes

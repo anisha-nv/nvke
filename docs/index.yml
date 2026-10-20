@@ -32,8 +32,10 @@ navigation:
         contents:
           - page: Plan your installation
             path: operate/plan-installation.md
-          - page: Get NVKE artifacts from NVKR and write release manifests
+          - page: Build and host node OS images
             path: operate/build-node-images.md
+          - page: Build and verify your own node image
+            path: operate/build-and-verify-node-image.md
           # Absolute URL: NVKR is a separate Fern instance, served under
           # docs.nvidia.com/nvke/nvkr alongside this site.
           - link: NVKR documentation
@@ -42,12 +44,15 @@ navigation:
             path: operate/prepare-nodes.md
           - page: Bootstrap the management cluster
             path: operate/bootstrap-management-cluster.md
-          - page: Install management-plane services
-            path: operate/install-management-plane-services.md
           - page: "Configure an infrastructure provider: NICo"
             path: operate/provider-nico.md
           - page: Secure the NVKE API
             path: operate/api-authentication.md
+
+      - section: Networking
+        contents:
+          - page: Configure OVN-Kubernetes networking
+            path: workload-clusters/ovn-kubernetes.md
 
       - section: Run workload clusters
         contents:
@@ -73,7 +78,7 @@ navigation:
           - page: Site Certificate Renewal
             path: site-operations/certificate-renewal.md
 
-      - section: NVKE telemetry pipelines (NKTP)
+      - section: NVKE telemetry pipeline (NKTP)
         contents:
           - page: Getting started with NKTP
             path: nktp/getting-started.md
