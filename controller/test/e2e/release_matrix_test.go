@@ -39,12 +39,21 @@ type releaseMetadataIndex struct {
 	Profiles map[string]releaseMetadata `json:"profiles"`
 }
 
-// releaseExclusion matches every active release name starting with prefix,
-// rather than one exact name: the GB200 releases below vary by site in a
-// trailing component this file does not otherwise name.
+// releaseExclusion matches prefix exactly, unless prefix ends in "-", in
+// which case it matches every active release name starting with it: the
+// GB200 releases below vary by site in a trailing component this file does
+// not otherwise name. Every other entry names one release and should keep
+// matching only that one.
 type releaseExclusion struct {
 	prefix string
 	reason string
+}
+
+func (e releaseExclusion) matches(name string) bool {
+	if strings.HasSuffix(e.prefix, "-") {
+		return strings.HasPrefix(name, e.prefix)
+	}
+	return name == e.prefix
 }
 
 const legacyAutoinstallExclusionReason = "profile boots vmlinuz, initrd, and ISO directly; nico-vms currently requires a qcow-imager chain with image_url"
@@ -72,7 +81,7 @@ var nicoVMSReleaseExclusions = []releaseExclusion{
 // nicoVMSExclusionFor returns the exclusion matching name, or nil.
 func nicoVMSExclusionFor(name string) *releaseExclusion {
 	for i := range nicoVMSReleaseExclusions {
-		if strings.HasPrefix(name, nicoVMSReleaseExclusions[i].prefix) {
+		if nicoVMSReleaseExclusions[i].matches(name) {
 			return &nicoVMSReleaseExclusions[i]
 		}
 	}
@@ -149,14 +158,19 @@ func nicoVMSReleaseMatrix() ([]nicoVMSReleaseEntry, error) {
 	}
 
 	for _, excl := range nicoVMSReleaseExclusions {
-		matched := false
+		matches := 0
 		for name := range index.Profiles {
-			if strings.HasPrefix(name, excl.prefix) {
-				matched = true
-				break
+			if excl.matches(name) {
+				matches++
 			}
 		}
-		if !matched {
+		// Catches a prefix broadened enough to reach an unrelated release as
+		// well as the one it was written for: a count the exclusion's own
+		// author did not expect, not just a missing one.
+		if matches > 1 {
+			return nil, fmt.Errorf("exclusion %q matches %d active releases, want exactly 1", excl.prefix, matches)
+		}
+		if matches == 0 {
 			return nil, fmt.Errorf("exclusion %q matches no active release", excl.prefix)
 		}
 	}
