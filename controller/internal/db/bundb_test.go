@@ -4,8 +4,13 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +20,7 @@ import (
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/extra/bunotel"
+	"github.com/uptrace/bun/schema"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -130,4 +136,106 @@ func TestTracingHookDoesNotCreateRootSpans(t *testing.T) {
 
 	assert.Empty(t, recorder.Ended())
 	assert.Equal(t, 1, meterProvider.histogram.records)
+}
+
+type queryLogRow struct {
+	bun.BaseModel `bun:"table:query_log_rows"`
+
+	ID       int      `bun:",pk"`
+	Content  string   `bun:"type:text"`
+	Commands []string `bun:"type:jsonb"`
+}
+
+// unrebuildableQuery is a query whose SQL cannot be rebuilt without its values.
+type unrebuildableQuery struct{}
+
+func (unrebuildableQuery) AppendQuery(schema.QueryGen, []byte) ([]byte, error) {
+	return nil, errors.New("cannot append")
+}
+func (unrebuildableQuery) Operation() string    { return "INSERT" }
+func (unrebuildableQuery) GetModel() bun.Model  { return nil }
+func (unrebuildableQuery) GetTableName() string { return "query_log_rows" }
+
+// TestQueryLogKeepsBoundValuesOutOfNonDebugLogs covers the values that reach a
+// failed or slow statement: bun puts them into both Query and QueryTemplate for
+// ORM queries, so the log line has to be rebuilt without them unless debug
+// logging was asked for. sql.OpenDB does not dial, so no database is needed.
+func TestQueryLogKeepsBoundValuesOutOfNonDebugLogs(t *testing.T) {
+	const secret = "SECRET-TOKEN-123"
+
+	bdb := bun.NewDB(sql.OpenDB(pgdriver.NewConnector()), pgdialect.New())
+	t.Cleanup(func() { _ = bdb.Close() })
+
+	row := &queryLogRow{Content: secret, Commands: []string{"login --token " + secret}}
+	queries := []struct {
+		name string
+		q    bun.Query
+	}{
+		{"orm insert", bdb.NewInsert().Model(row)},
+		{"orm update", bdb.NewUpdate().Model(row).Set("content = ?", secret).WherePK()},
+		{"new raw", bdb.NewRaw("INSERT INTO query_log_rows (content) VALUES (?)", secret)},
+	}
+	levels := []struct {
+		level     slog.Level
+		wantValue bool
+	}{
+		{slog.LevelInfo, false},
+		{slog.LevelDebug, true},
+	}
+
+	logQuery := func(level slog.Level, event *bun.QueryEvent) string {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: level}))
+		attrs := queryLogFormat(logger)(event)
+		logger.LogAttrs(context.Background(), slog.LevelError, "", attrs...)
+		return buf.String()
+	}
+
+	for _, tt := range queries {
+		formatted, err := tt.q.AppendQuery(bdb.QueryGen(), nil)
+		require.NoError(t, err)
+		for _, lv := range levels {
+			t.Run(fmt.Sprintf("%s at %s", tt.name, lv.level), func(t *testing.T) {
+				out := logQuery(lv.level, &bun.QueryEvent{
+					DB:            bdb,
+					IQuery:        tt.q,
+					Query:         string(formatted),
+					QueryTemplate: string(formatted),
+					Err:           errors.New("boom"),
+					StartTime:     time.Now(),
+				})
+				assert.Equal(t, lv.wantValue, strings.Contains(out, secret), out)
+				assert.Contains(t, out, "operation=")
+				if !lv.wantValue {
+					assert.Contains(t, out, "?", "the shape of the statement is still logged")
+				}
+			})
+		}
+	}
+
+	t.Run("a query run with db.ExecContext keeps its placeholder template", func(t *testing.T) {
+		out := logQuery(slog.LevelInfo, &bun.QueryEvent{
+			DB:            bdb,
+			Query:         "INSERT INTO query_log_rows (content) VALUES ('" + secret + "')",
+			QueryTemplate: "INSERT INTO query_log_rows (content) VALUES (?)",
+			QueryArgs:     []any{secret},
+			Err:           errors.New("boom"),
+			StartTime:     time.Now(),
+		})
+		assert.NotContains(t, out, secret)
+		assert.Contains(t, out, "VALUES (?)")
+	})
+
+	t.Run("a query that cannot be rebuilt logs no SQL rather than the values", func(t *testing.T) {
+		out := logQuery(slog.LevelInfo, &bun.QueryEvent{
+			DB:            bdb,
+			IQuery:        unrebuildableQuery{},
+			Query:         "INSERT INTO query_log_rows (content) VALUES ('" + secret + "')",
+			QueryTemplate: "INSERT INTO query_log_rows (content) VALUES ('" + secret + "')",
+			Err:           errors.New("boom"),
+			StartTime:     time.Now(),
+		})
+		assert.NotContains(t, out, secret)
+		assert.Contains(t, out, "operation=INSERT")
+	})
 }

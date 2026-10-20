@@ -16,37 +16,72 @@ import (
 	"github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/extra/bunotel"
 	"github.com/uptrace/bun/extra/bunslog"
+	"github.com/uptrace/bun/schema"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/dsx-ai-factory/nvke/controller/internal/config"
 )
 
-// logFormat creates slog attributes for query events, including PostgreSQL
-// protocol fields (SQLSTATE, severity, message) when the error is a pgdriver.Error.
-func logFormat(event *bun.QueryEvent) []slog.Attr {
-	duration := time.Since(event.StartTime)
-	attrs := []slog.Attr{
-		slog.String("operation", event.Operation()),
-		slog.String("query", event.Query),
-		slog.String("duration", duration.String()),
+// queryLogFormat returns the attribute builder for query events, including
+// PostgreSQL protocol fields (SQLSTATE, severity, message) when the error is a
+// pgdriver.Error.
+//
+// The query carries its values only when logger is at debug. A failed or slow
+// statement is logged at error or warn, and its values can be operator-supplied
+// content such as cloud-init files, so below debug it is logged with a "?" for
+// each value, as the tracing hook records it.
+func queryLogFormat(logger *slog.Logger) func(*bun.QueryEvent) []slog.Attr {
+	if logger == nil {
+		logger = slog.Default()
 	}
-	if event.Err != nil {
-		attrs = append(attrs, slog.Any("error", event.Err))
+	return func(event *bun.QueryEvent) []slog.Attr {
+		query := placeholderQuery(event)
+		if logger.Enabled(context.Background(), slog.LevelDebug) {
+			query = event.Query
+		}
+		duration := time.Since(event.StartTime)
+		attrs := []slog.Attr{
+			slog.String("operation", event.Operation()),
+			slog.String("query", query),
+			slog.String("duration", duration.String()),
+		}
+		if event.Err != nil {
+			attrs = append(attrs, slog.Any("error", event.Err))
 
-		// Add PostgreSQL protocol fields when err wraps pgdriver.Error
-		var pgErr pgdriver.Error
-		if errors.As(event.Err, &pgErr) {
-			if sqlstate := pgErr.Field('C'); sqlstate != "" {
-				attrs = append(attrs,
-					slog.String("pg_sqlstate", sqlstate),
-					slog.String("pg_severity", pgErr.Field('S')),
-					slog.String("pg_message", pgErr.Field('M')),
-					slog.Bool("pg_statement_timeout", pgErr.StatementTimeout()),
-				)
+			// Add PostgreSQL protocol fields when err wraps pgdriver.Error
+			var pgErr pgdriver.Error
+			if errors.As(event.Err, &pgErr) {
+				if sqlstate := pgErr.Field('C'); sqlstate != "" {
+					attrs = append(attrs,
+						slog.String("pg_sqlstate", sqlstate),
+						slog.String("pg_severity", pgErr.Field('S')),
+						slog.String("pg_message", pgErr.Field('M')),
+						slog.Bool("pg_statement_timeout", pgErr.StatementTimeout()),
+					)
+				}
 			}
 		}
+		return attrs
 	}
-	return attrs
+}
+
+// placeholderQuery returns the SQL of event with a "?" where each value was.
+//
+// For ORM queries and bun.NewRaw, bun puts the values into both Query and
+// QueryTemplate, so the SQL is rebuilt from the query object without formatting
+// its arguments, as bunotel does for the db.statement span attribute. A query
+// run with db.ExecContext has no query object and its template already has the
+// placeholders. When the SQL cannot be rebuilt nothing is returned: falling
+// back to either string would log the values.
+func placeholderQuery(event *bun.QueryEvent) string {
+	if event.IQuery == nil {
+		return event.QueryTemplate
+	}
+	b, err := event.IQuery.AppendQuery(schema.NewNopQueryGen(), nil)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // parentedTracingHook prevents background queries from becoming standalone
@@ -102,7 +137,7 @@ func NewBunDB(cfg config.Config, logger *slog.Logger) (*bun.DB, error) {
 		bunslog.WithErrorQueryLogLevel(slog.LevelError),
 		bunslog.WithSlowQueryThreshold(3*time.Second),
 		bunslog.WithLogger(logger),
-		bunslog.WithLogFormat(logFormat),
+		bunslog.WithLogFormat(queryLogFormat(logger)),
 	))
 
 	if cfg.Tracing.Enabled {
