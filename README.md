@@ -113,7 +113,7 @@ Before submitting a change, follow [CONTRIBUTING.md](CONTRIBUTING.md) and run
 | Task | Guide |
 |---|---|
 | Prepare nodes and bootstrap the management cluster | [Bootstrap the management cluster](docs/operate/bootstrap-management-cluster.md) |
-| Install NVKE services | [Install management-plane services](docs/operate/install-management-plane-services.md) |
+| Install NVKE services | [Install the management plane from the deploy path](deploy/README.md) |
 | Build node images and supply release artifacts | [Get NVKE artifacts from NVKR](docs/operate/build-node-images.md) |
 | Create and manage customer clusters | [Create a workload cluster](docs/workload-clusters/create.md), [Manage node pools](docs/workload-clusters/node-pools.md) |
 | Give a customer access | [Access a workload cluster](docs/workload-clusters/access.md) |
@@ -128,6 +128,8 @@ Start with [CONTRIBUTING.md](CONTRIBUTING.md); open an issue before substantial
 work so maintainers can agree on the approach.
 
 - **Questions:** [GitHub Discussions](https://github.com/dsx-ai-factory/nvke/discussions/categories/q-a).
+- **Chat:** the `#nvke` channel in the DSX AI Factory Slack.
+  [Get an invite](https://inviter.co/dsx-ai-factory).
 - **Bugs and feature requests:** [GitHub Issues](https://github.com/dsx-ai-factory/nvke/issues).
 - **Security vulnerabilities:** follow [SECURITY.md](SECURITY.md) and report privately.
 - **Community:** [Code of Conduct](CODE_OF_CONDUCT.md), [Governance](GOVERNANCE.md),
