@@ -38,7 +38,7 @@ func TestScrubPatterns(t *testing.T) {
 		{name: "json token", in: `{"token":"` + fakeToken + `"}`, gone: fakeToken},
 		{name: "yaml password", in: "password: s3cretpassw0rd\n", gone: "s3cretpassw0rd"},
 		{name: "client key data", in: "client-key-data: LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQo=\n", gone: "LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQo="},
-		{name: "postgres url", in: "postgres://nke:s3cretpassw0rd@postgres-postgresql.postgres.svc:5432/nke", gone: "s3cretpassw0rd"},
+		{name: "postgres url", in: "postgres://nvke:s3cretpassw0rd@postgres-postgresql.postgres.svc:5432/nvke", gone: "s3cretpassw0rd"},
 		{name: "bearer", in: "Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789", gone: "abcdefghijklmnopqrstuvwxyz0123456789"},
 		{name: "jwt", in: "id_token=" + fakeJWT, gone: fakeJWTPayload},
 		{name: "spire join token flag", in: "spire-agent run -joinToken " + fakeJoinToken + " -config /etc/spire-agent/agent.conf", gone: fakeJoinToken},

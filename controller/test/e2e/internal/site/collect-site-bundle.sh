@@ -375,8 +375,8 @@ copy node/config/kubeadm-flags.env $((64 * K)) /var/lib/kubelet/kubeadm-flags.en
 copy node/config/containerd-config.toml $((256 * K)) /etc/containerd/config.toml
 run node/config/containerd-certs.d.txt 10 $((256 * K)) sh -c 'for f in "$1"/etc/containerd/certs.d/*/hosts.toml; do [ -f "$f" ] || continue; echo "== $f"; cat "$f"; done' _ "$HOST_ROOT"
 copy node/config/crictl.yaml $((64 * K)) /etc/crictl.yaml
-copy node/config/default-nke-agent $((64 * K)) /etc/default/nke-agent
-copy node/config/default-nvke-agent $((64 * K)) /etc/default/nvke-agent
+copy node/config/default/nke-agent $((64 * K)) /etc/default/nke-agent
+copy node/config/default/nvke-agent $((64 * K)) /etc/default/nvke-agent
 copy node/config/spire-agent.conf $((256 * K)) /etc/spire-agent/agent.conf
 # The agent's state carries kubeadm join strings. Stripped here, and the
 # suite's scrub runs over it again.
