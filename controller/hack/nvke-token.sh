@@ -18,6 +18,8 @@
 #                              else cloud-workflow-engine)
 #   NKE_DEPLOYMENT             NVKE's Deployment (default nke-controller when it
 #                              exists in NKE_CONTROLLER_NAMESPACE, else cloud-workflow-engine)
+#   NVKE_CONTROLLER_CONFIGMAP  NVKE's settings ConfigMap (default: the first of
+#                              nvke-controller-config and nke-controller-config that exists)
 #   NKE_TOKEN_NAMESPACE        service account namespace (default nke-clients)
 #   NKE_TOKEN_SERVICE_ACCOUNT  service account (default nke-client)
 #   NKE_TOKEN_TTL              requested lifetime (default 30m)
@@ -138,14 +140,52 @@ auth_config_path="$(
   ${auth_config_path}
   Check KUBE_CONTEXT, NKE_CONTROLLER_NAMESPACE and that this identity may read Deployments."
 
-if [[ -z "${auth_config_path}" ]]; then
+# A configuration the chart renders reaches NVKE as apiAuth in its settings
+# ConfigMap instead, with no AUTH_CONFIG_PATH. That ConfigMap is the chart's
+# controllerConfig.name: nvke-controller-config by default, nke-controller-config
+# on an install that pins the old name, so both are tried unless
+# NVKE_CONTROLLER_CONFIGMAP names it. Read with awk, not yq, so kubectl stays
+# this script's only dependency. A controller older than the section, or than
+# the ConfigMap, has no such key, which is off.
+if [[ -n "${NVKE_CONTROLLER_CONFIGMAP:-}" ]]; then
+  controller_configmaps=("${NVKE_CONTROLLER_CONFIGMAP}")
+else
+  controller_configmaps=(nvke-controller-config nke-controller-config)
+fi
+# stdout alone decides whether a ConfigMap was found: a kubectl warning on
+# stderr must not read as the first name existing and skip the second.
+controller_config=""
+kubectl_stderr="$(mktemp)"
+for configmap in "${controller_configmaps[@]}"; do
+  if ! controller_config="$(
+    "${KUBECTL[@]}" get configmap "${configmap}" -n "${NKE_CONTROLLER_NAMESPACE}" \
+      --ignore-not-found -o jsonpath='{.data.config\.yaml}' 2>"${kubectl_stderr}"
+  )"; then
+    error="$(cat "${kubectl_stderr}")"
+    rm -f "${kubectl_stderr}"
+    die "cannot read configmap ${NKE_CONTROLLER_NAMESPACE}/${configmap}:
+  ${error}
+  Check KUBE_CONTEXT, NKE_CONTROLLER_NAMESPACE and that this identity may read ConfigMaps."
+  fi
+  if [[ -n "${controller_config}" ]]; then
+    break
+  fi
+done
+rm -f "${kubectl_stderr}"
+api_auth_enabled="$(awk '
+  /^apiAuth:/ { section = 1; next }
+  section && /^[^[:space:]]/ { exit }
+  section && /^[[:space:]]+enabled:[[:space:]]*true[[:space:]]*$/ { print "true"; exit }
+' <<<"${controller_config}")"
+
+if [[ -z "${auth_config_path}" && "${api_auth_enabled}" != "true" ]]; then
   # Authentication is off. No token, no error, no output.
   exit 0
 fi
 
 AUDIENCE="${NKE_AUDIENCE:-$(cwe_discover_audience)}"
 if [[ -z "${AUDIENCE}" ]]; then
-  die "NVKE is authenticating (AUTH_CONFIG_PATH=${auth_config_path}) but no audience could be read
+  die "NVKE is authenticating but no audience could be read
   from configmap ${NKE_CONTROLLER_NAMESPACE}/nke-auth-config. Set NKE_AUDIENCE to override."
 fi
 

@@ -50,6 +50,22 @@ func ControllerSetting(data map[string]string, key string) (any, error) {
 	return value, err
 }
 
+// APIAuthEnabled reports apiAuth.enabled in data, the data of the controller's
+// nke-controller-config ConfigMap. A controller older than the apiAuth section
+// has no such key, which is false: it can only authenticate through
+// AUTH_CONFIG_PATH.
+func APIAuthEnabled(data map[string]string) (bool, error) {
+	settings, err := parseControllerConfig(data)
+	if err != nil {
+		return false, err
+	}
+	section, ok := settings["apiAuth"].(map[string]any)
+	if !ok {
+		return false, nil
+	}
+	return section["enabled"] == true, nil
+}
+
 // OIDCEnabled reports whether the controller has tenant OIDC JWT auth turned on
 // (oidc.managementOIDCAuth.enabled in nke-controller-config). The OIDC
 // validations only apply when it does, so the suite uses this to skip them on

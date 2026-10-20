@@ -110,6 +110,11 @@ var configMapOnly = []string{
 	// The dual-accept window for the Teleport "managed-by" value. It exists
 	// because managedByLabelValue moved, which is newer than the environment.
 	"teleport.acceptedManagedByLabelValues",
+	// API authentication was a file of its own, never environment variables.
+	// AUTH_CONFIG_PATH, which names that file, stays on the environment.
+	"apiAuth.enabled",
+	"apiAuth.audiences",
+	"apiAuth.issuers",
 }
 
 // chartDeployment is the template whose env block decides what the chart sets.

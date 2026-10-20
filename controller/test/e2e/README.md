@@ -150,13 +150,14 @@ Three labels, which do not all run against the same deployment.
 
 | Label | What it covers | Deployment it needs |
 |---|---|---|
-| `authn` | The negative cases: no token -> 401, wrong audience -> 401, an unadmitted identity -> 403, and the anonymous routes `internal/auth/routes.go` exempts staying reachable with no credential. Also selects `authn-spire`. | Enforcing (`AUTH_CONFIG_PATH` set, `permissiveMode` false) |
+| `authn` | The negative cases: no token -> 401, wrong audience -> 401, an unadmitted identity -> 403, and the anonymous routes `internal/auth/routes.go` exempts staying reachable with no credential. Also selects `authn-spire`. | Enforcing (`AUTH_CONFIG_PATH` set or `apiAuth.enabled` true, `permissiveMode` false) |
 | `authn-spire` | A SPIRE JWT-SVID end to end: a pod the spec creates fetches an SVID over the Workload API and calls NVKE with it, and with one that differs only in `aud`. | Enforcing, plus SPIFFE enabled on the NVKE pod |
 | `authn-permissive` | That permissive mode counts what it would have rejected: all cases return 200 and `nvke_auth_requests_total{outcome="would_reject"}` advances. It flips the deployment itself and puts it back. | Enforcing; it arranges permissive mode for its own duration |
 
 Each skips itself, with the reason, when the deployment is not in the state it
 needs, reading `AUTH_CONFIG_PATH` off the live NVKE Deployment and
-`permissiveMode` from its `nke-controller-config`. Set `NKE_E2E_REQUIRE_AUTHN=true` (as the CAPD lane does) to turn
+`apiAuth.enabled` and `permissiveMode` from its `nke-controller-config`. Set
+`NKE_E2E_REQUIRE_AUTHN=true` (as the CAPD lane does) to turn
 "authentication is not deployed" from a skip into a failure; without it a
 cluster with authentication off produces `SUCCESS! -- 0 Passed | 0 Failed | N
 Skipped`, indistinguishable in a CI log from a suite that never had these specs.

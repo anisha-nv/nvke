@@ -203,7 +203,7 @@ environment.
 | `CONTROLLER_CONFIG_PATH` | (required) | The `nke-controller-config` file. The chart sets it to the mounted ConfigMap; `make run` sets it to `hack/local-controller-config.yaml`. Unset, missing or invalid is a startup failure. |
 | `LOG_LEVEL` | `info` | Log level (debug/info/warn/error) |
 | `DB_CONNECTION_STRING` | `postgres://...` | PostgreSQL connection string |
-| `AUTH_CONFIG_PATH` | (unset) | API authentication config file. Unset disables authentication entirely, which is what `make run` gets. Set but unreadable is a startup failure, never "disabled". |
+| `AUTH_CONFIG_PATH` | (unset) | API authentication config file, for a ConfigMap the chart does not render. With it unset and `apiAuth.enabled` false, authentication is off, which is what `make run` gets. Set but unreadable is a startup failure, never "disabled"; set together with `apiAuth.enabled` is a startup failure too. |
 
 Settings in the file that local work most often changes:
 
@@ -212,7 +212,8 @@ Settings in the file that local work most often changes:
 | `temporal.hostPort` | Temporal server for controller workflows |
 | `profilesDir` | Directory for config profiles and the runbooks their hooks reference. Fleet profile content is maintained outside this repository and supplied at deploy time; this repo ships only example profiles. The directory may be empty: the controller starts without a profiles tree, and one is needed to provision a node, not to come up. |
 | `spire.spiffeEnabled`, `spire.spiffeEndpointSocket` | SPIFFE identity, from the SPIRE agent socket (for example `unix:///tmp/spire-agent/agent.sock`) |
-| `permissiveMode` | Only read when `AUTH_CONFIG_PATH` is set. `true` evaluates, logs and counts every request, then serves it anyway — nothing is rejected. |
+| `permissiveMode` | Only read when authentication is on (`apiAuth.enabled` or `AUTH_CONFIG_PATH`). `true` evaluates, logs and counts every request, then serves it anyway — nothing is rejected. |
+| `apiAuth` | API authentication when the chart renders it: `enabled`, `audiences`, `issuers` (the `internal/auth` issuer schema). The section is required, and the chart always renders it; a file without it does not start. `enabled: false` with both lists empty is off. |
 
 To change one for your own runs, copy `hack/local-controller-config.yaml` under
 `.local/` and point `CONTROLLER_CONFIG_PATH` at the copy.
@@ -241,7 +242,7 @@ The two local paths differ, and that is the usual source of confusion:
 
 | Path | Authentication |
 |------|----------------|
-| `make run` | **off** — `AUTH_CONFIG_PATH` is unset, every request is served |
+| `make run` | **off** — `AUTH_CONFIG_PATH` is unset and `apiAuth.enabled` is false, every request is served |
 | `tilt up` | **enforcing** — `/api/*` needs a bearer token |
 
 So a bare `curl` that works host-local returns 401 under Tilt. `nvkectl` mints
