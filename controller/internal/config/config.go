@@ -136,9 +136,8 @@ type Config struct {
 	// DBQueryLogLevel is the level of logs to output for all database queries (debug|info)
 	DBQueryLogLevel string `env:"DB_QUERY_LOG_LEVEL" default:"debug"`
 
-	// DBQueryLogValues logs each query with its values. By default a query is
-	// logged with a "?" for each value, because a failed or slow statement can
-	// carry operator-supplied content such as cloud-init files.
+	// DBQueryLogValues logs each query with its values instead of a "?" for each.
+	// A failed or slow query can carry operator-supplied content, so it is off by default.
 	DBQueryLogValues bool `env:"DB_QUERY_LOG_VALUES" default:"false"`
 
 	// DBMaxOpenConnections is the maximum number of open connections to the database

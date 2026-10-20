@@ -146,7 +146,7 @@ type queryLogRow struct {
 	Commands []string `bun:"type:jsonb"`
 }
 
-// unrebuildableQuery is a query whose SQL cannot be rebuilt without its values.
+// unrebuildableQuery is a bun.Query whose AppendQuery always fails.
 type unrebuildableQuery struct{}
 
 func (unrebuildableQuery) AppendQuery(schema.QueryGen, []byte) ([]byte, error) {

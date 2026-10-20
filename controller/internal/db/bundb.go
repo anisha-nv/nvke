@@ -22,16 +22,15 @@ import (
 	"github.com/dsx-ai-factory/nvke/controller/internal/config"
 )
 
-// queryLogFormat returns the attribute builder for query events, including
-// PostgreSQL protocol fields (SQLSTATE, severity, message) when the error is a
-// pgdriver.Error.
-//
-// The query carries its values only when logValues is set. A failed or slow
-// statement is logged at error or warn, and its values can be operator-supplied
-// content such as cloud-init files, so by default it is logged with a "?" for
-// each value, as the tracing hook records it.
+// queryLogFormat returns the attribute builder for query events: the operation,
+// the query and the duration, and on failure the error with the PostgreSQL
+// SQLSTATE, severity and message when it is a pgdriver.Error. The query has a
+// "?" for each value unless logValues is set.
 func queryLogFormat(logValues bool) func(*bun.QueryEvent) []slog.Attr {
 	return func(event *bun.QueryEvent) []slog.Attr {
+		// A failed or slow statement is logged at error or warn, and its values
+		// can be operator-supplied content such as cloud-init files, so they are
+		// logged only on request.
 		query := placeholderQuery(event)
 		if logValues {
 			query = event.Query
@@ -62,20 +61,20 @@ func queryLogFormat(logValues bool) func(*bun.QueryEvent) []slog.Attr {
 	}
 }
 
-// placeholderQuery returns the SQL of event with a "?" where each value was.
-//
-// For ORM queries and bun.NewRaw, bun puts the values into both Query and
-// QueryTemplate, so the SQL is rebuilt from the query object without formatting
-// its arguments, as bunotel does for the db.statement span attribute. A query
-// run with db.ExecContext has no query object and its template already has the
-// placeholders. When the SQL cannot be rebuilt nothing is returned: falling
-// back to either string would log the values.
+// placeholderQuery returns the SQL of event with a "?" where each value was, or
+// an empty string when the SQL cannot be rebuilt.
 func placeholderQuery(event *bun.QueryEvent) string {
+	// A query run with db.ExecContext has no query object, and its template
+	// already has the placeholders.
 	if event.IQuery == nil {
 		return event.QueryTemplate
 	}
+	// For ORM queries and bun.NewRaw, bun puts the values into both Query and
+	// QueryTemplate, so rebuild the SQL from the query object without formatting
+	// its arguments, as bunotel does for the db.statement span attribute.
 	b, err := event.IQuery.AppendQuery(schema.NewNopQueryGen(), nil)
 	if err != nil {
+		// Either string would log the values.
 		return ""
 	}
 	return string(b)
