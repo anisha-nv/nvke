@@ -17,6 +17,8 @@
 # Needs: docker with buildx, kind, kubectl, helm, clusterctl, oras, python3,
 # and nvkectl (NVKECTL, default cli/bin/nvkectl). Egress to the public chart
 # repositories and image registries deploy/nico names.
+#
+# In CI, .github/workflows/kind-stack-from-release.yml runs this script.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

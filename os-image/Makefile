@@ -19,7 +19,8 @@ REPO_ROOT ?= $(shell git rev-parse --show-toplevel)
 # Module-level targets, matching the other workspace members. The root Makefile
 # builds nvke-os-image-check into the repository's bin/ as part of `make build`;
 # this file is for working inside os-image/ alone, and it is what the Lint
-# workflow invokes.
+# workflow invokes. The image bake itself lives in
+# .github/workflows/os-image-artifact.yml.
 #
 # Every dependency here is public, so these targets can run with GOWORK=off.
 

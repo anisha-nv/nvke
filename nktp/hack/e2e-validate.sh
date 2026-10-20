@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Installs the NKTP chart on a Kind cluster and asserts that telemetry actually
-# flows, rather than only that the chart renders.
+# flows, rather than only that the chart renders. In CI,
+# .github/workflows/nktp-e2e.yml runs it.
 #
 # The merge gate lints, renders and kubeconforms the chart. All of that passes on
 # a chart that installs and then sends nothing, which is the failure this script

@@ -91,8 +91,9 @@ checksum is verified. `curl`, `gpg`, `gzip`, `sha256sum` and `tar` must be on
 | `LOCK_DIR` | `./lock` | The committed lock files |
 | `DIST_DIR` | `./dist` | Artifact cache. Anything that still hashes to its lock entry is reused offline; anything else is re-downloaded and re-verified |
 
-`repro-check` is not in CI. Run it by hand after touching `packaging/` or
-`build-deb.sh`. A failure usually means a new content entry carries
+`repro-check` runs in CI from `.github/workflows/package-repro.yml` on every
+push that touches `os-image/packages/`, and once a week. Run it by hand after
+touching `packaging/` or `build-deb.sh`. A failure usually means a new content entry carries
 build-host metadata (a timestamp, a path, ownership) that nfpm is not pinning.
 
 ## Bumping versions

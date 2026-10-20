@@ -7,6 +7,7 @@ set -Eeuo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=controller/hack/backend-e2e-lib.sh
 source "${repo_root}/hack/backend-e2e-lib.sh"
+# backend-e2e-lib.sh is shared with the CI lane scripts under hack/ci/.
 
 # `tilt ci` reads the Tiltfile from the working directory, so the script only
 # worked when run from here. Do not make the caller know that.

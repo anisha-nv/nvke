@@ -7,7 +7,8 @@
 # This file holds no build logic. It checks out NVIDIA/infra-controller at a
 # pinned commit and runs that repo's own cargo-make tasks, which are the
 # upstream definition of this artifact. Every target runs the same here as in
-# CI; the workflow only adds runner selection and artifact upload.
+# CI; the workflow only adds runner selection and artifact upload. That
+# workflow is .github/workflows/os-image-efi.yml.
 
 ##@ Help
 

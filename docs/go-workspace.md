@@ -44,6 +44,8 @@ records those selected versions in each member's manifest so independent module
 builds agree with workspace builds.
 
 `make work-check` performs the same refresh and fails if tracked manifests move.
+It also checks that `go.work` lists exactly the modules the root Makefile expects,
+and that it carries no replace directive.
 It can edit those files on failure; review the diff and run `make work-sync` to
 apply the intended update. It requires a reachable public Go module proxy on a
 cold cache, and CI does not silently skip the freshness check.

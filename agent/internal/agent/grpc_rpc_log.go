@@ -9,7 +9,8 @@ import (
 )
 
 // logRPCSpan logs "executing RPC" and returns a function to defer for "RPC execution complete"
-// (runs when the handler returns, after any later-registered defers).
+// (runs when the handler returns, after any later-registered defers). A nil
+// ctx falls back to context.Background so both log lines still carry the rpc name.
 func logRPCSpan(ctx context.Context, rpc string) func() {
 	if ctx == nil {
 		ctx = context.Background()

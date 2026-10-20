@@ -2,7 +2,8 @@
 //
 // All twelve modules resolve from public dependencies. Go downloads modules
 // into its cache on first use; no committed vendor tree or NVIDIA credentials
-// are required. See docs/go-workspace.md.
+// are required. See docs/go-workspace.md. `make work-check` fails when the
+// use list below differs from the Makefile's module list.
 go 1.27.2
 
 use (
