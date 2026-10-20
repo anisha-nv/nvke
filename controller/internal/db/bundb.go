@@ -26,17 +26,14 @@ import (
 // PostgreSQL protocol fields (SQLSTATE, severity, message) when the error is a
 // pgdriver.Error.
 //
-// The query carries its values only when logger is at debug. A failed or slow
+// The query carries its values only when logValues is set. A failed or slow
 // statement is logged at error or warn, and its values can be operator-supplied
-// content such as cloud-init files, so below debug it is logged with a "?" for
+// content such as cloud-init files, so by default it is logged with a "?" for
 // each value, as the tracing hook records it.
-func queryLogFormat(logger *slog.Logger) func(*bun.QueryEvent) []slog.Attr {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func queryLogFormat(logValues bool) func(*bun.QueryEvent) []slog.Attr {
 	return func(event *bun.QueryEvent) []slog.Attr {
 		query := placeholderQuery(event)
-		if logger.Enabled(context.Background(), slog.LevelDebug) {
+		if logValues {
 			query = event.Query
 		}
 		duration := time.Since(event.StartTime)
@@ -137,7 +134,7 @@ func NewBunDB(cfg config.Config, logger *slog.Logger) (*bun.DB, error) {
 		bunslog.WithErrorQueryLogLevel(slog.LevelError),
 		bunslog.WithSlowQueryThreshold(3*time.Second),
 		bunslog.WithLogger(logger),
-		bunslog.WithLogFormat(queryLogFormat(logger)),
+		bunslog.WithLogFormat(queryLogFormat(cfg.DBQueryLogValues)),
 	))
 
 	if cfg.Tracing.Enabled {

@@ -156,11 +156,11 @@ func (unrebuildableQuery) Operation() string    { return "INSERT" }
 func (unrebuildableQuery) GetModel() bun.Model  { return nil }
 func (unrebuildableQuery) GetTableName() string { return "query_log_rows" }
 
-// TestQueryLogKeepsBoundValuesOutOfNonDebugLogs covers the values that reach a
-// failed or slow statement: bun puts them into both Query and QueryTemplate for
-// ORM queries, so the log line has to be rebuilt without them unless debug
-// logging was asked for. sql.OpenDB does not dial, so no database is needed.
-func TestQueryLogKeepsBoundValuesOutOfNonDebugLogs(t *testing.T) {
+// TestQueryLogKeepsBoundValuesOutOfTheLogUnlessAsked covers the values that reach
+// a failed or slow statement: bun puts them into both Query and QueryTemplate
+// for ORM queries, so the log line has to be rebuilt without them unless
+// DB_QUERY_LOG_VALUES is set. sql.OpenDB does not dial, so no database is needed.
+func TestQueryLogKeepsBoundValuesOutOfTheLogUnlessAsked(t *testing.T) {
 	const secret = "SECRET-TOKEN-123"
 
 	bdb := bun.NewDB(sql.OpenDB(pgdriver.NewConnector()), pgdialect.New())
@@ -175,18 +175,20 @@ func TestQueryLogKeepsBoundValuesOutOfNonDebugLogs(t *testing.T) {
 		{"orm update", bdb.NewUpdate().Model(row).Set("content = ?", secret).WherePK()},
 		{"new raw", bdb.NewRaw("INSERT INTO query_log_rows (content) VALUES (?)", secret)},
 	}
-	levels := []struct {
+	modes := []struct {
+		name      string
+		logValues bool
 		level     slog.Level
-		wantValue bool
 	}{
-		{slog.LevelInfo, false},
-		{slog.LevelDebug, true},
+		{"values off at info", false, slog.LevelInfo},
+		{"values off at debug", false, slog.LevelDebug},
+		{"values on", true, slog.LevelInfo},
 	}
 
-	logQuery := func(level slog.Level, event *bun.QueryEvent) string {
+	logQuery := func(logValues bool, level slog.Level, event *bun.QueryEvent) string {
 		var buf bytes.Buffer
 		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: level}))
-		attrs := queryLogFormat(logger)(event)
+		attrs := queryLogFormat(logValues)(event)
 		logger.LogAttrs(context.Background(), slog.LevelError, "", attrs...)
 		return buf.String()
 	}
@@ -194,9 +196,9 @@ func TestQueryLogKeepsBoundValuesOutOfNonDebugLogs(t *testing.T) {
 	for _, tt := range queries {
 		formatted, err := tt.q.AppendQuery(bdb.QueryGen(), nil)
 		require.NoError(t, err)
-		for _, lv := range levels {
-			t.Run(fmt.Sprintf("%s at %s", tt.name, lv.level), func(t *testing.T) {
-				out := logQuery(lv.level, &bun.QueryEvent{
+		for _, m := range modes {
+			t.Run(fmt.Sprintf("%s, %s", tt.name, m.name), func(t *testing.T) {
+				out := logQuery(m.logValues, m.level, &bun.QueryEvent{
 					DB:            bdb,
 					IQuery:        tt.q,
 					Query:         string(formatted),
@@ -204,9 +206,9 @@ func TestQueryLogKeepsBoundValuesOutOfNonDebugLogs(t *testing.T) {
 					Err:           errors.New("boom"),
 					StartTime:     time.Now(),
 				})
-				assert.Equal(t, lv.wantValue, strings.Contains(out, secret), out)
+				assert.Equal(t, m.logValues, strings.Contains(out, secret), out)
 				assert.Contains(t, out, "operation=")
-				if !lv.wantValue {
+				if !m.logValues {
 					assert.Contains(t, out, "?", "the shape of the statement is still logged")
 				}
 			})
@@ -214,7 +216,7 @@ func TestQueryLogKeepsBoundValuesOutOfNonDebugLogs(t *testing.T) {
 	}
 
 	t.Run("a query run with db.ExecContext keeps its placeholder template", func(t *testing.T) {
-		out := logQuery(slog.LevelInfo, &bun.QueryEvent{
+		out := logQuery(false, slog.LevelInfo, &bun.QueryEvent{
 			DB:            bdb,
 			Query:         "INSERT INTO query_log_rows (content) VALUES ('" + secret + "')",
 			QueryTemplate: "INSERT INTO query_log_rows (content) VALUES (?)",
@@ -227,7 +229,7 @@ func TestQueryLogKeepsBoundValuesOutOfNonDebugLogs(t *testing.T) {
 	})
 
 	t.Run("a query that cannot be rebuilt logs no SQL rather than the values", func(t *testing.T) {
-		out := logQuery(slog.LevelInfo, &bun.QueryEvent{
+		out := logQuery(false, slog.LevelInfo, &bun.QueryEvent{
 			DB:            bdb,
 			IQuery:        unrebuildableQuery{},
 			Query:         "INSERT INTO query_log_rows (content) VALUES ('" + secret + "')",
