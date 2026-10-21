@@ -20,9 +20,8 @@ nvkectl bootstrap site -f sitespec.yaml 2>&1 | tee bootstrap.log
 
 Each attempt has its own trace ID. Include it when reporting a failure. It
 also finds the controller's records of the site cluster request: the API call,
-the cluster and node pool workflows, and their steps. Bootstrap does not
-configure span export for the controller it installs, so these logs are the
-record.
+the cluster and node pool workflows, and their steps. Without an OTLP endpoint
+(below), the controller's logs are the record.
 
 Search the controller logs for it, in the diagnostics directory or in a
 [retained bootstrap cluster](#the-retained-bootstrap-cluster):
@@ -44,17 +43,16 @@ node, run the same searches in two steps:
 2. Search for that `workflow_id`. The matches are the node's workflow and
    activity steps, including the one that failed.
 
-#### Send nvkectl's logs to a backend
+#### Send nvkectl's telemetry to a backend
 
-To also send nvkectl's log records to an OpenTelemetry collector or backend,
-set `OTEL_EXPORTER_OTLP_ENDPOINT` before you run the command. The records carry
-the run's trace ID, so you can search the backend for the `Trace ID:` that
-nvkectl prints. What nvkectl writes to stderr does not change.
+To send nvkectl's spans and log records to an OpenTelemetry collector or
+backend, pass its OTLP/gRPC address. The records and spans carry the run's trace
+ID, so you can search the backend for the `Trace ID:` that nvkectl prints. What
+nvkectl writes to stderr does not change.
 
 ```bash
-export OTEL_EXPORTER_OTLP_ENDPOINT=https://<COLLECTOR_HOST>:4317
 export OTEL_EXPORTER_OTLP_HEADERS='authorization=Bearer <TOKEN>'
-nvkectl bootstrap site -f sitespec.yaml
+nvkectl bootstrap site -f sitespec.yaml --otlp-endpoint <COLLECTOR_HOST>:4317
 ```
 
 Replace `<COLLECTOR_HOST>` with the host of your OTLP/gRPC endpoint. Replace
@@ -62,12 +60,27 @@ Replace `<COLLECTOR_HOST>` with the host of your OTLP/gRPC endpoint. Replace
 if it needs none. Separate several headers with commas. nvkectl never prints
 them.
 
-- The connection uses TLS. To send without it, start the endpoint with
-  `http://` or set `OTEL_EXPORTER_OTLP_INSECURE=true`. An endpoint with no
-  scheme, such as `<COLLECTOR_HOST>:4317`, uses TLS.
-- nvkectl sends log records only. It does not send spans.
-- If the endpoint is unreachable, nvkectl prints one warning, the command
-  still succeeds, and the command takes up to two seconds longer to exit.
+- **One trace.** The temporary controller in the bootstrap cluster exports to
+  the same endpoint, so its `POST /api/clusters` span appears in the same trace,
+  under nvkectl's root span. The site's own controller is not changed.
+- **A reachable address.** The controller runs inside the Kind cluster, which
+  cannot reach this host's loopback, so `localhost`, `127.0.0.1`, `::1` and
+  unspecified addresses are rejected. Use the host's LAN address or a DNS name.
+- **TLS.** The connection uses TLS. To send without it, start the endpoint with
+  `http://` or pass `--otlp-insecure`. An endpoint with no scheme, such as
+  `<COLLECTOR_HOST>:4317`, uses TLS.
+- **Headers.** Only nvkectl sends `OTEL_EXPORTER_OTLP_HEADERS`. The temporary
+  controller exports without them, and nvkectl warns once. nvkectl reads no
+  other OTLP variable, so those for one signal, such as
+  `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, have no effect.
+- **The environment instead of the flag.** An endpoint in
+  `OTEL_EXPORTER_OTLP_ENDPOINT` does the same as the flag, with one difference:
+  a loopback address is not rejected. The controller is then left unconfigured
+  and nvkectl warns once. If you already export `OTEL_EXPORTER_OTLP_ENDPOINT`
+  for other tools, those tools' backend now also receives nvkectl's spans and
+  the controller's.
+- **An unreachable endpoint.** nvkectl prints one warning, the command still
+  succeeds, and the command takes up to two seconds longer to exit.
 
 ### The diagnostics directory
 

@@ -34,6 +34,7 @@ func (run *Run) LogHandler(inner slog.Handler) slog.Handler {
 		return local
 	}
 	run.warnLogger.Store(slog.New(inner))
+	run.warnMisconfigured()
 	return &teeHandler{local: local, exported: exported, root: root}
 }
 
