@@ -156,10 +156,10 @@ func (unrebuildableQuery) Operation() string    { return "INSERT" }
 func (unrebuildableQuery) GetModel() bun.Model  { return nil }
 func (unrebuildableQuery) GetTableName() string { return "query_log_rows" }
 
-// TestQueryLogKeepsBoundValuesOutOfTheLogUnlessAsked covers the values that reach
-// a failed or slow statement: bun puts them into both Query and QueryTemplate
-// for ORM queries, so the log line has to be rebuilt without them unless
-// DB_QUERY_LOG_VALUES is set. sql.OpenDB does not dial, so no database is needed.
+// TestQueryLogKeepsBoundValuesOutOfTheLogUnlessAsked covers the values of a
+// statement: bun puts them into both Query and QueryTemplate for ORM queries, so
+// the log line has to be rebuilt without them unless DB_QUERY_LOG_VALUES is set.
+// sql.OpenDB does not dial, so no database is needed.
 func TestQueryLogKeepsBoundValuesOutOfTheLogUnlessAsked(t *testing.T) {
 	const secret = "SECRET-TOKEN-123"
 

@@ -137,9 +137,8 @@ type Config struct {
 	DBQueryLogLevel string `env:"DB_QUERY_LOG_LEVEL" default:"debug"`
 
 	// DBQueryLogValues logs each query with its values instead of a "?" for each,
-	// and logs PostgreSQL error messages. A failed or slow query can carry
-	// operator-supplied content, and a message can repeat a rejected value, so
-	// it is off by default.
+	// and logs PostgreSQL error messages. A query can carry operator-supplied
+	// content, and a message can repeat a rejected value, so it is off by default.
 	DBQueryLogValues bool `env:"DB_QUERY_LOG_VALUES" default:"false"`
 
 	// DBMaxOpenConnections is the maximum number of open connections to the database

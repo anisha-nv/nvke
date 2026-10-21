@@ -25,13 +25,13 @@ import (
 // queryLogFormat returns the attribute builder for query events: the operation,
 // the query and the duration, and on failure the error with the PostgreSQL
 // SQLSTATE, severity and message when it is a pgdriver.Error. The query has a
-// "?" for each value, and a PostgreSQL error has no message, unless logValues
-// is set.
+// "?" for each value, and a PostgreSQL error is logged without its message,
+// unless logValues is set.
 func queryLogFormat(logValues bool) func(*bun.QueryEvent) []slog.Attr {
 	return func(event *bun.QueryEvent) []slog.Attr {
-		// A failed or slow statement is logged at error or warn, and its values
-		// can be operator-supplied content such as cloud-init files, so they are
-		// logged only on request.
+		// A statement's values can be operator-supplied content such as cloud-init
+		// files, and a failed or slow statement is logged at error or warn, so
+		// the values are logged only on request.
 		query := placeholderQuery(event)
 		if logValues {
 			query = event.Query
@@ -44,8 +44,8 @@ func queryLogFormat(logValues bool) func(*bun.QueryEvent) []slog.Attr {
 		}
 		if event.Err != nil {
 			// A PostgreSQL error message can repeat the value it rejected, for
-			// example "invalid input syntax for type uuid", so below logValues
-			// the error is logged by its severity and SQLSTATE alone.
+			// example "invalid input syntax for type uuid", so unless logValues
+			// is set the error is logged by its severity and SQLSTATE alone.
 			var pgErr pgdriver.Error
 			isPG := errors.As(event.Err, &pgErr)
 			if isPG && !logValues {
@@ -83,7 +83,7 @@ func placeholderQuery(event *bun.QueryEvent) string {
 	// its arguments, as bunotel does for the db.statement span attribute.
 	b, err := event.IQuery.AppendQuery(schema.NewNopQueryGen(), nil)
 	if err != nil {
-		// Either string would log the values.
+		// Falling back to Query or QueryTemplate would log the values.
 		return ""
 	}
 	return string(b)
