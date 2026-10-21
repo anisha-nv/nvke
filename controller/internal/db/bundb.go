@@ -25,7 +25,8 @@ import (
 // queryLogFormat returns the attribute builder for query events: the operation,
 // the query and the duration, and on failure the error with the PostgreSQL
 // SQLSTATE, severity and message when it is a pgdriver.Error. The query has a
-// "?" for each value unless logValues is set.
+// "?" for each value, and a PostgreSQL error has no message, unless logValues
+// is set.
 func queryLogFormat(logValues bool) func(*bun.QueryEvent) []slog.Attr {
 	return func(event *bun.QueryEvent) []slog.Attr {
 		// A failed or slow statement is logged at error or warn, and its values
@@ -42,18 +43,26 @@ func queryLogFormat(logValues bool) func(*bun.QueryEvent) []slog.Attr {
 			slog.String("duration", duration.String()),
 		}
 		if event.Err != nil {
-			attrs = append(attrs, slog.Any("error", event.Err))
-
-			// Add PostgreSQL protocol fields when err wraps pgdriver.Error
+			// A PostgreSQL error message can repeat the value it rejected, for
+			// example "invalid input syntax for type uuid", so below logValues
+			// the error is logged by its severity and SQLSTATE alone.
 			var pgErr pgdriver.Error
-			if errors.As(event.Err, &pgErr) {
+			isPG := errors.As(event.Err, &pgErr)
+			if isPG && !logValues {
+				attrs = append(attrs, slog.String("error", fmt.Sprintf("%s: (SQLSTATE=%s)", pgErr.Field('S'), pgErr.Field('C'))))
+			} else {
+				attrs = append(attrs, slog.Any("error", event.Err))
+			}
+			if isPG {
 				if sqlstate := pgErr.Field('C'); sqlstate != "" {
 					attrs = append(attrs,
 						slog.String("pg_sqlstate", sqlstate),
 						slog.String("pg_severity", pgErr.Field('S')),
-						slog.String("pg_message", pgErr.Field('M')),
 						slog.Bool("pg_statement_timeout", pgErr.StatementTimeout()),
 					)
+					if logValues {
+						attrs = append(attrs, slog.String("pg_message", pgErr.Field('M')))
+					}
 				}
 			}
 		}

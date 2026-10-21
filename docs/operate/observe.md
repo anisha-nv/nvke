@@ -81,14 +81,14 @@ env:
 
 Then run the install command from [Run NVKE end to end on one machine](../get-started/local-site.md) again, with the same flags and `--values-for controller=../controller-log.yaml` added. Your `env` list replaces the deploy path's list, which sets `NODE_AGENT_PORT`, so keep that entry. `LOG_LEVEL` accepts `debug`, `info`, `warn` and `error`. If you turned on API authentication, also pass `--values-for controller=../auth-values.yaml`, or the install turns authentication off; see [Secure the NVKE API](api-authentication.md). If you passed `--values-for nktp=<FILE>` when you installed, pass it again, or NKTP goes back to the bundled development backend.
 
-The management plane logs a failed or slow database query in the `query` key with a `?` for each value, at every log level. The values can include content you supplied, such as cloud-init files in a cluster's `infra` settings. To log the values while you debug a query, add this entry to the `env` list in `controller-log.yaml` and run the install command again as above:
+The management plane logs a failed or slow database query in the `query` key with a `?` for each value, and logs a PostgreSQL error by its severity and code without its message, at every log level. The values can include content you supplied, such as cloud-init files in a cluster's `infra` settings, and an error message can repeat a rejected value. To log the values and messages while you debug a query, add this entry to the `env` list in `controller-log.yaml` and run the install command again as above:
 
 ```yaml
   - name: DB_QUERY_LOG_VALUES
     value: "true"
 ```
 
-> **Warning:** The values appear in the logs in clear text. Remove the entry when you finish.
+> **Warning:** The values and messages appear in the logs in clear text. Remove the entry when you finish.
 
 ### Read the management plane metrics
 

@@ -241,3 +241,47 @@ func TestQueryLogKeepsBoundValuesOutOfTheLogUnlessAsked(t *testing.T) {
 		assert.Contains(t, out, "operation=INSERT")
 	})
 }
+
+// TestQueryLogKeepsPostgresErrorMessagesOutOfTheLogUnlessAsked covers the
+// message of a PostgreSQL error, which can repeat the value it rejected, for
+// example "invalid input syntax for type uuid".
+func TestQueryLogKeepsPostgresErrorMessagesOutOfTheLogUnlessAsked(t *testing.T) {
+	const secret = "SECRET-TOKEN-123"
+
+	pgErr := pgdriver.NewError(map[byte]string{
+		'S': "ERROR",
+		'C': "22P02",
+		'M': `invalid input syntax for type uuid: "` + secret + `"`,
+	})
+	errs := []struct {
+		name string
+		err  error
+	}{
+		{"a PostgreSQL error", pgErr},
+		{"a wrapped PostgreSQL error", fmt.Errorf("exec: %w", pgErr)},
+	}
+	for _, tt := range errs {
+		for _, logValues := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s, values on=%t", tt.name, logValues), func(t *testing.T) {
+				var buf bytes.Buffer
+				logger := slog.New(slog.NewTextHandler(&buf, nil))
+				attrs := queryLogFormat(logValues)(&bun.QueryEvent{Err: tt.err, StartTime: time.Now()})
+				logger.LogAttrs(context.Background(), slog.LevelError, "", attrs...)
+				out := buf.String()
+
+				assert.Equal(t, logValues, strings.Contains(out, secret), out)
+				assert.Contains(t, out, "pg_sqlstate=22P02")
+				assert.Contains(t, out, "pg_severity=ERROR")
+				assert.Contains(t, out, "SQLSTATE=22P02", "the error attribute still names the condition")
+			})
+		}
+	}
+
+	t.Run("an error from outside PostgreSQL is logged as is", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&buf, nil))
+		attrs := queryLogFormat(false)(&bun.QueryEvent{Err: errors.New("context canceled"), StartTime: time.Now()})
+		logger.LogAttrs(context.Background(), slog.LevelError, "", attrs...)
+		assert.Contains(t, buf.String(), `error="context canceled"`)
+	})
+}
