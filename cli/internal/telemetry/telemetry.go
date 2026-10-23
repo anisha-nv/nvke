@@ -162,21 +162,22 @@ func (run *Run) SpanContext() trace.SpanContext {
 // It is a no-op if Start was not called.
 func (run *Run) Finish(err error) {
 	run.mu.Lock()
-	started := run.rootSpan != nil
+	span, provider := run.rootSpan, run.tracerProvider
+	run.rootSpan, run.tracerProvider = nil, nil
 	run.mu.Unlock()
-	if !started {
+	if span == nil {
 		return
 	}
-	defer run.flushLogs()
-	run.mu.Lock()
-	defer run.mu.Unlock()
+	// The SDK calls a span processor synchronously from End and Shutdown, and a
+	// processor may call the run's own methods, so none of this runs under the
+	// lock.
 	if err != nil {
-		run.rootSpan.RecordError(err)
-		run.rootSpan.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 	}
-	run.rootSpan.End()
-	_ = run.tracerProvider.Shutdown(context.Background())
-	run.rootSpan, run.tracerProvider = nil, nil
+	span.End()
+	_ = provider.Shutdown(context.Background())
+	run.flushLogs()
 }
 
 // checkResponseTraceID warns, once per run, when response carries an X-Trace-ID

@@ -15,10 +15,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -273,4 +275,47 @@ func TestWarnsWhenTheControllerReportsADifferentTraceID(t *testing.T) {
 			assert.Equal(t, "0af7651916cd43dd8448eb211c80319c", rec["received"])
 		})
 	}
+}
+
+// reentrantProcessor is a span processor that reads the run's trace ID from the
+// callbacks the SDK makes while the run finishes.
+type reentrantProcessor struct {
+	run *Run
+
+	endID      string
+	shutdownID string
+}
+
+func (*reentrantProcessor) OnStart(context.Context, sdktrace.ReadWriteSpan) {}
+func (p *reentrantProcessor) OnEnd(sdktrace.ReadOnlySpan)                   { p.endID = p.run.TraceID() }
+
+func (p *reentrantProcessor) Shutdown(context.Context) error {
+	p.shutdownID = p.run.TraceID()
+	return nil
+}
+func (*reentrantProcessor) ForceFlush(context.Context) error { return nil }
+
+// The SDK calls a span processor synchronously from End and Shutdown, so Finish
+// must not hold the run's lock while it makes those calls.
+func TestFinishAllowsProcessorCallbacksToReadTheTraceID(t *testing.T) {
+	t.Parallel()
+	processor := &reentrantProcessor{}
+	run := NewRun("test", WithSpanProcessor(processor))
+	processor.run = run
+	run.Start(context.Background(), "probe")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		run.Finish(errors.New("failed"))
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "Finish deadlocked: a span processor callback could not read the trace ID")
+	}
+
+	assert.Len(t, run.TraceID(), 32)
+	assert.Equal(t, run.TraceID(), processor.endID, "OnEnd saw the trace ID")
+	assert.Equal(t, run.TraceID(), processor.shutdownID, "Shutdown saw the trace ID")
 }
