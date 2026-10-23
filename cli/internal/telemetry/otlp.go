@@ -49,10 +49,10 @@ type OTLPConfig struct {
 
 // OTLPConfigFromEnv reads OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_INSECURE
 // and OTEL_EXPORTER_OTLP_HEADERS, and no other OTLP variable. The endpoint is a
-// host:port or a URL; the http scheme implies Insecure, as does
-// OTEL_EXPORTER_OTLP_INSECURE=true. It returns false when no endpoint is set,
-// and an error, which does not contain the endpoint, when the endpoint cannot be
-// parsed or contains credentials.
+// host:port or a URL. The http scheme sets Insecure and any other scheme clears
+// it; only an endpoint with no scheme reads OTEL_EXPORTER_OTLP_INSECURE. It
+// returns false when no endpoint is set, and an error that does not contain the
+// endpoint when the endpoint cannot be parsed or contains credentials.
 func OTLPConfigFromEnv() (OTLPConfig, bool, error) {
 	// Variables for one signal, such as OTEL_EXPORTER_OTLP_LOGS_ENDPOINT, are not
 	// read: this endpoint and these headers serve every signal nvkectl exports.
@@ -71,9 +71,11 @@ func OTLPConfigFromEnv() (OTLPConfig, bool, error) {
 		return OTLPConfig{}, false, fmt.Errorf("invalid %s: want host:port or a URL with a host and no credentials", envEndpoint)
 	}
 	cfg.Endpoint = u.Host
-	cfg.Insecure = u.Scheme == "http"
-	if v, err := strconv.ParseBool(os.Getenv(envInsecure)); err == nil && v {
+	switch u.Scheme {
+	case "http":
 		cfg.Insecure = true
+	case "":
+		cfg.Insecure, _ = strconv.ParseBool(os.Getenv(envInsecure))
 	}
 	return cfg, true, nil
 }

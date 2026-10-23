@@ -272,6 +272,18 @@ func TestOTLPConfigFromEnv(t *testing.T) {
 			wantOK: true,
 		},
 		{
+			name:   "https URL stays secure when the insecure variable is true",
+			env:    map[string]string{envEndpoint: "https://collector:4317", envInsecure: "true"},
+			want:   OTLPConfig{Endpoint: "collector:4317", Headers: map[string]string{}},
+			wantOK: true,
+		},
+		{
+			name:   "http URL is insecure when the insecure variable is false",
+			env:    map[string]string{envEndpoint: "http://collector:4317", envInsecure: "false"},
+			want:   OTLPConfig{Endpoint: "collector:4317", Insecure: true, Headers: map[string]string{}},
+			wantOK: true,
+		},
+		{
 			name:   "insecure variable",
 			env:    map[string]string{envEndpoint: "collector:4317", envInsecure: "true"},
 			want:   OTLPConfig{Endpoint: "collector:4317", Insecure: true, Headers: map[string]string{}},

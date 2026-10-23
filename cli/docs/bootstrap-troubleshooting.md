@@ -63,8 +63,8 @@ if it needs none. Separate several headers with commas. nvkectl never prints
 them.
 
 - The connection uses TLS. To send without it, start the endpoint with
-  `http://` or set `OTEL_EXPORTER_OTLP_INSECURE=true`. An endpoint with no
-  scheme, such as `<COLLECTOR_HOST>:4317`, uses TLS.
+  `http://`, or give a `<COLLECTOR_HOST>:4317` endpoint with no scheme and set
+  `OTEL_EXPORTER_OTLP_INSECURE=true`. An `https://` endpoint always uses TLS.
 - Do not put credentials in the endpoint. nvkectl warns that log export is off
   and sends nothing. Send a token in `OTEL_EXPORTER_OTLP_HEADERS` instead.
 - nvkectl sends log records only. It does not send spans.
