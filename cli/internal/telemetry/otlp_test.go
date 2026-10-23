@@ -254,6 +254,12 @@ func TestOTLPConfigFromEnv(t *testing.T) {
 			wantOK: true,
 		},
 		{
+			name:   "IPv6 host and port",
+			env:    map[string]string{envEndpoint: "[::1]:4317"},
+			want:   OTLPConfig{Endpoint: "[::1]:4317", Headers: map[string]string{}},
+			wantOK: true,
+		},
+		{
 			name:   "http URL is insecure",
 			env:    map[string]string{envEndpoint: "http://collector:4317"},
 			want:   OTLPConfig{Endpoint: "collector:4317", Insecure: true, Headers: map[string]string{}},
@@ -309,9 +315,22 @@ func TestOTLPConfigFromEnv(t *testing.T) {
 	}
 }
 
-func TestOTLPConfigFromEnvRejectsAnUnparsableEndpoint(t *testing.T) {
-	t.Setenv(envEndpoint, "http://")
-	_, ok, err := OTLPConfigFromEnv()
-	assert.Error(t, err)
-	assert.False(t, ok)
+func TestOTLPConfigFromEnvRejectsABadEndpointWithoutPrintingIt(t *testing.T) {
+	tests := map[string]string{
+		"URL without a host":            "http://",
+		"URL with credentials, no host": "https://user:s3cret@",
+		"URL with credentials":          "https://user:s3cret@collector:4317",
+		"host:port with credentials":    "user:s3cret@collector:4317",
+		"unparsable":                    "collector:4317 s3cret",
+	}
+	for name, endpoint := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(envEndpoint, endpoint)
+			_, ok, err := OTLPConfigFromEnv()
+			require.Error(t, err)
+			assert.False(t, ok)
+			assert.Contains(t, err.Error(), envEndpoint)
+			assert.NotContains(t, err.Error(), "s3cret")
+		})
+	}
 }

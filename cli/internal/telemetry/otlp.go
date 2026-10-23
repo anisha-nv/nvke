@@ -51,7 +51,8 @@ type OTLPConfig struct {
 // and OTEL_EXPORTER_OTLP_HEADERS, and no other OTLP variable. The endpoint is a
 // host:port or a URL; the http scheme implies Insecure, as does
 // OTEL_EXPORTER_OTLP_INSECURE=true. It returns false when no endpoint is set,
-// and an error when the endpoint cannot be parsed.
+// and an error, which does not contain the endpoint, when the endpoint cannot be
+// parsed or contains credentials.
 func OTLPConfigFromEnv() (OTLPConfig, bool, error) {
 	// Variables for one signal, such as OTEL_EXPORTER_OTLP_LOGS_ENDPOINT, are not
 	// read: this endpoint and these headers serve every signal nvkectl exports.
@@ -60,14 +61,17 @@ func OTLPConfigFromEnv() (OTLPConfig, bool, error) {
 		return OTLPConfig{}, false, nil
 	}
 	cfg := OTLPConfig{Endpoint: raw, Headers: parseHeaders(os.Getenv(envHeaders))}
-	if strings.Contains(raw, "://") {
-		u, err := url.Parse(raw)
-		if err != nil || u.Host == "" {
-			return OTLPConfig{}, false, fmt.Errorf("invalid OTLP endpoint %q: want host:port or a URL", raw)
-		}
-		cfg.Endpoint = u.Host
-		cfg.Insecure = u.Scheme == "http"
+	target := raw
+	if !strings.Contains(raw, "://") {
+		target = "//" + raw
 	}
+	u, err := url.Parse(target)
+	// The error names the variable and not its value, which may hold credentials.
+	if err != nil || u.Host == "" || u.User != nil {
+		return OTLPConfig{}, false, fmt.Errorf("invalid %s: want host:port or a URL with a host and no credentials", envEndpoint)
+	}
+	cfg.Endpoint = u.Host
+	cfg.Insecure = u.Scheme == "http"
 	if v, err := strconv.ParseBool(os.Getenv(envInsecure)); err == nil && v {
 		cfg.Insecure = true
 	}
