@@ -16,8 +16,11 @@ func newCreateCmd() *cobra.Command {
 		Use:   "create",
 		Short: "Create a resource",
 	}
-	cmd.AddCommand(clusters.NewCreateCmd(loadClient))
-	cmd.AddCommand(nodepools.NewCreateCmd(loadClient))
-	cmd.AddCommand(operatorcmd.NewCreateCmds(loadOperator)...)
+	siteCmds := append([]*cobra.Command{
+		clusters.NewCreateCmd(loadClient),
+		nodepools.NewCreateCmd(loadClient),
+	}, operatorcmd.NewCreateCmds(loadOperator)...)
+	markUsesSite(siteCmds...)
+	cmd.AddCommand(siteCmds...)
 	return cmd
 }

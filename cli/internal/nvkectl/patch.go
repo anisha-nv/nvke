@@ -15,7 +15,11 @@ func newPatchCmd() *cobra.Command {
 		Use:   "patch",
 		Short: "Patch a resource",
 	}
-	cmd.AddCommand(clusters.NewPatchCmd(loadClient))
-	cmd.AddCommand(nodepools.NewPatchCmd(loadClient))
+	siteCmds := []*cobra.Command{
+		clusters.NewPatchCmd(loadClient),
+		nodepools.NewPatchCmd(loadClient),
+	}
+	markUsesSite(siteCmds...)
+	cmd.AddCommand(siteCmds...)
 	return cmd
 }

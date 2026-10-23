@@ -10,5 +10,9 @@ import (
 )
 
 func newDeprecateCmd() *cobra.Command {
-	return operatorcmd.NewDeprecateCmd(loadOperator)
+	cmd := operatorcmd.NewDeprecateCmd(loadOperator)
+	// Only the kind subcommands load a site; "deprecate" alone prints help or
+	// an error.
+	markUsesSite(cmd.Commands()...)
+	return cmd
 }

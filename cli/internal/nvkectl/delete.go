@@ -16,8 +16,11 @@ func newDeleteCmd() *cobra.Command {
 		Use:   "delete",
 		Short: "Delete a resource",
 	}
-	cmd.AddCommand(clusters.NewDeleteCmd(loadClient))
-	cmd.AddCommand(nodepools.NewDeleteCmd(loadClient))
-	cmd.AddCommand(operatorcmd.NewDeleteCmds(loadOperator)...)
+	siteCmds := append([]*cobra.Command{
+		clusters.NewDeleteCmd(loadClient),
+		nodepools.NewDeleteCmd(loadClient),
+	}, operatorcmd.NewDeleteCmds(loadOperator)...)
+	markUsesSite(siteCmds...)
+	cmd.AddCommand(siteCmds...)
 	return cmd
 }

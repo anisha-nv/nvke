@@ -79,6 +79,9 @@ them.
   and nvkectl warns once. If you already export `OTEL_EXPORTER_OTLP_ENDPOINT`
   for other tools, those tools' backend now also receives nvkectl's spans and
   the controller's.
+- **A site's endpoint.** Commands that use a site, such as `get clusters`, send
+  to the endpoint stored with `nvkectl config set-site --otlp-endpoint`; see
+  [Export a site's telemetry](user-flow.md#export-a-sites-telemetry).
 - **An unreachable endpoint.** nvkectl prints one warning, the command still
   succeeds, and the command takes up to two seconds longer to exit.
 

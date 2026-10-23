@@ -22,11 +22,15 @@ func newGetCmd() *cobra.Command {
 		Use:   "get",
 		Short: "Display one or more resources",
 	}
-	cmd.AddCommand(clusters.NewGetCmd(loadClient))
-	cmd.AddCommand(nodepools.NewGetCmd(loadClient))
-	cmd.AddCommand(operatorcmd.NewGetCmds(loadOperator)...)
-	cmd.AddCommand(providercmd.NewGetCmd(loadSite, controllerdeploy.ExecCommandRunner{}, credentials.NewDynamicLister))
-	cmd.AddCommand(mgmtcommand.NewGetKubeconfigCmd(loadSite, newMgmtClient))
+	siteCmds := []*cobra.Command{
+		clusters.NewGetCmd(loadClient),
+		nodepools.NewGetCmd(loadClient),
+		providercmd.NewGetCmd(loadSite, controllerdeploy.ExecCommandRunner{}, credentials.NewDynamicLister),
+		mgmtcommand.NewGetKubeconfigCmd(loadSite, newMgmtClient),
+	}
+	siteCmds = append(siteCmds, operatorcmd.NewGetCmds(loadOperator)...)
+	markUsesSite(siteCmds...)
+	cmd.AddCommand(siteCmds...)
 	cmd.AddCommand(newGetBootstrapManifestCmd())
 	return cmd
 }
