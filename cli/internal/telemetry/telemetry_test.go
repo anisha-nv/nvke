@@ -295,8 +295,7 @@ func (p *reentrantProcessor) Shutdown(context.Context) error {
 }
 func (*reentrantProcessor) ForceFlush(context.Context) error { return nil }
 
-// The SDK calls a span processor synchronously from End and Shutdown, so Finish
-// must not hold the run's lock while it makes those calls.
+// Finish does not hold the run's lock while the SDK calls span processors.
 func TestFinishAllowsProcessorCallbacksToReadTheTraceID(t *testing.T) {
 	t.Parallel()
 	processor := &reentrantProcessor{}

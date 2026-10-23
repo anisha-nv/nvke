@@ -103,9 +103,8 @@ func (run *Run) EnableOTLP(cfg OTLPConfig) error {
 	if run.handlerBuilt {
 		return errors.New("OTLP export must be enabled before the log handler is built")
 	}
-	// The exporter fills every setting left unset from its own OTEL_EXPORTER_OTLP_*
-	// and OTEL_EXPORTER_OTLP_LOGS_* variables. Each one is set here, so the
-	// configuration is cfg alone.
+	// Every setting is explicit: the exporter reads its own OTEL_EXPORTER_OTLP_*
+	// variables, including the logs-only ones, for any that are left unset.
 	creds := credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
 	if cfg.Insecure {
 		creds = insecure.NewCredentials()

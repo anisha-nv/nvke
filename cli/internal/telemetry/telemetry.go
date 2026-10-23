@@ -49,13 +49,12 @@ type Run struct {
 	mismatchOnce   sync.Once // the trace ID mismatch is reported once per run
 	exportWarnOnce sync.Once // an export failure is reported once per run
 
-	// handlerBuilt and logProvider are used only by the goroutine that sets up
-	// logging and calls Finish.
+	// Not guarded by mu: only the goroutine that sets up logging and calls
+	// Finish uses these two.
 	handlerBuilt bool                   // LogHandler has run, so EnableOTLP is too late
 	logProvider  *sdklog.LoggerProvider // nil unless EnableOTLP was called
 
-	// warnLogger is where export warnings go, set by LogHandler. The log
-	// exporter's goroutine reads it.
+	// warnLogger is where export warnings go; the exporter's goroutine reads it.
 	warnLogger atomic.Pointer[slog.Logger]
 
 	mu              sync.Mutex
@@ -168,9 +167,8 @@ func (run *Run) Finish(err error) {
 	if span == nil {
 		return
 	}
-	// The SDK calls a span processor synchronously from End and Shutdown, and a
-	// processor may call the run's own methods, so none of this runs under the
-	// lock.
+	// Not under the lock: a span processor runs inside End and Shutdown and may
+	// call the run's methods.
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
