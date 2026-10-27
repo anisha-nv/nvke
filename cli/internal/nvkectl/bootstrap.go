@@ -305,7 +305,7 @@ func runBootstrapSite(ctx context.Context, out io.Writer, opts *bootstrapSiteOpt
 		return err
 	}
 	run.SetLogFields(operationBootstrapSite, inv.ClusterName)
-	logger.Info("loaded site spec", "path", opts.siteSpec)
+	logger.Info("loaded site spec", "path", opts.siteSpec, "cluster", inv.ClusterName)
 	// Checked before the dry-run return so --dry-run is the complete pre-flight,
 	// and together so one run reports every problem.
 	if err := errors.Join(inv.CheckBootstrapMode(opts.disableMTLS), inv.ValidateBootstrapReferences()); err != nil {
@@ -645,12 +645,12 @@ func createSiteCluster(
 
 	// Logged after the default is applied, so the line states the budget the
 	// command will actually keep to rather than the bare flag value.
-	logger.Info("waiting for the cluster to finish provisioning", "timeout", timeout)
+	logger.Info("waiting for the cluster to finish provisioning", "cluster", created.Name, "timeout", timeout)
 
 	if _, err := sitecluster.WaitProvisioned(ctx, client, created.ID, time.Until(deadline), logger); err != nil {
 		return true, err
 	}
-	logger.Info("cluster provisioned", "id", created.ID)
+	logger.Info("cluster provisioned", "cluster", created.Name, "id", created.ID)
 
 	// The cluster reports Provisioned once its initial control-plane node is
 	// up; the rest join afterwards, through workflows that live in the
@@ -661,7 +661,7 @@ func createSiteCluster(
 	); err != nil {
 		return true, err
 	}
-	logger.Info("all control plane nodes joined", "nodes", inv.ControlPlaneCount())
+	logger.Info("all control plane nodes joined", "cluster", created.Name, "nodes", inv.ControlPlaneCount())
 
 	// The kubeconfig first, so a failure in the key capture below still leaves
 	// the operator holding the admin credential of the cluster that was built.

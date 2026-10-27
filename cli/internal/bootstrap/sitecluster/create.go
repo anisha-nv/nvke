@@ -63,6 +63,7 @@ func Create(ctx context.Context, client ClusterAPI, inv *sitespec.SiteSpec, log 
 	}
 
 	log.Info("creating the site cluster",
+		"cluster", req.Name,
 		"kubernetesVersion", req.ControlPlaneKubernetesVersion,
 		"cni", req.CniPlugin,
 		"infraProvider", inv.Infra.Provider,
@@ -75,7 +76,7 @@ func Create(ctx context.Context, client ClusterAPI, inv *sitespec.SiteSpec, log 
 		}
 		return nil, fmt.Errorf("sitecluster: creating cluster %q: %w: %w", req.Name, ErrCreateUnconfirmed, err)
 	}
-	log.Info("cluster created", "id", cluster.ID)
+	log.Info("cluster created", "cluster", cluster.Name, "id", cluster.ID)
 	return cluster, nil
 }
 
@@ -124,7 +125,7 @@ func WaitProvisioned(
 			lastErr = nil
 			status := clusterstate.Status(cluster)
 			if status != lastStatus {
-				log.Info("cluster state", "status", status)
+				log.Info("cluster state", "cluster", cluster.Name, "status", status)
 				lastStatus = status
 			}
 			if clusterstate.IsProvisioned(cluster) {
