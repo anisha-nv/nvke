@@ -63,7 +63,6 @@ func Create(ctx context.Context, client ClusterAPI, inv *sitespec.SiteSpec, log 
 	}
 
 	log.Info("creating the site cluster",
-		"cluster", req.Name,
 		"kubernetesVersion", req.ControlPlaneKubernetesVersion,
 		"cni", req.CniPlugin,
 		"infraProvider", inv.Infra.Provider,
@@ -76,7 +75,7 @@ func Create(ctx context.Context, client ClusterAPI, inv *sitespec.SiteSpec, log 
 		}
 		return nil, fmt.Errorf("sitecluster: creating cluster %q: %w: %w", req.Name, ErrCreateUnconfirmed, err)
 	}
-	log.Info("cluster created", "cluster", cluster.Name, "id", cluster.ID)
+	log.Info("cluster created", "id", cluster.ID)
 	return cluster, nil
 }
 
@@ -125,7 +124,7 @@ func WaitProvisioned(
 			lastErr = nil
 			status := clusterstate.Status(cluster)
 			if status != lastStatus {
-				log.Info("cluster state", "cluster", cluster.Name, "status", status)
+				log.Info("cluster state", "status", status)
 				lastStatus = status
 			}
 			if clusterstate.IsProvisioned(cluster) {
@@ -192,7 +191,7 @@ func WaitControlPlaneJoined(
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	log.Info("waiting for the control plane nodes to join", "cluster", id, "nodes", want)
+	log.Info("waiting for the control plane nodes to join", "cluster_id", id, "nodes", want)
 
 	lastProvisioned := -1
 	lastErr := error(nil)
@@ -211,7 +210,7 @@ func WaitControlPlaneJoined(
 			outstanding = pending
 			if provisioned != lastProvisioned {
 				log.Info("control plane nodes joined",
-					"cluster", id, "provisioned", provisioned, "of", want)
+					"cluster_id", id, "provisioned", provisioned, "of", want)
 				lastProvisioned = provisioned
 			}
 			if provisioned >= want {

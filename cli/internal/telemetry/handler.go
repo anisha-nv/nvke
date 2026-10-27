@@ -12,15 +12,19 @@ import (
 	"github.com/dsx-ai-factory/nvke/cli/internal/redact"
 )
 
-// logHandler adds trace_id and span_id to every record.
+// logHandler adds trace_id and span_id, and the run's phase, operation and
+// cluster when set, to every record.
 type logHandler struct {
 	slog.Handler
 	root trace.SpanContext
+	run  *Run
 }
 
 // LogHandler wraps inner so each record carries trace_id and span_id: those of
-// the span in the record's context, or else those of the run's root span.
-// Records logged without a context therefore still carry the run's trace ID.
+// the span in the record's context, or else those of the run's current phase,
+// or else those of the run's root span. Records logged without a context
+// therefore still carry the run's trace ID. While a phase is active each record
+// also carries phase, and operation and cluster once SetLogFields has set them.
 // If EnableOTLP was called, each record that inner handles is also exported,
 // with the same trace ID and span ID and with its attributes. Export
 // failures are reported as warnings through the same handler, with the trace
@@ -33,7 +37,7 @@ func (run *Run) LogHandler(inner slog.Handler) slog.Handler {
 	if !root.IsValid() {
 		return inner
 	}
-	local := &logHandler{Handler: inner, root: root}
+	local := &logHandler{Handler: inner, root: root, run: run}
 	exported := run.otlpHandler()
 	if exported == nil {
 		return local
@@ -79,7 +83,11 @@ func (handler *teeHandler) WithGroup(name string) slog.Handler {
 
 // Handle implements slog.Handler.
 func (handler *logHandler) Handle(ctx context.Context, record slog.Record) error {
+	phase, operation, cluster := handler.run.logFields()
 	spanContext := trace.SpanContextFromContext(ctx)
+	if !spanContext.IsValid() && phase != nil {
+		spanContext = phase.span
+	}
 	if !spanContext.IsValid() {
 		spanContext = handler.root
 	}
@@ -87,15 +95,36 @@ func (handler *logHandler) Handle(ctx context.Context, record slog.Record) error
 		slog.String("trace_id", spanContext.TraceID().String()),
 		slog.String("span_id", spanContext.SpanID().String()),
 	)
+	// A record that already names a field keeps its own value.
+	addUnset(&record, "operation", operation)
+	addUnset(&record, "cluster", cluster)
+	if phase != nil {
+		addUnset(&record, "phase", phase.name)
+	}
 	return handler.Handler.Handle(ctx, record)
 }
 
 // WithAttrs implements slog.Handler.
 func (handler *logHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &logHandler{Handler: handler.Handler.WithAttrs(attrs), root: handler.root}
+	return &logHandler{Handler: handler.Handler.WithAttrs(attrs), root: handler.root, run: handler.run}
 }
 
 // WithGroup implements slog.Handler.
 func (handler *logHandler) WithGroup(name string) slog.Handler {
-	return &logHandler{Handler: handler.Handler.WithGroup(name), root: handler.root}
+	return &logHandler{Handler: handler.Handler.WithGroup(name), root: handler.root, run: handler.run}
+}
+
+// addUnset adds key=value to record unless value is empty or record has key.
+func addUnset(record *slog.Record, key, value string) {
+	if value == "" {
+		return
+	}
+	found := false
+	record.Attrs(func(attr slog.Attr) bool {
+		found = attr.Key == key
+		return !found
+	})
+	if !found {
+		record.AddAttrs(slog.String(key, value))
+	}
 }

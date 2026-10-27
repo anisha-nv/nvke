@@ -43,6 +43,40 @@ node, run the same searches in two steps:
 2. Search for that `workflow_id`. The matches are the node's workflow and
    activity steps, including the one that failed.
 
+#### Phases and log fields
+
+A bootstrap run has five phases. Each is timed by a span and by one
+`phase finished` log line.
+
+| Phase | Covers |
+|---|---|
+| `preflight` | Loading and validating the site spec, and the checks that run before anything is built |
+| `bootstrap_cluster` | Creating the temporary Kind cluster |
+| `engine_deploy` | Installing Postgres, Temporal, SPIRE, Cluster API and the controller, and waiting for the controller to report healthy |
+| `site_cluster` | Creating the site cluster, waiting for it and every control-plane node, and writing the SPIRE entries |
+| `finish` | Making the control-plane nodes schedulable, then the cleanup: the diagnostics bundle and deleting the Kind cluster |
+
+`phase finished` has `phase`, `outcome` (`succeeded` or `failed`) and
+`duration_ms`. A failed run logs the failed phase with `outcome=failed`, then
+`finish` for the cleanup, so `finish` can be long after a failure. A failure
+before the Kind cluster exists has no `finish` line, and `--dry-run` logs
+`preflight` only.
+
+```json
+{"time":"2026-10-06T04:32:13.418Z","level":"INFO","msg":"phase finished","phase":"engine_deploy","outcome":"succeeded","duration_ms":184233,"operation":"bootstrap_site","cluster":"csc-01","trace_id":"6e0c63257de34c92bf9efcd03927272e","span_id":"9f8e7d6c5b4a3921"}
+```
+
+Every log line also carries `operation` (`bootstrap_site`) and, once the site
+spec is loaded, `cluster`, the site cluster's name. While a phase runs, a line
+carries `phase`, and its `span_id` is the phase span's. The temporary Kind
+cluster is `bootstrap_kind_cluster`. With `--json-logs`, `time` is in UTC.
+
+List the phase durations from a JSON log:
+
+```bash
+jq -r 'select(.msg=="phase finished") | "\(.phase)\t\(.outcome)\t\(.duration_ms) ms"' bootstrap.log
+```
+
 #### Send nvkectl's telemetry to a backend
 
 nvkectl can send its spans and log records to an OpenTelemetry collector over
@@ -150,7 +184,7 @@ cleanup can also leave it behind. The logs report retention and, when
 available, the kubeconfig path.
 
 ```text
-level=WARN msg="bootstrap failed after site cluster creation; retaining the bootstrap kind cluster for recovery" cluster=nvkectl-bootstrap kubeconfig=/tmp/nvkectl-bootstrap-kubeconfig-.../config
+level=WARN msg="bootstrap failed after site cluster creation; retaining the bootstrap kind cluster for recovery" bootstrap_kind_cluster=nvkectl-bootstrap kubeconfig=/tmp/nvkectl-bootstrap-kubeconfig-.../config
 ```
 
 If you set `OTEL_EXPORTER_OTLP_HEADERS`, the kept cluster also holds those
