@@ -40,9 +40,16 @@ type phasedRun struct {
 // not run in parallel.
 func runPhased(t *testing.T, opts *bootstrapSiteOptions) phasedRun {
 	t.Helper()
+	return runPhasedWith(context.Background(), t, opts)
+}
+
+// runPhasedWith is runPhased for a run that starts from base, so a test can
+// cancel the command's context.
+func runPhasedWith(base context.Context, t *testing.T, opts *bootstrapSiteOptions) phasedRun {
+	t.Helper()
 	rec := tracetest.NewSpanRecorder()
 	run := telemetry.NewRun("test", telemetry.WithSpanProcessor(rec))
-	ctx := run.Start(context.Background(), "nvkectl bootstrap site")
+	ctx := run.Start(base, "nvkectl bootstrap site")
 
 	var buf bytes.Buffer
 	previous := slog.Default()
@@ -344,4 +351,41 @@ func TestSetupLoggingWritesUTCTimeOnlyAsJSON(t *testing.T) {
 			assert.Contains(t, string(written), tt.want)
 		})
 	}
+}
+
+// cancelingCWERunner cancels the command's context on its first call and fails
+// it, as a SIGINT during the controller deploy does.
+type cancelingCWERunner struct {
+	fakeCWERunner
+	cancel context.CancelFunc
+}
+
+func (r cancelingCWERunner) Run(ctx context.Context, _ string, _ ...string) (string, error) {
+	r.cancel()
+	return "", ctx.Err()
+}
+
+// TestRunBootstrapSiteEndsEveryPhaseWhenInterrupted checks that a cancelled
+// context does not leave a phase open: the interrupted phase is reported as
+// failed, and the cleanup still runs, is timed as finish and tears Kind down.
+func TestRunBootstrapSiteEndsEveryPhaseWhenInterrupted(t *testing.T) {
+	setBootstrapEnv(t)
+	base, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	runner := &recordingRunner{next: fakeBootstrapRunner{}}
+	opts := happyPathOptions(t)
+	opts.bootstrapRunner = runner
+	opts.cweRunner = cancelingCWERunner{fakeCWERunner: newFakeCWERunner(t), cancel: cancel}
+	opts.diagnosticsDir = filepath.Join(t.TempDir(), "cluster-diagnostics")
+
+	got := runPhasedWith(base, t, opts)
+
+	require.Error(t, got.err)
+	assert.Equal(t, []string{
+		"preflight=succeeded", "bootstrap_cluster=succeeded", "engine_deploy=failed", "finish=succeeded",
+	}, got.phaseLines())
+	assert.True(t, runner.sawArgs("delete", "cluster"), "the cleanup runs on a cancelled context; calls: %v", runner.calls)
+	require.NotNil(t, got.phaseSpan(phaseFinish), "the finish span ended")
+	assert.Equal(t, codes.Unset, got.phaseSpan(phaseFinish).Status().Code)
+	assert.Equal(t, codes.Error, got.phaseSpan(phaseEngineDeploy).Status().Code)
 }

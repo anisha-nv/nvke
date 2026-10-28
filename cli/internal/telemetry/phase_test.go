@@ -179,3 +179,36 @@ func TestStartPhaseOnARunThatHasNotStarted(t *testing.T) {
 		})
 	}
 }
+
+// TestPhaseFailureExportsItsErrorMasked checks that a credential in the error
+// that failed a phase reaches neither the phase's log record nor the exported
+// span.
+func TestPhaseFailureExportsItsErrorMasked(t *testing.T) {
+	const token = "phase-token-1c2d3e4f"
+	RegisterHeaderSecrets(map[string]string{"authorization": "Bearer " + token})
+	collector := newFakeCollector(t)
+	run := NewRun("dev")
+	require.NoError(t, run.EnableOTLP(OTLPConfig{Endpoint: collector.addr, Insecure: true}))
+	ctx := run.Start(context.Background(), "nvkectl bootstrap site")
+	buf := useJSONLogger(t, run)
+
+	_, end := run.StartPhase(ctx, "engine_deploy")
+	end(errors.New("helm failed with " + token))
+	run.Finish(nil)
+
+	assert.NotContains(t, buf.String(), token, "the log record has no error text")
+	var found bool
+	for _, span := range collector.receivedSpans() {
+		if span.GetName() != "phase.engine_deploy" {
+			continue
+		}
+		found = true
+		assert.Equal(t, "helm failed with <redacted>", span.GetStatus().GetMessage())
+		for _, event := range span.GetEvents() {
+			for _, kv := range event.GetAttributes() {
+				assert.NotContains(t, kv.GetValue().GetStringValue(), token, kv.GetKey())
+			}
+		}
+	}
+	assert.True(t, found, "the phase span reached the collector")
+}
