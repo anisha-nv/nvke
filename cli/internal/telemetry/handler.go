@@ -43,16 +43,15 @@ func (run *Run) LogHandler(inner slog.Handler) slog.Handler {
 		return local
 	}
 	run.warnLogger.Store(slog.New(local))
-	return &teeHandler{local: local, exported: exported, root: root}
+	return &teeHandler{local: local, exported: exported}
 }
 
 // teeHandler sends each record to the local handler and to the exporter. It
 // logs the levels the local handler logs, so the exporter receives the records
 // that appear on stderr.
 type teeHandler struct {
-	local    slog.Handler
+	local    *logHandler
 	exported slog.Handler
-	root     trace.SpanContext
 }
 
 // Enabled implements slog.Handler.
@@ -61,28 +60,36 @@ func (handler *teeHandler) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 // Handle implements slog.Handler. It exports a copy of record and writes record
-// to the local handler. An export error is not returned.
+// to the local handler. Both get the span and fields that the local handler
+// resolves, so the exported record matches the one on stderr. An export error is
+// not returned.
 func (handler *teeHandler) Handle(ctx context.Context, record slog.Record) error {
 	// The exporter reads a record's trace ID and span ID from its context.
-	if !trace.SpanContextFromContext(ctx).IsValid() {
-		ctx = trace.ContextWithSpanContext(ctx, handler.root)
-	}
+	ctx, record = handler.local.resolve(ctx, record)
 	_ = handler.exported.Handle(ctx, redact.Record(record))
-	return handler.local.Handle(ctx, record)
+	return handler.local.handleResolved(ctx, record)
 }
 
 // WithAttrs implements slog.Handler.
 func (handler *teeHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &teeHandler{local: handler.local.WithAttrs(attrs), exported: handler.exported.WithAttrs(redact.Attrs(attrs)), root: handler.root}
+	return &teeHandler{local: handler.local.withAttrs(attrs), exported: handler.exported.WithAttrs(redact.Attrs(attrs))}
 }
 
 // WithGroup implements slog.Handler.
 func (handler *teeHandler) WithGroup(name string) slog.Handler {
-	return &teeHandler{local: handler.local.WithGroup(name), exported: handler.exported.WithGroup(name), root: handler.root}
+	return &teeHandler{local: handler.local.withGroup(name), exported: handler.exported.WithGroup(name)}
 }
 
 // Handle implements slog.Handler.
 func (handler *logHandler) Handle(ctx context.Context, record slog.Record) error {
+	ctx, record = handler.resolve(ctx, record)
+	return handler.handleResolved(ctx, record)
+}
+
+// resolve returns ctx carrying the span the record belongs to, and record with
+// the run's operation, cluster and phase added. The span is the one already in
+// ctx, else the current phase's, else the root span.
+func (handler *logHandler) resolve(ctx context.Context, record slog.Record) (context.Context, slog.Record) {
 	phase, operation, cluster := handler.run.logFields()
 	spanContext := trace.SpanContextFromContext(ctx)
 	if !spanContext.IsValid() && phase != nil {
@@ -91,26 +98,42 @@ func (handler *logHandler) Handle(ctx context.Context, record slog.Record) error
 	if !spanContext.IsValid() {
 		spanContext = handler.root
 	}
-	record.AddAttrs(
-		slog.String("trace_id", spanContext.TraceID().String()),
-		slog.String("span_id", spanContext.SpanID().String()),
-	)
+	ctx = trace.ContextWithSpanContext(ctx, spanContext)
 	// A record that already names a field keeps its own value.
 	addUnset(&record, "operation", operation)
 	addUnset(&record, "cluster", cluster)
 	if phase != nil {
 		addUnset(&record, "phase", phase.name)
 	}
+	return ctx, record
+}
+
+// handleResolved adds trace_id and span_id from ctx, as resolve left it, and
+// passes record to the inner handler.
+func (handler *logHandler) handleResolved(ctx context.Context, record slog.Record) error {
+	spanContext := trace.SpanContextFromContext(ctx)
+	record.AddAttrs(
+		slog.String("trace_id", spanContext.TraceID().String()),
+		slog.String("span_id", spanContext.SpanID().String()),
+	)
 	return handler.Handler.Handle(ctx, record)
 }
 
 // WithAttrs implements slog.Handler.
 func (handler *logHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return handler.withAttrs(attrs)
+}
+
+func (handler *logHandler) withAttrs(attrs []slog.Attr) *logHandler {
 	return &logHandler{Handler: handler.Handler.WithAttrs(attrs), root: handler.root, run: handler.run}
 }
 
 // WithGroup implements slog.Handler.
 func (handler *logHandler) WithGroup(name string) slog.Handler {
+	return handler.withGroup(name)
+}
+
+func (handler *logHandler) withGroup(name string) *logHandler {
 	return &logHandler{Handler: handler.Handler.WithGroup(name), root: handler.root, run: handler.run}
 }
 

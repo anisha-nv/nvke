@@ -6,6 +6,7 @@ package telemetry
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 )
 
 // useJSONLogger makes the run's log handler the default logger for the test and
@@ -211,4 +213,44 @@ func TestPhaseFailureExportsItsErrorMasked(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "the phase span reached the collector")
+}
+
+// TestOTLPExportsPhaseSpanAndFieldsForLoggersWithoutAContext checks that, with
+// OTLP on, a record logged through a context-free logger during a phase reaches
+// stderr and the collector with the phase span's ID and the same fields.
+func TestOTLPExportsPhaseSpanAndFieldsForLoggersWithoutAContext(t *testing.T) {
+	collector := newFakeCollector(t)
+	var stderr bytes.Buffer
+	run := NewRun("dev")
+	require.NoError(t, run.EnableOTLP(OTLPConfig{Endpoint: collector.addr, Insecure: true}))
+	ctx := run.Start(context.Background(), "nvkectl bootstrap site")
+	logger := slog.New(run.LogHandler(slog.NewJSONHandler(&stderr, nil))).With("component", "controllerdeploy")
+	run.SetLogFields("bootstrap_site", "csc-01")
+
+	phaseCtx, end := run.StartPhase(ctx, "engine_deploy")
+	logger.Info("inside the phase")
+	end(nil)
+	run.Finish(nil)
+
+	var local map[string]any
+	for _, rec := range decodeRecords(t, &stderr) {
+		if rec["msg"] == "inside the phase" {
+			local = rec
+		}
+	}
+	require.NotNil(t, local)
+	assert.Equal(t, spanID(phaseCtx), local["span_id"])
+
+	var exported *logspb.LogRecord
+	for _, rec := range collector.received() {
+		if rec.GetBody().GetStringValue() == "inside the phase" {
+			exported = rec
+		}
+	}
+	require.NotNil(t, exported, "the record reached the collector")
+	assert.Equal(t, spanID(phaseCtx), hex.EncodeToString(exported.GetSpanId()))
+	attrs := attributes(exported)
+	assert.Equal(t, "engine_deploy", attrs["phase"])
+	assert.Equal(t, "bootstrap_site", attrs["operation"])
+	assert.Equal(t, "csc-01", attrs["cluster"])
 }
