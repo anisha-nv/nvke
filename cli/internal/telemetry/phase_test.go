@@ -271,3 +271,36 @@ func TestLogHandlerPutsTraceFieldsBeforeRunFields(t *testing.T) {
 	line := strings.Split(buf.String(), "\n")[0]
 	assert.Contains(t, line, `msg=inside k=v trace_id=`+run.TraceID()+` span_id=`+spanID(phaseCtx)+` operation=bootstrap_site cluster=csc-01 phase=preflight`)
 }
+
+// TestOTLPLoggerWithAttrsAndGroupKeepsTheRunFields checks that a logger made
+// with With and WithGroup from the OTLP handler still gets the phase and the
+// run's fields, so its handler is still the one that adds them.
+func TestOTLPLoggerWithAttrsAndGroupKeepsTheRunFields(t *testing.T) {
+	collector := newFakeCollector(t)
+	var stderr bytes.Buffer
+	run := NewRun("dev")
+	require.NoError(t, run.EnableOTLP(OTLPConfig{Endpoint: collector.addr, Insecure: true}))
+	ctx := run.Start(context.Background(), "nvkectl bootstrap site")
+	run.SetLogFields("bootstrap_site", "csc-01")
+	logger := slog.New(run.LogHandler(slog.NewJSONHandler(&stderr, nil)))
+
+	phaseCtx, end := run.StartPhase(ctx, "preflight")
+	logger.With("component", "x").WithGroup("g").Info("grouped", "k", "v")
+	end(nil)
+	run.Finish(nil)
+
+	var local map[string]any
+	for _, rec := range decodeRecords(t, &stderr) {
+		if rec["msg"] == "grouped" {
+			local = rec
+		}
+	}
+	require.NotNil(t, local)
+	assert.Equal(t, "x", local["component"])
+	group, ok := local["g"].(map[string]any)
+	require.True(t, ok, "the record's attributes are in the group")
+	assert.Equal(t, spanID(phaseCtx), group["span_id"])
+	assert.Equal(t, "preflight", group["phase"])
+	assert.Equal(t, "csc-01", group["cluster"])
+	assert.Equal(t, "v", group["k"])
+}

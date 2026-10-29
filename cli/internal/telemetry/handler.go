@@ -74,12 +74,13 @@ func (handler *teeHandler) Handle(ctx context.Context, record slog.Record) error
 
 // WithAttrs implements slog.Handler.
 func (handler *teeHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &teeHandler{local: handler.local.withAttrs(attrs), exported: handler.exported.WithAttrs(redact.Attrs(attrs))}
+	// A logHandler's WithAttrs returns a logHandler.
+	return &teeHandler{local: handler.local.WithAttrs(attrs).(*logHandler), exported: handler.exported.WithAttrs(redact.Attrs(attrs))}
 }
 
 // WithGroup implements slog.Handler.
 func (handler *teeHandler) WithGroup(name string) slog.Handler {
-	return &teeHandler{local: handler.local.withGroup(name), exported: handler.exported.WithGroup(name)}
+	return &teeHandler{local: handler.local.WithGroup(name).(*logHandler), exported: handler.exported.WithGroup(name)}
 }
 
 // Handle implements slog.Handler.
@@ -126,19 +127,11 @@ func (handler *logHandler) handleResolved(ctx context.Context, record slog.Recor
 
 // WithAttrs implements slog.Handler.
 func (handler *logHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return handler.withAttrs(attrs)
-}
-
-func (handler *logHandler) withAttrs(attrs []slog.Attr) *logHandler {
 	return &logHandler{Handler: handler.Handler.WithAttrs(attrs), root: handler.root, run: handler.run}
 }
 
 // WithGroup implements slog.Handler.
 func (handler *logHandler) WithGroup(name string) slog.Handler {
-	return handler.withGroup(name)
-}
-
-func (handler *logHandler) withGroup(name string) *logHandler {
 	return &logHandler{Handler: handler.Handler.WithGroup(name), root: handler.root, run: handler.run}
 }
 
