@@ -65,9 +65,11 @@ func (handler *teeHandler) Enabled(ctx context.Context, level slog.Level) bool {
 // not returned.
 func (handler *teeHandler) Handle(ctx context.Context, record slog.Record) error {
 	// The exporter reads a record's trace ID and span ID from its context.
-	ctx, record = handler.local.resolve(ctx, record)
-	_ = handler.exported.Handle(ctx, redact.Record(record))
-	return handler.local.handleResolved(ctx, record)
+	ctx, fields := handler.local.resolve(ctx, record)
+	exported := record.Clone()
+	exported.AddAttrs(fields...)
+	_ = handler.exported.Handle(ctx, redact.Record(exported))
+	return handler.local.handleResolved(ctx, record, fields)
 }
 
 // WithAttrs implements slog.Handler.
@@ -82,14 +84,14 @@ func (handler *teeHandler) WithGroup(name string) slog.Handler {
 
 // Handle implements slog.Handler.
 func (handler *logHandler) Handle(ctx context.Context, record slog.Record) error {
-	ctx, record = handler.resolve(ctx, record)
-	return handler.handleResolved(ctx, record)
+	ctx, fields := handler.resolve(ctx, record)
+	return handler.handleResolved(ctx, record, fields)
 }
 
-// resolve returns ctx carrying the span the record belongs to, and record with
-// the run's operation, cluster and phase added. The span is the one already in
-// ctx, else the current phase's, else the root span.
-func (handler *logHandler) resolve(ctx context.Context, record slog.Record) (context.Context, slog.Record) {
+// resolve returns ctx carrying the span the record belongs to, and the operation,
+// cluster and phase fields to add to record. The span is the one already in ctx,
+// else the current phase's, else the root span.
+func (handler *logHandler) resolve(ctx context.Context, record slog.Record) (context.Context, []slog.Attr) {
 	phase, operation, cluster := handler.run.logFields()
 	spanContext := trace.SpanContextFromContext(ctx)
 	if !spanContext.IsValid() && phase != nil {
@@ -99,23 +101,26 @@ func (handler *logHandler) resolve(ctx context.Context, record slog.Record) (con
 		spanContext = handler.root
 	}
 	ctx = trace.ContextWithSpanContext(ctx, spanContext)
+	var fields []slog.Attr
 	// A record that already names a field keeps its own value.
-	addUnset(&record, "operation", operation)
-	addUnset(&record, "cluster", cluster)
+	fields = appendUnset(fields, record, "operation", operation)
+	fields = appendUnset(fields, record, "cluster", cluster)
 	if phase != nil {
-		addUnset(&record, "phase", phase.name)
+		fields = appendUnset(fields, record, "phase", phase.name)
 	}
-	return ctx, record
+	return ctx, fields
 }
 
-// handleResolved adds trace_id and span_id from ctx, as resolve left it, and
-// passes record to the inner handler.
-func (handler *logHandler) handleResolved(ctx context.Context, record slog.Record) error {
+// handleResolved adds trace_id and span_id from ctx, as resolve left it, then
+// fields, and passes record to the inner handler. The e2e gitleaks allowlist
+// depends on this order.
+func (handler *logHandler) handleResolved(ctx context.Context, record slog.Record, fields []slog.Attr) error {
 	spanContext := trace.SpanContextFromContext(ctx)
 	record.AddAttrs(
 		slog.String("trace_id", spanContext.TraceID().String()),
 		slog.String("span_id", spanContext.SpanID().String()),
 	)
+	record.AddAttrs(fields...)
 	return handler.Handler.Handle(ctx, record)
 }
 
@@ -137,17 +142,18 @@ func (handler *logHandler) withGroup(name string) *logHandler {
 	return &logHandler{Handler: handler.Handler.WithGroup(name), root: handler.root, run: handler.run}
 }
 
-// addUnset adds key=value to record unless value is empty or record has key.
-func addUnset(record *slog.Record, key, value string) {
+// appendUnset appends key=value to attrs unless value is empty or record has key.
+func appendUnset(attrs []slog.Attr, record slog.Record, key, value string) []slog.Attr {
 	if value == "" {
-		return
+		return attrs
 	}
 	found := false
 	record.Attrs(func(attr slog.Attr) bool {
 		found = attr.Key == key
 		return !found
 	})
-	if !found {
-		record.AddAttrs(slog.String(key, value))
+	if found {
+		return attrs
 	}
+	return append(attrs, slog.String(key, value))
 }

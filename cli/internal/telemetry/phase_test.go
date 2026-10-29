@@ -254,3 +254,20 @@ func TestOTLPExportsPhaseSpanAndFieldsForLoggersWithoutAContext(t *testing.T) {
 	assert.Equal(t, "bootstrap_site", attrs["operation"])
 	assert.Equal(t, "csc-01", attrs["cluster"])
 }
+
+// TestLogHandlerPutsTraceFieldsBeforeRunFields pins the order of the fields on
+// a text line: the e2e gitleaks allowlist matches the line whole, in this order.
+func TestLogHandlerPutsTraceFieldsBeforeRunFields(t *testing.T) {
+	run, _ := newTestRun(t)
+	ctx := run.Start(context.Background(), "nvkectl bootstrap site")
+	var buf bytes.Buffer
+	logger := slog.New(run.LogHandler(slog.NewTextHandler(&buf, nil)))
+	run.SetLogFields("bootstrap_site", "csc-01")
+
+	phaseCtx, end := run.StartPhase(ctx, "preflight")
+	logger.Info("inside", "k", "v")
+	end(nil)
+
+	line := strings.Split(buf.String(), "\n")[0]
+	assert.Contains(t, line, `msg=inside k=v trace_id=`+run.TraceID()+` span_id=`+spanID(phaseCtx)+` operation=bootstrap_site cluster=csc-01 phase=preflight`)
+}
