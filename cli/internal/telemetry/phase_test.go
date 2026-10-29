@@ -271,3 +271,42 @@ func TestLogHandlerPutsTraceFieldsBeforeRunFields(t *testing.T) {
 	line := strings.Split(buf.String(), "\n")[0]
 	assert.Contains(t, line, `msg=inside k=v trace_id=`+run.TraceID()+` span_id=`+spanID(phaseCtx)+` operation=bootstrap_site cluster=csc-01 phase=preflight`)
 }
+
+func TestLogHandlerKeepsAFieldBoundToTheLogger(t *testing.T) {
+	run, _ := newTestRun(t)
+	ctx := run.Start(context.Background(), "nvkectl bootstrap site")
+	run.SetLogFields("bootstrap_site", "csc-01")
+	_, end := run.StartPhase(ctx, "preflight")
+	defer end(nil)
+
+	tests := map[string]func(*slog.Logger) *slog.Logger{
+		"bound": func(l *slog.Logger) *slog.Logger { return l.With("cluster", "other") },
+		"bound, then a child logger": func(l *slog.Logger) *slog.Logger {
+			return l.With("cluster", "other").With("k", "v")
+		},
+		"bound in a group is nested": func(l *slog.Logger) *slog.Logger { return l.WithGroup("g").With("cluster", "other") },
+	}
+	for name, bind := range tests {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			bind(slog.New(run.LogHandler(slog.NewJSONHandler(&buf, nil)))).Info("msg")
+
+			raw := buf.String()
+			if strings.Contains(name, "group") {
+				assert.Equal(t, 2, strings.Count(raw, `"cluster"`), "the run's cluster at the top level, the bound one in the group")
+				return
+			}
+			assert.Equal(t, 1, strings.Count(raw, `"cluster"`), raw)
+			assert.Contains(t, raw, `"cluster":"other"`)
+			assert.Contains(t, raw, `"operation":"bootstrap_site"`, "the other run fields are still added")
+		})
+	}
+
+	t.Run("loggers made from one parent do not share bound keys", func(t *testing.T) {
+		var buf bytes.Buffer
+		parent := slog.New(run.LogHandler(slog.NewJSONHandler(&buf, nil)))
+		parent.With("cluster", "other")
+		parent.Info("from the parent")
+		assert.Contains(t, buf.String(), `"cluster":"csc-01"`)
+	})
+}
