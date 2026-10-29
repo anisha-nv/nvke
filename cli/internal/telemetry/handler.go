@@ -18,12 +18,6 @@ type logHandler struct {
 	slog.Handler
 	root trace.SpanContext
 	run  *Run
-
-	// bound holds the top-level keys of attributes added with WithAttrs, which
-	// the run's fields do not override. Attributes added after WithGroup are
-	// nested, so they are not tracked.
-	bound   map[string]bool
-	grouped bool
 }
 
 // LogHandler wraps inner so each record carries trace_id and span_id: those of
@@ -108,11 +102,11 @@ func (handler *logHandler) resolve(ctx context.Context, record slog.Record) (con
 	}
 	ctx = trace.ContextWithSpanContext(ctx, spanContext)
 	var fields []slog.Attr
-	// A record or logger that already names a field keeps its own value.
-	fields = appendUnset(fields, record, handler.bound, "operation", operation)
-	fields = appendUnset(fields, record, handler.bound, "cluster", cluster)
+	// A record that already names a field keeps its own value.
+	fields = appendUnset(fields, record, "operation", operation)
+	fields = appendUnset(fields, record, "cluster", cluster)
 	if phase != nil {
-		fields = appendUnset(fields, record, handler.bound, "phase", phase.name)
+		fields = appendUnset(fields, record, "phase", phase.name)
 	}
 	return ctx, fields
 }
@@ -136,18 +130,7 @@ func (handler *logHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 }
 
 func (handler *logHandler) withAttrs(attrs []slog.Attr) *logHandler {
-	bound := handler.bound
-	if !handler.grouped {
-		// Copy before writing, so handlers cloned from this one do not share the map.
-		bound = make(map[string]bool, len(handler.bound)+len(attrs))
-		for key := range handler.bound {
-			bound[key] = true
-		}
-		for _, attr := range attrs {
-			bound[attr.Key] = true
-		}
-	}
-	return &logHandler{Handler: handler.Handler.WithAttrs(attrs), root: handler.root, run: handler.run, bound: bound, grouped: handler.grouped}
+	return &logHandler{Handler: handler.Handler.WithAttrs(attrs), root: handler.root, run: handler.run}
 }
 
 // WithGroup implements slog.Handler.
@@ -156,13 +139,12 @@ func (handler *logHandler) WithGroup(name string) slog.Handler {
 }
 
 func (handler *logHandler) withGroup(name string) *logHandler {
-	return &logHandler{Handler: handler.Handler.WithGroup(name), root: handler.root, run: handler.run, bound: handler.bound, grouped: true}
+	return &logHandler{Handler: handler.Handler.WithGroup(name), root: handler.root, run: handler.run}
 }
 
-// appendUnset appends key=value to attrs unless value is empty, or record or
-// bound has key.
-func appendUnset(attrs []slog.Attr, record slog.Record, bound map[string]bool, key, value string) []slog.Attr {
-	if value == "" || bound[key] {
+// appendUnset appends key=value to attrs unless value is empty or record has key.
+func appendUnset(attrs []slog.Attr, record slog.Record, key, value string) []slog.Attr {
+	if value == "" {
 		return attrs
 	}
 	found := false
