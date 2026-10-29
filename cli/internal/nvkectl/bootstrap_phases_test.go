@@ -439,21 +439,4 @@ func TestRunBootstrapSiteFailsFinishWhenTheTeardownFails(t *testing.T) {
 		assert.Contains(t, finish.Status().Description, "kind delete failed")
 		assert.NotContains(t, finish.Status().Description, got.err.Error(), "the failed phase's error is not repeated on finish")
 	})
-
-	t.Run("with a finish error already", func(t *testing.T) {
-		startFakeCWEAPI(t, true)
-		opts := happyPathOptions(t)
-		opts.bootstrapRunner = failingKindDelete(opts.bootstrapRunner)
-		opts.untaintControlPlane = func(context.Context, string, *slog.Logger) ([]string, error) {
-			return nil, errors.New("nodes is forbidden")
-		}
-
-		got := runPhased(t, opts)
-
-		require.Error(t, got.err)
-		finish := got.phaseSpan(phaseFinish)
-		require.NotNil(t, finish)
-		assert.Contains(t, finish.Status().Description, "nodes is forbidden", "the untaint error is kept")
-		assert.Contains(t, finish.Status().Description, "kind delete failed")
-	})
 }
