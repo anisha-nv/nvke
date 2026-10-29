@@ -43,15 +43,15 @@ func newPhaseTracker(ctx context.Context) *phaseTracker {
 }
 
 // enter ends the current phase and starts the one called name, returning the
-// context to use for it. previous is the error that ended the current phase, or
+// context to use for it. previousErr is the error that ended the current phase, or
 // nil when it ran to completion. Entering the phase the run is already in does
 // nothing.
-func (p *phaseTracker) enter(name string, previous error) context.Context {
+func (p *phaseTracker) enter(name string, previousErr error) context.Context {
 	if p.current == name {
 		return p.ctx
 	}
-	p.leave(previous)
-	if previous != nil {
+	p.leave(previousErr)
+	if previousErr != nil {
 		p.failed = true
 	}
 	p.ctx, p.end = p.run.StartPhase(p.base, name)
