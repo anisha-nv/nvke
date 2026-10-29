@@ -493,6 +493,14 @@ func runBootstrapSite(ctx context.Context, out io.Writer, opts *bootstrapSiteOpt
 		if deleteErr := engine.Delete(deleteCtx, cluster.Name); deleteErr != nil {
 			logger.Error("failed to tear down bootstrap kind cluster",
 				"bootstrap_kind_cluster", cluster.Name, "err", deleteErr)
+			// The teardown is part of finish, so it fails that phase. The command
+			// still returns err: a teardown failure is logged, not returned. When
+			// an earlier phase failed, err is that phase's, not finish's.
+			finishErr := deleteErr
+			if !phases.failed {
+				finishErr = errors.Join(err, deleteErr)
+			}
+			phases.leave(finishErr)
 		}
 	}()
 

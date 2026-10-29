@@ -22,6 +22,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
+	bootstrapengine "github.com/dsx-ai-factory/nvke/cli/internal/bootstrap/engine"
 	"github.com/dsx-ai-factory/nvke/cli/internal/telemetry"
 )
 
@@ -388,4 +389,71 @@ func TestRunBootstrapSiteEndsEveryPhaseWhenInterrupted(t *testing.T) {
 	require.NotNil(t, got.phaseSpan(phaseFinish), "the finish span ended")
 	assert.Equal(t, codes.Unset, got.phaseSpan(phaseFinish).Status().Code)
 	assert.Equal(t, codes.Error, got.phaseSpan(phaseEngineDeploy).Status().Code)
+}
+
+// failingKindDelete makes the teardown of the bootstrap Kind cluster fail.
+func failingKindDelete(next bootstrapengine.CommandRunner) bootstrapengine.CommandRunner {
+	return runnerFunc(func(ctx context.Context, env map[string]string, name string, args ...string) (string, error) {
+		if name == "kind" && len(args) > 0 && args[0] == "delete" {
+			return "", errors.New("kind delete failed")
+		}
+		return next.Run(ctx, env, name, args...)
+	})
+}
+
+func TestRunBootstrapSiteFailsFinishWhenTheTeardownFails(t *testing.T) {
+	setBootstrapEnv(t)
+
+	t.Run("after a successful run", func(t *testing.T) {
+		startFakeCWEAPI(t, true)
+		opts := happyPathOptions(t)
+		opts.bootstrapRunner = failingKindDelete(opts.bootstrapRunner)
+
+		got := runPhased(t, opts)
+
+		require.NoError(t, got.err, "a teardown failure is logged, not returned")
+		assert.Equal(t, []string{
+			"preflight=succeeded", "bootstrap_cluster=succeeded", "engine_deploy=succeeded", "site_cluster=succeeded", "finish=failed",
+		}, got.phaseLines())
+		span := got.phaseSpan(phaseFinish)
+		require.NotNil(t, span)
+		assert.Equal(t, codes.Error, span.Status().Code)
+		assert.Contains(t, span.Status().Description, "kind delete failed")
+	})
+
+	t.Run("after an earlier phase failed", func(t *testing.T) {
+		t.Setenv("NVKECTL_NVKE_CONTROLLER_READY_TIMEOUT", "1s")
+		opts := happyPathOptions(t)
+		opts.cweRunner = unhealthyCWERunner{}
+		opts.diagnosticsDir = filepath.Join(t.TempDir(), "cluster-diagnostics")
+		opts.bootstrapRunner = failingKindDelete(opts.bootstrapRunner)
+
+		got := runPhased(t, opts)
+
+		require.Error(t, got.err)
+		assert.Equal(t, []string{
+			"preflight=succeeded", "bootstrap_cluster=succeeded", "engine_deploy=failed", "finish=failed",
+		}, got.phaseLines())
+		finish := got.phaseSpan(phaseFinish)
+		require.NotNil(t, finish)
+		assert.Contains(t, finish.Status().Description, "kind delete failed")
+		assert.NotContains(t, finish.Status().Description, got.err.Error(), "the failed phase's error is not repeated on finish")
+	})
+
+	t.Run("with a finish error already", func(t *testing.T) {
+		startFakeCWEAPI(t, true)
+		opts := happyPathOptions(t)
+		opts.bootstrapRunner = failingKindDelete(opts.bootstrapRunner)
+		opts.untaintControlPlane = func(context.Context, string, *slog.Logger) ([]string, error) {
+			return nil, errors.New("nodes is forbidden")
+		}
+
+		got := runPhased(t, opts)
+
+		require.Error(t, got.err)
+		finish := got.phaseSpan(phaseFinish)
+		require.NotNil(t, finish)
+		assert.Contains(t, finish.Status().Description, "nodes is forbidden", "the untaint error is kept")
+		assert.Contains(t, finish.Status().Description, "kind delete failed")
+	})
 }
