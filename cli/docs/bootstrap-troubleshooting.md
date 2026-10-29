@@ -21,8 +21,9 @@ nvkectl bootstrap site -f sitespec.yaml 2>&1 | tee bootstrap.log
 The command runs in five phases, in this order: `preflight`,
 `bootstrap_cluster` (creating the Kind cluster), `engine_deploy` (deploying the
 controller), `site_cluster` (creating the site cluster and saving its outputs)
-and `finish` (making the control-plane nodes schedulable, collecting
-diagnostics and deleting the Kind cluster). When a phase ends, nvkectl logs one
+and `finish` (making the control-plane nodes schedulable, with
+`infra.provider: nico` installing the NVKE stack on the site cluster, then
+collecting diagnostics and deleting the Kind cluster). When a phase ends, nvkectl logs one
 `phase finished` line with its `phase`, its `outcome` (`succeeded` or
 `failed`) and its `duration_ms`. Log lines also carry `operation`, `cluster`
 (once the site spec is loaded) and, while a phase runs, `phase`. The phase that
