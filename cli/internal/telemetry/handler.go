@@ -19,11 +19,11 @@ type logHandler struct {
 	root trace.SpanContext
 	run  *Run
 
-	// bound holds the keys of the attributes added with WithAttrs in the scope a
-	// record's attributes go in: the current group, or the top level when there
-	// is none. The run's fields do not override them. WithGroup starts a new
-	// scope, since the keys bound before it are outside the group.
-	bound map[string]bool
+	// bound holds the top-level keys of attributes added with WithAttrs, which
+	// the run's fields do not override. Attributes added after WithGroup are
+	// nested, so they are not tracked.
+	bound   map[string]bool
+	grouped bool
 }
 
 // LogHandler wraps inner so each record carries trace_id and span_id: those of
@@ -136,15 +136,18 @@ func (handler *logHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 }
 
 func (handler *logHandler) withAttrs(attrs []slog.Attr) *logHandler {
-	// Copy before writing, so handlers cloned from this one do not share the map.
-	bound := make(map[string]bool, len(handler.bound)+len(attrs))
-	for key := range handler.bound {
-		bound[key] = true
+	bound := handler.bound
+	if !handler.grouped {
+		// Copy before writing, so handlers cloned from this one do not share the map.
+		bound = make(map[string]bool, len(handler.bound)+len(attrs))
+		for key := range handler.bound {
+			bound[key] = true
+		}
+		for _, attr := range attrs {
+			bound[attr.Key] = true
+		}
 	}
-	for _, attr := range attrs {
-		bound[attr.Key] = true
-	}
-	return &logHandler{Handler: handler.Handler.WithAttrs(attrs), root: handler.root, run: handler.run, bound: bound}
+	return &logHandler{Handler: handler.Handler.WithAttrs(attrs), root: handler.root, run: handler.run, bound: bound, grouped: handler.grouped}
 }
 
 // WithGroup implements slog.Handler.
@@ -153,7 +156,7 @@ func (handler *logHandler) WithGroup(name string) slog.Handler {
 }
 
 func (handler *logHandler) withGroup(name string) *logHandler {
-	return &logHandler{Handler: handler.Handler.WithGroup(name), root: handler.root, run: handler.run}
+	return &logHandler{Handler: handler.Handler.WithGroup(name), root: handler.root, run: handler.run, bound: handler.bound, grouped: true}
 }
 
 // appendUnset appends key=value to attrs unless value is empty, or record or
